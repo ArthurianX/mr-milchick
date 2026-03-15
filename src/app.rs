@@ -4,6 +4,8 @@ use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, 
 use crate::actions::model::Action;
 use crate::cli::Cli;
 use crate::context::builder::build_ci_context;
+use crate::gitlab::api::GitLabConfig;
+use crate::gitlab::client::GitLabClient;
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
@@ -66,6 +68,24 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             println!("Decision explanation:");
             print_outcome(&outcome);
             print_action_plan(&outcome);
+
+            if let Some(mr_iid) = ctx.merge_request_iid() {
+                let config = GitLabConfig::from_env()?;
+                let client = GitLabClient::new(config);
+                let mr = client.get_merge_request(ctx.project_id(), mr_iid).await?;
+
+                println!("Merge request details:");
+                println!("- [Title] {}", mr.title);
+                println!("- [State] {}", mr.state);
+                println!("- [Draft] {}", mr.draft);
+                println!("- [WebUrl] {}", mr.web_url);
+
+                if let Some(description) = mr.description {
+                    if !description.trim().is_empty() {
+                        println!("- [Description] {}", description);
+                    }
+                }
+            }
         }
     }
 

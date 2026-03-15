@@ -31,6 +31,10 @@ impl CiContext {
     pub fn source_branch_kind(&self) -> BranchKind {
         BranchKind::from_branch_name(self.source_branch())
     }
+
+    pub fn project_id(&self) -> &str {
+        self.project_id.0.as_str()
+    }
 }
 
 #[derive(Debug, Clone)]

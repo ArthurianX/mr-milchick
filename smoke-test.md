@@ -57,3 +57,15 @@ info finding
 no blocking
 
 no failure
+
+
+Real MR from monorepo
+```shell
+CI_PROJECT_ID=412 \
+CI_MERGE_REQUEST_IID=3995 \
+CI_PIPELINE_SOURCE=merge_request_event \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
+CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
+CI_MERGE_REQUEST_LABELS="0. run-tests" \
+cargo run -- explain
+```
