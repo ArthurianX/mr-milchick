@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::domain::area_summary::MergeRequestAreaSummary;
 use crate::domain::code_area::CodeArea;
@@ -7,6 +7,7 @@ use crate::domain::code_area::CodeArea;
 pub struct ReviewerRoutingConfig {
     pub reviewers_by_area: HashMap<CodeArea, Vec<String>>,
     pub fallback_reviewers: Vec<String>,
+    pub max_reviewers: usize,
 }
 
 impl ReviewerRoutingConfig {
@@ -32,6 +33,7 @@ impl ReviewerRoutingConfig {
         Self {
             reviewers_by_area,
             fallback_reviewers: vec!["milchick-duty".to_string()],
+            max_reviewers: 2,
         }
     }
 }
@@ -55,58 +57,86 @@ pub fn recommend_reviewers(
 ) -> ReviewerRecommendation {
     let mut reviewers = Vec::new();
     let mut reasons = Vec::new();
+    let mut selected = HashSet::new();
 
-    if let Some(dominant_area) = summary.dominant_area() {
-        if let Some(pool) = config.reviewers_by_area.get(&dominant_area) {
-            if let Some(selected) = first_non_excluded(pool, excluded_reviewers) {
-                reviewers.push(selected.clone());
+    let significant_areas = summary.significant_areas();
+
+    if significant_areas.is_empty() {
+        if let Some(fallback) = first_non_excluded(&config.fallback_reviewers, excluded_reviewers) {
+            reviewers.push(fallback.clone());
+            reasons.push("No dominant area detected; fallback reviewer selected.".to_string());
+        } else {
+            reasons.push("No dominant area detected and no eligible fallback reviewer exists.".to_string());
+        }
+
+        return ReviewerRecommendation { reviewers, reasons };
+    }
+
+    for area in significant_areas {
+        if reviewers.len() >= config.max_reviewers {
+            reasons.push(format!(
+                "Reviewer selection reached configured limit of {}.",
+                config.max_reviewers
+            ));
+            break;
+        }
+
+        if let Some(pool) = config.reviewers_by_area.get(&area) {
+            if let Some(candidate) = first_non_excluded_and_unselected(
+                pool,
+                excluded_reviewers,
+                &selected,
+            ) {
+                reviewers.push(candidate.clone());
+                selected.insert(candidate.clone());
                 reasons.push(format!(
-                    "Selected reviewer '{}' for dominant area '{}'.",
-                    selected,
-                    dominant_area.as_str()
-                ));
-            } else if let Some(fallback) =
-                first_non_excluded(&config.fallback_reviewers, excluded_reviewers)
-            {
-                reviewers.push(fallback.clone());
-                reasons.push(format!(
-                    "All reviewers for dominant area '{}' were excluded; fallback reviewer selected.",
-                    dominant_area.as_str()
+                    "Selected reviewer '{}' for area '{}'.",
+                    candidate,
+                    area.as_str()
                 ));
             } else {
                 reasons.push(format!(
-                    "No eligible reviewers remained for dominant area '{}'.",
-                    dominant_area.as_str()
+                    "No eligible reviewer remained for area '{}'.",
+                    area.as_str()
                 ));
             }
-        } else if let Some(fallback) =
-            first_non_excluded(&config.fallback_reviewers, excluded_reviewers)
-        {
-            reviewers.push(fallback.clone());
-            reasons.push(format!(
-                "No reviewer pool configured for dominant area '{}'; fallback reviewer selected.",
-                dominant_area.as_str()
-            ));
         } else {
             reasons.push(format!(
-                "No reviewer pool or eligible fallback reviewer exists for dominant area '{}'.",
-                dominant_area.as_str()
+                "No reviewer pool configured for area '{}'.",
+                area.as_str()
             ));
         }
-    } else if let Some(fallback) =
-        first_non_excluded(&config.fallback_reviewers, excluded_reviewers)
-    {
-        reviewers.push(fallback.clone());
-        reasons.push("No dominant area detected; fallback reviewer selected.".to_string());
-    } else {
-        reasons.push("No dominant area detected and no eligible fallback reviewer exists.".to_string());
+    }
+
+    if reviewers.is_empty() {
+        if let Some(fallback) = first_non_excluded_and_unselected(
+            &config.fallback_reviewers,
+            excluded_reviewers,
+            &selected,
+        ) {
+            reviewers.push(fallback.clone());
+            reasons.push("No area reviewer could be selected; fallback reviewer selected.".to_string());
+        } else {
+            reasons.push("No eligible reviewer could be selected from configured areas or fallback pool.".to_string());
+        }
     }
 
     ReviewerRecommendation { reviewers, reasons }
 }
 
 fn first_non_excluded<'a>(pool: &'a [String], excluded: &[String]) -> Option<&'a String> {
-    pool.iter().find(|candidate| !excluded.iter().any(|excluded| excluded == *candidate))
+    pool.iter()
+        .find(|candidate| !excluded.iter().any(|excluded| excluded == *candidate))
+}
+
+fn first_non_excluded_and_unselected<'a>(
+    pool: &'a [String],
+    excluded: &[String],
+    selected: &HashSet<String>,
+) -> Option<&'a String> {
+    pool.iter().find(|candidate| {
+        !excluded.iter().any(|excluded| excluded == *candidate) && !selected.contains(*candidate)
+    })
 }
 
 #[cfg(test)]
@@ -115,17 +145,20 @@ mod tests {
     use crate::domain::area_summary::MergeRequestAreaSummary;
 
     #[test]
-    fn recommends_reviewer_for_dominant_area() {
+    fn recommends_multiple_reviewers_for_highest_priority_areas() {
         let mut summary = MergeRequestAreaSummary::new();
         summary.add(CodeArea::Frontend);
         summary.add(CodeArea::Frontend);
         summary.add(CodeArea::Backend);
+        summary.add(CodeArea::Backend);
+        summary.add(CodeArea::Shared);
 
         let config = ReviewerRoutingConfig::example();
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(recommendation.reviewers, vec!["alice".to_string()]);
-        assert_eq!(recommendation.reasons.len(), 1);
+        assert_eq!(recommendation.reviewers.len(), 2);
+        assert_eq!(recommendation.reviewers[0], "carol");
+        assert_eq!(recommendation.reviewers[1], "alice");
     }
 
     #[test]
@@ -141,15 +174,23 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_when_no_area_mapping_exists() {
-        let mut summary = MergeRequestAreaSummary::new();
-        summary.add(CodeArea::Unknown);
+    fn deduplicates_selected_reviewers() {
+        let mut config = ReviewerRoutingConfig::example();
+        config
+            .reviewers_by_area
+            .insert(CodeArea::Frontend, vec!["alice".to_string()]);
+        config
+            .reviewers_by_area
+            .insert(CodeArea::Documentation, vec!["alice".to_string()]);
+        config.max_reviewers = 3;
 
-        let config = ReviewerRoutingConfig::example();
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+        summary.add(CodeArea::Documentation);
+
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(recommendation.reviewers, vec!["milchick-duty".to_string()]);
-        assert_eq!(recommendation.reasons.len(), 1);
+        assert_eq!(recommendation.reviewers, vec!["alice".to_string()]);
     }
 
     #[test]
@@ -160,5 +201,20 @@ mod tests {
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
         assert_eq!(recommendation.reviewers, vec!["milchick-duty".to_string()]);
+    }
+
+    #[test]
+    fn respects_max_reviewer_limit() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+        summary.add(CodeArea::Backend);
+        summary.add(CodeArea::Shared);
+
+        let mut config = ReviewerRoutingConfig::example();
+        config.max_reviewers = 2;
+
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(recommendation.reviewers.len(), 2);
     }
 }

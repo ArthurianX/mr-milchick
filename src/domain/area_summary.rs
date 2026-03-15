@@ -28,4 +28,13 @@ impl MergeRequestAreaSummary {
     pub fn total_files(&self) -> usize {
         self.counts.values().sum()
     }
+
+    pub fn significant_areas(&self) -> Vec<CodeArea> {
+        let mut pairs: Vec<(CodeArea, usize)> =
+            self.counts.iter().map(|(area, count)| (*area, *count)).collect();
+
+        pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_str().cmp(b.0.as_str())));
+
+        pairs.into_iter().map(|(area, _)| area).collect()
+    }
 }

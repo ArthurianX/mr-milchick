@@ -57,7 +57,8 @@ mod tests {
     fn adds_assign_reviewers_action_when_recommendation_exists() {
         let outcome = RuleOutcome::new();
         let snapshot = sample_snapshot();
-        let config = ReviewerRoutingConfig::example();
+        let mut config = ReviewerRoutingConfig::example();
+        config.max_reviewers = 2;
 
         let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
 
