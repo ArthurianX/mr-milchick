@@ -51,33 +51,62 @@ impl ReviewerRecommendation {
 pub fn recommend_reviewers(
     summary: &MergeRequestAreaSummary,
     config: &ReviewerRoutingConfig,
+    excluded_reviewers: &[String],
 ) -> ReviewerRecommendation {
     let mut reviewers = Vec::new();
     let mut reasons = Vec::new();
 
     if let Some(dominant_area) = summary.dominant_area() {
         if let Some(pool) = config.reviewers_by_area.get(&dominant_area) {
-            if let Some(first) = pool.first() {
-                reviewers.push(first.clone());
+            if let Some(selected) = first_non_excluded(pool, excluded_reviewers) {
+                reviewers.push(selected.clone());
                 reasons.push(format!(
                     "Selected reviewer '{}' for dominant area '{}'.",
-                    first,
+                    selected,
+                    dominant_area.as_str()
+                ));
+            } else if let Some(fallback) =
+                first_non_excluded(&config.fallback_reviewers, excluded_reviewers)
+            {
+                reviewers.push(fallback.clone());
+                reasons.push(format!(
+                    "All reviewers for dominant area '{}' were excluded; fallback reviewer selected.",
+                    dominant_area.as_str()
+                ));
+            } else {
+                reasons.push(format!(
+                    "No eligible reviewers remained for dominant area '{}'.",
                     dominant_area.as_str()
                 ));
             }
-        } else if let Some(first) = config.fallback_reviewers.first() {
-            reviewers.push(first.clone());
+        } else if let Some(fallback) =
+            first_non_excluded(&config.fallback_reviewers, excluded_reviewers)
+        {
+            reviewers.push(fallback.clone());
             reasons.push(format!(
                 "No reviewer pool configured for dominant area '{}'; fallback reviewer selected.",
                 dominant_area.as_str()
             ));
+        } else {
+            reasons.push(format!(
+                "No reviewer pool or eligible fallback reviewer exists for dominant area '{}'.",
+                dominant_area.as_str()
+            ));
         }
-    } else if let Some(first) = config.fallback_reviewers.first() {
-        reviewers.push(first.clone());
+    } else if let Some(fallback) =
+        first_non_excluded(&config.fallback_reviewers, excluded_reviewers)
+    {
+        reviewers.push(fallback.clone());
         reasons.push("No dominant area detected; fallback reviewer selected.".to_string());
+    } else {
+        reasons.push("No dominant area detected and no eligible fallback reviewer exists.".to_string());
     }
 
     ReviewerRecommendation { reviewers, reasons }
+}
+
+fn first_non_excluded<'a>(pool: &'a [String], excluded: &[String]) -> Option<&'a String> {
+    pool.iter().find(|candidate| !excluded.iter().any(|excluded| excluded == *candidate))
 }
 
 #[cfg(test)]
@@ -93,10 +122,22 @@ mod tests {
         summary.add(CodeArea::Backend);
 
         let config = ReviewerRoutingConfig::example();
-        let recommendation = recommend_reviewers(&summary, &config);
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
 
         assert_eq!(recommendation.reviewers, vec!["alice".to_string()]);
         assert_eq!(recommendation.reasons.len(), 1);
+    }
+
+    #[test]
+    fn skips_excluded_reviewer_and_uses_next_candidate() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+
+        let config = ReviewerRoutingConfig::example();
+        let excluded = vec!["alice".to_string()];
+        let recommendation = recommend_reviewers(&summary, &config, &excluded);
+
+        assert_eq!(recommendation.reviewers, vec!["bob".to_string()]);
     }
 
     #[test]
@@ -105,12 +146,9 @@ mod tests {
         summary.add(CodeArea::Unknown);
 
         let config = ReviewerRoutingConfig::example();
-        let recommendation = recommend_reviewers(&summary, &config);
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(
-            recommendation.reviewers,
-            vec!["milchick-duty".to_string()]
-        );
+        assert_eq!(recommendation.reviewers, vec!["milchick-duty".to_string()]);
         assert_eq!(recommendation.reasons.len(), 1);
     }
 
@@ -119,11 +157,8 @@ mod tests {
         let summary = MergeRequestAreaSummary::new();
 
         let config = ReviewerRoutingConfig::example();
-        let recommendation = recommend_reviewers(&summary, &config);
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(
-            recommendation.reviewers,
-            vec!["milchick-duty".to_string()]
-        );
+        assert_eq!(recommendation.reviewers, vec!["milchick-duty".to_string()]);
     }
 }

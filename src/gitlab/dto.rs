@@ -8,6 +8,12 @@ pub struct MergeRequestDto {
     pub state: String,
     pub draft: bool,
     pub web_url: String,
+    pub author: AuthorDto,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthorDto {
+    pub username: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

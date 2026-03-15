@@ -27,6 +27,7 @@ mod tests {
                 state: MergeRequestState::Opened,
                 is_draft: false,
                 web_url: "".into(),
+                author_username: "arthur".into(),
             },
             changed_files: vec![
                 ChangedFile {

@@ -93,7 +93,9 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                     println!("Dominant area: {}", dominant.as_str());
                 }
 
-                let recommendation = recommend_reviewers(&area_summary, &routing_config);
+                let excluded_reviewers = vec![snapshot.details.author_username.clone()];
+                let recommendation =
+                    recommend_reviewers(&area_summary, &routing_config, &excluded_reviewers);
 
                 if recommendation.is_empty() {
                     println!("No reviewer recommendation was produced.");
@@ -139,6 +141,7 @@ fn print_snapshot_details(snapshot: &MergeRequestSnapshot) {
     println!("- [State] {}", snapshot.details.state.as_str());
     println!("- [Draft] {}", snapshot.details.is_draft);
     println!("- [WebUrl] {}", snapshot.details.web_url);
+    println!("- [Author] {}", snapshot.details.author_username);
     println!("- [ChangedFiles] {}", snapshot.changed_file_count());
 
     if let Some(description) = &snapshot.details.description {

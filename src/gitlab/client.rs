@@ -109,6 +109,7 @@ fn map_merge_request(dto: MergeRequestDto) -> MergeRequestDetails {
         state: map_merge_request_state(dto.state),
         is_draft: dto.draft,
         web_url: dto.web_url,
+        author_username: dto.author.username,
     }
 }
 
@@ -158,6 +159,9 @@ mod tests {
             state: "opened".to_string(),
             draft: true,
             web_url: "https://gitlab.example.com/group/project/-/merge_requests/42".to_string(),
+            author: crate::gitlab::dto::AuthorDto {
+                username: "arthur".to_string(),
+            },
         };
 
         let details = map_merge_request(dto);
@@ -166,6 +170,7 @@ mod tests {
         assert_eq!(details.title, "Refine branch policy");
         assert_eq!(details.state, MergeRequestState::Opened);
         assert!(details.is_draft);
+        assert_eq!(details.author_username, "arthur");
     }
 
     #[test]

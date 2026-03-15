@@ -10,7 +10,9 @@ pub fn enrich_with_reviewer_assignment(
     routing_config: &ReviewerRoutingConfig,
 ) -> RuleOutcome {
     let area_summary = summarize_areas(snapshot);
-    let recommendation = recommend_reviewers(&area_summary, routing_config);
+    let excluded_reviewers = vec![snapshot.details.author_username.clone()];
+    let recommendation =
+        recommend_reviewers(&area_summary, routing_config, &excluded_reviewers);
 
     if !recommendation.reviewers.is_empty() {
         outcome.action_plan.push(Action::AssignReviewers {
@@ -39,6 +41,7 @@ mod tests {
                 state: MergeRequestState::Opened,
                 is_draft: false,
                 web_url: "https://gitlab.example.com/mr/1".to_string(),
+                author_username: "alice".to_string(),
             },
             changed_files: vec![ChangedFile {
                 old_path: "apps/frontend/button_old.tsx".to_string(),
@@ -59,9 +62,12 @@ mod tests {
         let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
-        assert!(matches!(
-            enriched.action_plan.actions[0],
-            Action::AssignReviewers { .. }
-        ));
+
+        match &enriched.action_plan.actions[0] {
+            Action::AssignReviewers { reviewers } => {
+                assert_eq!(reviewers, &vec!["bob".to_string()]);
+            }
+            _ => panic!("expected AssignReviewers action"),
+        }
     }
 }
