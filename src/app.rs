@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, ExecutedAction};
 use crate::actions::model::Action;
 use crate::cli::Cli;
 use crate::context::builder::build_ci_context;
@@ -52,7 +53,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
             print_outcome(&outcome);
             print_action_plan(&outcome);
-            println!("No actions have been implemented yet.");
+
+            let executor = DryRunExecutor;
+            let report = executor.execute(&outcome.action_plan)?;
+            print_execution_report(&report);
 
             if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
                 anyhow::bail!("merge request policy requirements were not satisfied");
@@ -97,6 +101,29 @@ fn print_action_plan(outcome: &RuleOutcome) {
             }
             Action::FailPipeline { reason } => {
                 println!("- [FailPipeline] {}", reason);
+            }
+        }
+    }
+}
+
+fn print_execution_report(report: &ExecutionReport) {
+    if report.is_empty() {
+        println!("No actions were executed.");
+        return;
+    }
+
+    println!("Execution report:");
+
+    for executed in &report.executed {
+        match executed {
+            ExecutedAction::CommentPlanned { body } => {
+                println!("- [CommentPlanned] {}", body);
+            }
+            ExecutedAction::ReviewersPlanned { reviewers } => {
+                println!("- [ReviewersPlanned] {}", reviewers.join(", "));
+            }
+            ExecutedAction::PipelineFailurePlanned { reason } => {
+                println!("- [PipelineFailurePlanned] {}", reason);
             }
         }
     }
