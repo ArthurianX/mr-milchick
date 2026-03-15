@@ -22,6 +22,11 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
     println!("{}", selector.select(ToneCategory::Observation, &ctx));
 
+    if !ctx.is_merge_request_pipeline() {
+        println!("This pipeline does not currently present merge request responsibilities.");
+        return Ok(());
+    }
+
     match mode {
         ExecutionMode::Observe => {
             println!("No actions were performed.");
