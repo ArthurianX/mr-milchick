@@ -2,9 +2,12 @@ use anyhow::Result;
 
 use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, ExecutedAction};
 use crate::actions::model::Action;
+use crate::actions::planner::enrich_with_reviewer_assignment;
 use crate::cli::Cli;
 use crate::context::builder::build_ci_context;
-use crate::gitlab::api::GitLabConfig;
+use crate::domain::reviewer_routing::{recommend_reviewers, ReviewerRoutingConfig};
+use crate::domain::snapshot_analysis::summarize_areas;
+use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
@@ -33,7 +36,14 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
         return Ok(());
     }
 
-    let outcome = evaluate_rules(&ctx);
+    let mut outcome = evaluate_rules(&ctx);
+
+    let snapshot = maybe_fetch_snapshot(&ctx).await?;
+    let routing_config = ReviewerRoutingConfig::example();
+
+    if let Some(snapshot) = &snapshot {
+        outcome = enrich_with_reviewer_assignment(outcome, snapshot, &routing_config);
+    }
 
     match mode {
         ExecutionMode::Observe => {
@@ -69,18 +79,12 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             print_outcome(&outcome);
             print_action_plan(&outcome);
 
-            if let Some(mr_iid) = ctx.merge_request_iid() {
-                let config = GitLabConfig::from_env()?;
-                let client = GitLabClient::new(config);
-                let snapshot = client
-                    .get_merge_request_snapshot(ctx.project_id(), mr_iid)
-                    .await?;
-                use crate::domain::snapshot_analysis::summarize_areas;
+            if let Some(snapshot) = &snapshot {
+                print_snapshot_details(snapshot);
 
-                let area_summary = summarize_areas(&snapshot);
+                let area_summary = summarize_areas(snapshot);
 
                 println!("Area summary:");
-
                 for (area, count) in &area_summary.counts {
                     println!("- [{}] {}", area.as_str(), count);
                 }
@@ -89,42 +93,21 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                     println!("Dominant area: {}", dominant.as_str());
                 }
 
-                println!("Merge request details:");
-                println!("- [Title] {}", snapshot.details.title);
-                println!("- [State] {}", snapshot.details.state.as_str());
-                println!("- [Draft] {}", snapshot.details.is_draft);
-                println!("- [WebUrl] {}", snapshot.details.web_url);
-                println!("- [ChangedFiles] {}", snapshot.changed_file_count());
+                let recommendation = recommend_reviewers(&area_summary, &routing_config);
 
-                if let Some(description) = &snapshot.details.description {
-                    if !description.trim().is_empty() {
-                        println!("- [Description] {}", description);
-                    }
-                }
-
-                let max_files_to_print = 20;
-                let total_files = snapshot.changed_files.len();
-
-                if total_files == 0 {
-                    println!("No changed files were reported.");
+                if recommendation.is_empty() {
+                    println!("No reviewer recommendation was produced.");
                 } else {
-                    println!("Changed files:");
+                    println!("Recommended reviewers:");
 
-                    for file in snapshot.changed_files.iter().take(max_files_to_print) {
-                        println!(
-                            "- {}{}{}{}",
-                            file.new_path,
-                            if file.is_new { " [new]" } else { "" },
-                            if file.is_renamed { " [renamed]" } else { "" },
-                            if file.is_deleted { " [deleted]" } else { "" },
-                        );
+                    for reviewer in &recommendation.reviewers {
+                        println!("- {}", reviewer);
                     }
 
-                    if total_files > max_files_to_print {
-                        println!(
-                            "- ... and {} more file(s) not shown.",
-                            total_files - max_files_to_print
-                        );
+                    println!("Routing reasons:");
+
+                    for reason in &recommendation.reasons {
+                        println!("- {}", reason);
                     }
                 }
             }
@@ -132,6 +115,63 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn maybe_fetch_snapshot(
+    ctx: &crate::context::model::CiContext,
+) -> Result<Option<MergeRequestSnapshot>> {
+    let Some(mr_iid) = ctx.merge_request_iid() else {
+        return Ok(None);
+    };
+
+    let config = GitLabConfig::from_env()?;
+    let client = GitLabClient::new(config);
+    let snapshot = client
+        .get_merge_request_snapshot(ctx.project_id(), mr_iid)
+        .await?;
+
+    Ok(Some(snapshot))
+}
+
+fn print_snapshot_details(snapshot: &MergeRequestSnapshot) {
+    println!("Merge request details:");
+    println!("- [Title] {}", snapshot.details.title);
+    println!("- [State] {}", snapshot.details.state.as_str());
+    println!("- [Draft] {}", snapshot.details.is_draft);
+    println!("- [WebUrl] {}", snapshot.details.web_url);
+    println!("- [ChangedFiles] {}", snapshot.changed_file_count());
+
+    if let Some(description) = &snapshot.details.description {
+        if !description.trim().is_empty() {
+            println!("- [Description] {}", description);
+        }
+    }
+
+    let max_files_to_print = 20;
+    let total_files = snapshot.changed_files.len();
+
+    if total_files == 0 {
+        println!("No changed files were reported.");
+    } else {
+        println!("Changed files:");
+
+        for file in snapshot.changed_files.iter().take(max_files_to_print) {
+            println!(
+                "- {}{}{}{}",
+                file.new_path,
+                if file.is_new { " [new]" } else { "" },
+                if file.is_renamed { " [renamed]" } else { "" },
+                if file.is_deleted { " [deleted]" } else { "" },
+            );
+        }
+
+        if total_files > max_files_to_print {
+            println!(
+                "- ... and {} more file(s) not shown.",
+                total_files - max_files_to_print
+            );
+        }
+    }
 }
 
 fn print_outcome(outcome: &RuleOutcome) {

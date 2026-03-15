@@ -6,8 +6,8 @@ Then local smoke tests.
 
 Case 1 — epic to develop without label
 ```bash
-CI_PROJECT_ID=123 \
-CI_MERGE_REQUEST_IID=456 \
+CI_PROJECT_ID=412 \
+CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
@@ -23,8 +23,8 @@ blocking finding printed
 
 Case 2 — same but refine
 ```bash
-CI_PROJECT_ID=123 \
-CI_MERGE_REQUEST_IID=456 \
+CI_PROJECT_ID=412 \
+CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
@@ -41,8 +41,8 @@ process exits with error
 
 Case 3 — epic with label
 ```bash
-CI_PROJECT_ID=123 \
-CI_MERGE_REQUEST_IID=456 \
+CI_PROJECT_ID=412 \
+CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
