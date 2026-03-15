@@ -82,6 +82,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             if let Some(snapshot) = &snapshot {
                 print_snapshot_details(snapshot);
 
+                if snapshot.details.is_draft {
+                    println!("Reviewer assignment is currently deferred because this merge request is draft.");
+                }
+
                 let area_summary = summarize_areas(snapshot);
 
                 println!("Area summary:");
