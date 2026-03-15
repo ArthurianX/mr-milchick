@@ -1,3 +1,4 @@
+use crate::actions::model::Action;
 use crate::context::model::{BranchKind, CiContext};
 use crate::rules::model::{RuleFinding, RuleOutcome};
 
@@ -8,10 +9,18 @@ pub fn evaluate_branch_policy(ctx: &CiContext) -> RuleOutcome {
 
     if ctx.target_branch() == "develop" && ctx.source_branch_kind() == BranchKind::Epic {
         if !ctx.has_label(REQUIRED_EPIC_LABEL) {
-            outcome.push(RuleFinding::blocking(format!(
+            let message = format!(
                 "Epic branches targeting develop must include the '{}' label.",
                 REQUIRED_EPIC_LABEL
-            )));
+            );
+
+            outcome.push(RuleFinding::blocking(message.clone()));
+            outcome
+                .action_plan
+                .push(Action::PostComment { body: message.clone() });
+            outcome
+                .action_plan
+                .push(Action::FailPipeline { reason: message });
         } else {
             outcome.push(RuleFinding::info(format!(
                 "Required label '{}' is present for epic branch targeting develop.",
@@ -26,6 +35,7 @@ pub fn evaluate_branch_policy(ctx: &CiContext) -> RuleOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actions::model::Action;
     use crate::context::model::{
         BranchInfo, BranchName, CiContext, Label, MergeRequestIid, MergeRequestRef, PipelineInfo,
         PipelineSource, ProjectId,
@@ -57,6 +67,15 @@ mod tests {
         assert!(outcome.has_blocking_findings());
         assert_eq!(outcome.findings.len(), 1);
         assert!(outcome.findings[0].message.contains("0. run-tests"));
+        assert_eq!(outcome.action_plan.actions.len(), 2);
+        assert!(matches!(
+            outcome.action_plan.actions[0],
+            Action::PostComment { .. }
+        ));
+        assert!(matches!(
+            outcome.action_plan.actions[1],
+            Action::FailPipeline { .. }
+        ));
     }
 
     #[test]
@@ -68,6 +87,7 @@ mod tests {
 
         assert!(!outcome.has_blocking_findings());
         assert_eq!(outcome.findings.len(), 1);
+        assert!(outcome.action_plan.is_empty());
     }
 
     #[test]
@@ -78,6 +98,7 @@ mod tests {
         let outcome = evaluate_branch_policy(&ctx);
 
         assert!(outcome.is_empty());
+        assert!(outcome.action_plan.is_empty());
     }
 
     #[test]
@@ -88,5 +109,6 @@ mod tests {
         let outcome = evaluate_branch_policy(&ctx);
 
         assert!(outcome.is_empty());
+        assert!(outcome.action_plan.is_empty());
     }
 }

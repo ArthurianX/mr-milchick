@@ -7,8 +7,12 @@ pub fn evaluate_rules(ctx: &CiContext) -> RuleOutcome {
 
     let outcomes = [evaluate_branch_policy(ctx)];
 
-    for outcome in outcomes {
-        combined.findings.extend(outcome.findings);
+    for mut outcome in outcomes {
+        combined.findings.append(&mut outcome.findings);
+        combined
+            .action_plan
+            .actions
+            .append(&mut outcome.action_plan.actions);
     }
 
     combined

@@ -1,3 +1,5 @@
+use crate::actions::model::ActionPlan;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindingSeverity {
     Info,
@@ -37,12 +39,14 @@ impl RuleFinding {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuleOutcome {
     pub findings: Vec<RuleFinding>,
+    pub action_plan: ActionPlan,
 }
 
 impl RuleOutcome {
     pub fn new() -> Self {
         Self {
             findings: Vec::new(),
+            action_plan: ActionPlan::new(),
         }
     }
 
