@@ -110,6 +110,7 @@ fn map_merge_request(dto: MergeRequestDto) -> MergeRequestDetails {
         is_draft: dto.draft,
         web_url: dto.web_url,
         author_username: dto.author.username,
+        reviewer_usernames: dto.reviewers.into_iter().map(|u| u.username).collect(),
     }
 }
 
@@ -162,6 +163,14 @@ mod tests {
             author: crate::gitlab::dto::AuthorDto {
                 username: "arthur".to_string(),
             },
+            reviewers: vec![
+                crate::gitlab::dto::UserDto {
+                    username: "bob".to_string(),
+                },
+                crate::gitlab::dto::UserDto {
+                    username: "carol".to_string(),
+                },
+            ],
         };
 
         let details = map_merge_request(dto);
@@ -171,6 +180,10 @@ mod tests {
         assert_eq!(details.state, MergeRequestState::Opened);
         assert!(details.is_draft);
         assert_eq!(details.author_username, "arthur");
+        assert_eq!(
+            details.reviewer_usernames,
+            vec!["bob".to_string(), "carol".to_string()]
+        );
     }
 
     #[test]

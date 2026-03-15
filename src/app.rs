@@ -146,6 +146,14 @@ fn print_snapshot_details(snapshot: &MergeRequestSnapshot) {
     println!("- [Draft] {}", snapshot.details.is_draft);
     println!("- [WebUrl] {}", snapshot.details.web_url);
     println!("- [Author] {}", snapshot.details.author_username);
+    if snapshot.details.reviewer_usernames.is_empty() {
+        println!("- [Reviewers] none");
+    } else {
+        println!(
+            "- [Reviewers] {}",
+            snapshot.details.reviewer_usernames.join(", ")
+        );
+    }
     println!("- [ChangedFiles] {}", snapshot.changed_file_count());
 
     if let Some(description) = &snapshot.details.description {

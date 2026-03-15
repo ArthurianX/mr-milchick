@@ -27,6 +27,7 @@ pub struct MergeRequestDetails {
     pub is_draft: bool,
     pub web_url: String,
     pub author_username: String,
+    pub reviewer_usernames: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

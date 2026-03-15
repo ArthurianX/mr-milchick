@@ -24,11 +24,31 @@ pub fn enrich_with_reviewer_assignment(
         return outcome;
     }
 
-    if !recommendation.reviewers.is_empty() {
-        outcome.action_plan.push(Action::AssignReviewers {
-            reviewers: recommendation.reviewers,
-        });
+    let missing_reviewers: Vec<String> = recommendation
+        .reviewers
+        .into_iter()
+        .filter(|reviewer| {
+            !snapshot
+                .details
+                .reviewer_usernames
+                .iter()
+                .any(|existing| existing == reviewer)
+        })
+        .collect();
+
+    if missing_reviewers.is_empty() {
+        if !snapshot.details.reviewer_usernames.is_empty() {
+            outcome.push(RuleFinding::info(
+                "All recommended reviewers are already assigned.",
+            ));
+        }
+
+        return outcome;
     }
+
+    outcome.action_plan.push(Action::AssignReviewers {
+        reviewers: missing_reviewers,
+    });
 
     outcome
 }
@@ -42,7 +62,10 @@ mod tests {
     };
     use crate::rules::model::RuleOutcome;
 
-    fn sample_snapshot(is_draft: bool) -> MergeRequestSnapshot {
+    fn sample_snapshot(
+        is_draft: bool,
+        existing_reviewers: Vec<&str>,
+    ) -> MergeRequestSnapshot {
         MergeRequestSnapshot {
             details: MergeRequestDetails {
                 iid: 1,
@@ -52,6 +75,10 @@ mod tests {
                 is_draft,
                 web_url: "https://gitlab.example.com/mr/1".to_string(),
                 author_username: "alice".to_string(),
+                reviewer_usernames: existing_reviewers
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             },
             changed_files: vec![ChangedFile {
                 old_path: "apps/frontend/button_old.tsx".to_string(),
@@ -66,7 +93,7 @@ mod tests {
     #[test]
     fn adds_assign_reviewers_action_when_recommendation_exists_for_non_draft() {
         let outcome = RuleOutcome::new();
-        let snapshot = sample_snapshot(false);
+        let snapshot = sample_snapshot(false, vec![]);
         let config = ReviewerRoutingConfig::example();
 
         let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
@@ -84,7 +111,7 @@ mod tests {
     #[test]
     fn does_not_assign_reviewers_for_draft_merge_request() {
         let outcome = RuleOutcome::new();
-        let snapshot = sample_snapshot(true);
+        let snapshot = sample_snapshot(true, vec![]);
         let config = ReviewerRoutingConfig::example();
 
         let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
@@ -94,5 +121,68 @@ mod tests {
         assert!(enriched.findings[0]
             .message
             .contains("deferred because the merge request is draft"));
+    }
+
+    #[test]
+    fn does_not_plan_assignment_when_recommended_reviewers_are_already_present() {
+        let outcome = RuleOutcome::new();
+        let snapshot = sample_snapshot(false, vec!["bob"]);
+        let config = ReviewerRoutingConfig::example();
+
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
+
+        assert!(enriched.action_plan.is_empty());
+        assert_eq!(enriched.findings.len(), 1);
+        assert!(enriched.findings[0]
+            .message
+            .contains("already assigned"));
+    }
+
+    #[test]
+    fn only_plans_missing_reviewers() {
+        let outcome = RuleOutcome::new();
+
+        let snapshot = MergeRequestSnapshot {
+            details: MergeRequestDetails {
+                iid: 1,
+                title: "Cross-area adjustments".to_string(),
+                description: None,
+                state: MergeRequestState::Opened,
+                is_draft: false,
+                web_url: "https://gitlab.example.com/mr/1".to_string(),
+                author_username: "alice".to_string(),
+                reviewer_usernames: vec!["carol".to_string()],
+            },
+            changed_files: vec![
+                ChangedFile {
+                    old_path: "services/api/old.rs".to_string(),
+                    new_path: "services/api/main.rs".to_string(),
+                    is_new: false,
+                    is_renamed: false,
+                    is_deleted: false,
+                },
+                ChangedFile {
+                    old_path: "apps/frontend/old.tsx".to_string(),
+                    new_path: "apps/frontend/app.tsx".to_string(),
+                    is_new: false,
+                    is_renamed: false,
+                    is_deleted: false,
+                },
+            ],
+        };
+
+        let mut config = ReviewerRoutingConfig::example();
+        config.max_reviewers = 2;
+
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
+
+        assert_eq!(enriched.action_plan.actions.len(), 1);
+
+        match &enriched.action_plan.actions[0] {
+            Action::AssignReviewers { reviewers } => {
+                assert_eq!(reviewers, &vec!["bob".to_string()]);
+            }
+            _ => panic!("expected AssignReviewers action"),
+        }
     }
 }

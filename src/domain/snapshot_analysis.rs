@@ -28,6 +28,7 @@ mod tests {
                 is_draft: false,
                 web_url: "".into(),
                 author_username: "arthur".into(),
+                reviewer_usernames: vec![],
             },
             changed_files: vec![
                 ChangedFile {

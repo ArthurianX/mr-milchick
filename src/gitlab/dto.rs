@@ -9,10 +9,16 @@ pub struct MergeRequestDto {
     pub draft: bool,
     pub web_url: String,
     pub author: AuthorDto,
+    pub reviewers: Vec<UserDto>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthorDto {
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserDto {
     pub username: String,
 }
 
