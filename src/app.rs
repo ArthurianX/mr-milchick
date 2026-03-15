@@ -76,11 +76,11 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
                 println!("Merge request details:");
                 println!("- [Title] {}", mr.title);
-                println!("- [State] {}", mr.state);
-                println!("- [Draft] {}", mr.draft);
+                println!("- [State] {}", mr.state.as_str());
+                println!("- [Draft] {}", mr.is_draft);
                 println!("- [WebUrl] {}", mr.web_url);
 
-                if let Some(description) = mr.description {
+                if let Some(description) = &mr.description {
                     if !description.trim().is_empty() {
                         println!("- [Description] {}", description);
                     }
