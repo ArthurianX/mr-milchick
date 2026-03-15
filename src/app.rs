@@ -75,6 +75,19 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 let snapshot = client
                     .get_merge_request_snapshot(ctx.project_id(), mr_iid)
                     .await?;
+                use crate::domain::snapshot_analysis::summarize_areas;
+
+                let area_summary = summarize_areas(&snapshot);
+
+                println!("Area summary:");
+
+                for (area, count) in &area_summary.counts {
+                    println!("- [{}] {}", area.as_str(), count);
+                }
+
+                if let Some(dominant) = area_summary.dominant_area() {
+                    println!("Dominant area: {}", dominant.as_str());
+                }
 
                 println!("Merge request details:");
                 println!("- [Title] {}", snapshot.details.title);

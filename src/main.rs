@@ -8,6 +8,7 @@ mod gitlab;
 mod output;
 mod rules;
 mod tone;
+mod domain;
 
 use anyhow::Result;
 use clap::Parser;
