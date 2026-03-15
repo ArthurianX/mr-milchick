@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::cli::Cli;
 use crate::context::builder::build_ci_context;
+use crate::rules::engine::evaluate_rules;
 use crate::tone::{ToneCategory, ToneSelector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,21 +28,48 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
         return Ok(());
     }
 
+    let outcome = evaluate_rules(&ctx);
+
     match mode {
         ExecutionMode::Observe => {
-            println!("No actions were performed.");
-            println!("{ctx:#?}");
+            print_outcome(&outcome);
+
+            if outcome.is_empty() {
+                println!("{}", selector.select(ToneCategory::Resolution, &ctx));
+            }
         }
         ExecutionMode::Refine => {
-            println!("{}", selector.select(ToneCategory::Refinement, &ctx));
+            if outcome.has_blocking_findings() {
+                println!("{}", selector.select(ToneCategory::Blocking, &ctx));
+            } else if outcome.is_empty() {
+                println!("{}", selector.select(ToneCategory::Resolution, &ctx));
+            } else {
+                println!("{}", selector.select(ToneCategory::Refinement, &ctx));
+            }
+
+            print_outcome(&outcome);
             println!("No actions have been implemented yet.");
-            println!("{ctx:#?}");
+
+            if outcome.has_blocking_findings() {
+                anyhow::bail!("merge request policy requirements were not satisfied");
+            }
         }
         ExecutionMode::Explain => {
-            println!("Decision explanation is not yet available.");
-            println!("{ctx:#?}");
+            println!("Decision explanation:");
+            print_outcome(&outcome);
         }
     }
 
     Ok(())
+}
+
+fn print_outcome(outcome: &crate::rules::model::RuleOutcome) {
+    if outcome.is_empty() {
+        println!("No findings were produced.");
+        return;
+    }
+
+    for finding in &outcome.findings {
+        println!("- [{:?}] {}", finding.severity, finding.message);
+    }
 }
