@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+use crate::app::ExecutionMode;
+
 #[derive(Debug, Parser)]
 #[command(name = "mr-milchick")]
 #[command(about = "A pleasantly unsettling steward for GitLab merge requests")]
@@ -18,4 +20,14 @@ pub enum Command {
 
     /// Explain decision-making in greater detail
     Explain,
+}
+
+impl From<Command> for ExecutionMode {
+    fn from(value: Command) -> Self {
+        match value {
+            Command::Observe => ExecutionMode::Observe,
+            Command::Refine => ExecutionMode::Refine,
+            Command::Explain => ExecutionMode::Explain,
+        }
+    }
 }
