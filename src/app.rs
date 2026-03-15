@@ -72,17 +72,46 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             if let Some(mr_iid) = ctx.merge_request_iid() {
                 let config = GitLabConfig::from_env()?;
                 let client = GitLabClient::new(config);
-                let mr = client.get_merge_request(ctx.project_id(), mr_iid).await?;
+                let snapshot = client
+                    .get_merge_request_snapshot(ctx.project_id(), mr_iid)
+                    .await?;
 
                 println!("Merge request details:");
-                println!("- [Title] {}", mr.title);
-                println!("- [State] {}", mr.state.as_str());
-                println!("- [Draft] {}", mr.is_draft);
-                println!("- [WebUrl] {}", mr.web_url);
+                println!("- [Title] {}", snapshot.details.title);
+                println!("- [State] {}", snapshot.details.state.as_str());
+                println!("- [Draft] {}", snapshot.details.is_draft);
+                println!("- [WebUrl] {}", snapshot.details.web_url);
+                println!("- [ChangedFiles] {}", snapshot.changed_file_count());
 
-                if let Some(description) = &mr.description {
+                if let Some(description) = &snapshot.details.description {
                     if !description.trim().is_empty() {
                         println!("- [Description] {}", description);
+                    }
+                }
+
+                let max_files_to_print = 20;
+                let total_files = snapshot.changed_files.len();
+
+                if total_files == 0 {
+                    println!("No changed files were reported.");
+                } else {
+                    println!("Changed files:");
+
+                    for file in snapshot.changed_files.iter().take(max_files_to_print) {
+                        println!(
+                            "- {}{}{}{}",
+                            file.new_path,
+                            if file.is_new { " [new]" } else { "" },
+                            if file.is_renamed { " [renamed]" } else { "" },
+                            if file.is_deleted { " [deleted]" } else { "" },
+                        );
+                    }
+
+                    if total_files > max_files_to_print {
+                        println!(
+                            "- ... and {} more file(s) not shown.",
+                            total_files - max_files_to_print
+                        );
                     }
                 }
             }

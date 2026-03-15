@@ -48,3 +48,24 @@ impl MergeRequestState {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedFile {
+    pub old_path: String,
+    pub new_path: String,
+    pub is_new: bool,
+    pub is_renamed: bool,
+    pub is_deleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeRequestSnapshot {
+    pub details: MergeRequestDetails,
+    pub changed_files: Vec<ChangedFile>,
+}
+
+impl MergeRequestSnapshot {
+    pub fn changed_file_count(&self) -> usize {
+        self.changed_files.len()
+    }
+}
