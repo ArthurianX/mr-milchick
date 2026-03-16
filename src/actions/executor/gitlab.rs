@@ -15,9 +15,21 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
     fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport> {
         let mut report = ExecutionReport::default();
 
+        let existing_notes = block_on(
+            self.client
+                .get_merge_request_notes(self.project_id, self.merge_request_iid),
+        )?;
+
         for action in &plan.actions {
             match action {
                 Action::AssignReviewers { reviewers } => {
+                    if reviewers.is_empty() {
+                        report.executed.push(ExecutedAction::ReviewersSkippedAlreadyPresent {
+                            reviewers: reviewers.clone(),
+                        });
+                        continue;
+                    }
+
                     block_on(self.client.assign_reviewers(
                         self.project_id,
                         self.merge_request_iid,
@@ -29,6 +41,15 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
                     });
                 }
                 Action::PostComment { body } => {
+                    let already_present = existing_notes.iter().any(|note| note.trim() == body.trim());
+
+                    if already_present {
+                        report.executed.push(ExecutedAction::CommentSkippedAlreadyPresent {
+                            body: body.clone(),
+                        });
+                        continue;
+                    }
+
                     block_on(self.client.post_comment(
                         self.project_id,
                         self.merge_request_iid,

@@ -9,6 +9,8 @@ pub enum ExecutedAction {
     CommentPlanned { body: String },
     ReviewersPlanned { reviewers: Vec<String> },
     PipelineFailurePlanned { reason: String },
+    CommentSkippedAlreadyPresent { body: String },
+    ReviewersSkippedAlreadyPresent { reviewers: Vec<String> },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

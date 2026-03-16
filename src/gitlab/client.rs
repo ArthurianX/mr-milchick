@@ -193,6 +193,34 @@ impl GitLabClient {
 
         Ok(user.id)
     }
+
+    pub async fn get_merge_request_notes(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+    ) -> Result<Vec<String>> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}/notes",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        let notes = self
+            .http
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .send()
+            .await
+            .context("failed to send merge request notes request to GitLab")?
+            .error_for_status()
+            .context("GitLab returned an error status while fetching merge request notes")?
+            .json::<Vec<crate::gitlab::dto::MergeRequestNoteDto>>()
+            .await
+            .context("failed to deserialize merge request notes response")?;
+
+        Ok(notes.into_iter().map(|n| n.body).collect())
+    }
 }
 
 fn map_merge_request(dto: MergeRequestDto) -> MergeRequestDetails {

@@ -250,6 +250,15 @@ fn print_execution_report(report: &ExecutionReport) {
             ExecutedAction::PipelineFailurePlanned { reason } => {
                 println!("- [PipelineFailurePlanned] {}", reason);
             }
+            ExecutedAction::CommentSkippedAlreadyPresent { body } => {
+                println!("- [CommentSkippedAlreadyPresent] {}", body);
+            }
+            ExecutedAction::ReviewersSkippedAlreadyPresent { reviewers } => {
+                println!(
+                    "- [ReviewersSkippedAlreadyPresent] {}",
+                    reviewers.join(", ")
+                );
+            }
         }
     }
 }

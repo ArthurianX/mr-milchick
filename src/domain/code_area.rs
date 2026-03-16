@@ -14,7 +14,7 @@ impl CodeArea {
         match self {
             CodeArea::Frontend => "frontend",
             CodeArea::Backend => "backend",
-            CodeArea::Shared => "shared",
+            CodeArea::Shared => "packages",
             CodeArea::DevOps => "devops",
             CodeArea::Documentation => "documentation",
             CodeArea::Tests => "tests",
