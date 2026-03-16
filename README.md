@@ -6,11 +6,11 @@ Mr. Milchick observes.
 Mr. Milchick refines.
 Mr. Milchick ensures structural harmony.
 
-This project is a Rust-based CLI tool designed to run inside GitLab CI pipelines and enforce merge request policies through calm, polite, and deeply committed automation.
+This project is a Rust-based CLI tool designed to run inside GitLab CI pipelines and enforce merge request governance through calm, structured, policy‑driven automation.
 
-It is not a bot.
-It is not a service.
-It is not a platform.
+It is not a bot.  
+It is not a service.  
+It is not a platform.  
 
 It is a binary that cares.
 
@@ -21,31 +21,30 @@ It is a binary that cares.
 Mr. Milchick exists to:
 
 - enforce merge request workflow policies
-- assign reviewers intelligently
-- validate labels and branch conventions
-- guide developers toward structural compliance
-- reduce human coordination overhead
-- introduce a mild but controlled sense of existential discomfort
+- assign reviewers deterministically
+- integrate CODEOWNERS intelligence into routing
+- validate labels, branches and MR topology
+- reduce coordination overhead in engineering teams
+- provide explainable governance decisions
 
-This tool is designed for organizations where:
+This tool is intended for environments where:
 
-- GitLab apps or integrations are restricted
-- external bots are difficult to approve
-- pipeline-native automation is preferred
-- workflow governance must be deterministic and auditable
+- GitLab Apps or external bots are restricted
+- pipeline‑native automation is preferred
+- workflow enforcement must be auditable
+- governance logic must live in version control
 
 ---
 
 ## Philosophy
 
-Mr. Milchick operates under the following principles:
+Mr. Milchick operates under these principles:
 
-### Deterministic behavior
-Automation must be predictable.  
-The same merge request should produce the same outcomes.
+### Determinism over improvisation
+The same merge request must produce the same outcome.
 
 ### Policy as code
-Workflow rules live in version control and evolve through review.
+Workflow governance evolves through normal code review.
 
 ### Calm enforcement
 Strict automation does not need to be hostile.  
@@ -58,17 +57,18 @@ Tone is part of system design.
 ### Minimal infrastructure
 No servers.  
 No daemons.  
-No long-lived tokens outside CI.
+No persistent runtime.  
 
-Only the pipeline.  
-Only the process.
+Only CI.  
+Only execution.
 
 ---
 
 ## Command Model
 
-Mr. Milchick currently supports:
-```shell
+Mr. Milchick supports three operational modes:
+
+```
 mr-milchick observe
 mr-milchick refine
 mr-milchick explain
@@ -76,30 +76,71 @@ mr-milchick explain
 
 ### observe
 
-Performs a dry-run evaluation of the merge request.
+Policy evaluation dry‑run.
 
-- Reads GitLab CI context
-- Fetches MR metadata (future)
-- Evaluates workflow rules
-- Produces an action plan
-- Does not mutate GitLab state
+- reads CI context
+- builds MR snapshot
+- evaluates rule engine
+- produces action plan
+- does NOT mutate GitLab
 
 ### refine
 
-Executes the approved action plan.
+Executes the planned governance actions.
 
 May:
 
 - assign reviewers
-- post comments
-- enforce policy gates
-- fail the pipeline when required
+- post summary comments
+- enforce blocking policies
+- fail pipeline when required
 
 ### explain
 
-Provides detailed reasoning behind decisions.
+Produces deep reasoning output.
 
-This command is intended for debugging policy behavior and understanding automation outcomes.
+Used for:
+
+- debugging policy behavior
+- understanding reviewer routing
+- validating ownership logic
+- inspecting rule outcomes
+
+---
+
+## Execution Flags
+
+Mr. Milchick behavior is controlled through runtime flags and environment context.
+
+### Dry‑Run Mode
+
+```
+MR_MILCHICK_DRY_RUN=true
+```
+
+Forces execution into non‑mutating mode even when running `refine`.
+
+Used for:
+
+- safe rollout
+- CI experimentation
+- policy validation
+
+### CODEOWNERS Integration
+
+```
+MR_MILCHICK_CODEOWNERS_PATH=.gitlab/CODEOWNERS
+```
+
+Enables:
+
+- ownership‑aware reviewer routing
+- per‑file ownership aggregation
+- hybrid routing (ownership + topology config)
+
+If not provided:
+
+- routing falls back to configured domain reviewers
 
 ---
 
@@ -109,143 +150,152 @@ Mr. Milchick communicates using structured tonal categories:
 
 - Observation
 - Refinement Opportunity
-- Pleasant Resolution
 - Blocking Experience
+- Pleasant Resolution
 - Praise (future)
 
-Tone selection is:
+Tone is:
 
-- deterministic per merge request (default)
-- configurable in future versions
-- designed to be unsettling but professional
+- deterministic per merge request
+- architecture‑level, not cosmetic
+- designed for institutional acceptance
 
-The goal is not humor.
-
-The goal is **compliant emotional atmosphere**.
+Tone is not humor.  
+Tone is operational ergonomics.
 
 ---
 
-
 ## Architecture Overview
 
-```shell
-CI Context + GitLab Data
+```
+CI Context
 ↓
-Rules Engine
+GitLab Snapshot Intelligence
 ↓
-Action Plan
+Rule Engine
 ↓
-Execution Layer
+Ownership Intelligence
+↓
+Reviewer Routing
+↓
+Action Planner
+↓
+Execution Strategy
 ↓
 Structured Output
 ```
 
-Key architectural boundaries:
+Key architectural domains:
 
 ### context/
-Handles CI environment parsing and normalization.
+CI parsing, normalization, execution mode inference.
 
 ### gitlab/
-Responsible for API communication and DTO mapping.
+Snapshot client, DTO mapping, mutation API layer.
 
 ### rules/
-Pure policy logic. No side effects.
+Pure governance logic. No side effects.
+
+### codeowners/
+Ownership parsing and matching engine.
+
+### routing/
+Reviewer selection logic (topology + ownership).
 
 ### actions/
-Executes GitLab mutations safely and idempotently.
+Action planning and execution abstraction.
 
 ### tone/
-Narrative engine for user-facing communication.
+Deterministic narrative rendering.
 
 ### output/
-Human-readable reporting for CI logs.
+Human‑readable CI reporting and MR comments.
 
 ---
 
 ## Why Rust
 
-This project uses Rust because:
+Mr. Milchick is written in Rust because:
 
-- static binaries simplify CI integration
-- strong typing reduces workflow automation risk
-- async performance is suitable for API-heavy pipelines
-- ownership model encourages explicit design
-- long-term maintainability matters
+- static binaries simplify CI distribution
+- strong typing reduces governance risk
+- async model suits API‑bound execution
+- ownership model enforces architectural clarity
+- long‑term maintainability is required
 
-This is not a scripting experiment.  
-This is intended to be durable infrastructure.
-
----
-
-## Development Status
-
-Current phase:
-
-**Chapter 1 — CLI Skeleton + Tone Engine**
-
-Upcoming:
-
-- Strongly typed CI context
-- GitLab API client
-- Rule engine v1
-- Action execution layer
-- Deterministic tone selection
-- Policy configuration model
-- Integration testing strategy
+This is not a scripting utility.  
+This is governance infrastructure.
 
 ---
 
-## Example Local Run
+## Current Capabilities
 
-```shell
+As of current development phase:
+
+- strongly typed CI context model
+- GitLab MR snapshot ingestion
+- rule engine with severity classification
+- deterministic reviewer routing
+- hybrid CODEOWNERS + config routing
+- action planning layer
+- dry‑run execution strategy
+- structured summary comment rendering
+- explain mode parity with refine logic
+
+---
+
+## Example Local Execution
+
+```
 CI_PROJECT_ID=123
 CI_MERGE_REQUEST_IID=456
 CI_PIPELINE_SOURCE=merge_request_event
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop
 CI_MERGE_REQUEST_LABELS="backend,needs-review"
+MR_MILCHICK_DRY_RUN=true
+
 cargo run -- observe
 ```
-
 
 Mr. Milchick will begin observation.
 
 ---
 
-## Long-Term Vision
+## Long‑Term Direction
 
-Future capabilities may include:
+Planned system evolution includes:
 
-- CODEOWNERS-aware reviewer routing
-- risk-based merge request scoring
-- policy severity levels
-- workflow analytics
-- praise reinforcement system
-- configurable tone intensity
-- team-aware behavioral tuning
+- merge request risk scoring engine
+- reviewer load balancing
+- policy DSL for organizational governance
+- workflow analytics layer
+- adaptive tone intensity
+- merge readiness intelligence
+- team topology awareness
 
-The objective is not merely automation.
+The objective is not automation.
 
-The objective is **workflow civilization**.
+The objective is engineering civilization.
 
 ---
 
 ## Contributing
 
-Contributions should maintain:
+Contributions must preserve:
 
-- architectural clarity
-- deterministic behavior
-- calm narrative tone
-- strict separation of concerns
+- deterministic system behavior
+- clear architectural boundaries
+- policy clarity over cleverness
+- calm operational tone
 
-Unstructured enthusiasm will be refined.
+Unstructured enthusiasm will be gently redirected.
 
 ---
 
 ## Disclaimer
 
 Mr. Milchick is fictional.  
-The policies he enforces are not.
+The governance he enforces is not.
 
-Proceed responsibly.
+Proceed deliberately.
