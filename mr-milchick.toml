@@ -3,7 +3,7 @@ max_reviewers = 3
 fallback_reviewers = ["arthur.kovacs"]
 
 frontend = ["adrian.nicoara", "alin.salaru", "arthur.kovacs", "beniamin.munteanu", "bogdan.crisu", "iamza", "canghel", "daniel.andrei", "diordache2", "egidar", "ivoinea", "andrei.dirlea", "eradu2", "gneamt", "narcis.buzatu", "ndirzu", "robert.rapiteanu", "cizmas.tudor", "tbadescu"]
-backend = ["bogdan.crisu"]
+backend = ["bogdan.crisu", "beniamin.munteanu"]
 shared = ["bogdan.crisu", "robert.rapiteanu", "tbadescu", "arthur.kovacs"]
 devops = ["arthur.kovacs", "adrian.nicoara", "alin.salaru" ]
 documentation = ["arthur.kovacs", "adrian.nicoara", "alin.salaru" ]

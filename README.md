@@ -1,3 +1,5 @@
+![milchick.jpg](milchick.jpg)
+
 # Mr. Milchick
 
 A pleasantly unsettling steward for GitLab merge requests.
