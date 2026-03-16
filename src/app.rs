@@ -1,13 +1,13 @@
 use anyhow::Result;
 
-use crate::config::loader::load_config;
+use crate::config::loader::{load_config, resolve_codeowners_path};
 use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, ExecutedAction};
 use crate::actions::model::Action;
 use crate::actions::planner::enrich_with_reviewer_assignment;
 use crate::actions::runtime::ExecutionStrategy;
 use crate::cli::Cli;
 use crate::context::builder::build_ci_context;
-use crate::domain::reviewer_routing::{recommend_reviewers, ReviewerRoutingConfig};
+use crate::domain::reviewer_routing::{recommend_reviewers_with_codeowners, ReviewerRoutingConfig};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
@@ -15,16 +15,60 @@ use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
 use crate::comment::render::render_summary_comment;
-use crate::config::loader::resolve_codeowners_path;
 use crate::domain::codeowners::matcher::match_usernames;
 use crate::domain::codeowners::parser::parse_codeowners_file;
 use crate::domain::codeowners::matcher::collect_usernames_for_snapshot;
+use crate::domain::codeowners::context::CodeownersContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
     Observe,
     Refine,
     Explain,
+}
+
+#[derive(Debug, Clone)]
+struct AppConfigContext {
+    routing_config: ReviewerRoutingConfig,
+    codeowners: CodeownersContext,
+}
+
+fn load_app_config_context() -> AppConfigContext {
+    match load_config() {
+        Ok(config) => {
+            let routing_config = ReviewerRoutingConfig::from_config(&config);
+            let codeowners = CodeownersContext {
+                file: resolve_codeowners_path(&config)
+                    .and_then(|path| parse_codeowners_file(&path).ok()),
+            };
+
+            AppConfigContext {
+                routing_config,
+                codeowners,
+            }
+        }
+        Err(_) => AppConfigContext {
+            routing_config: ReviewerRoutingConfig::example(),
+            codeowners: CodeownersContext::empty(),
+        },
+    }
+}
+
+fn codeowners_usernames_for_snapshot(
+    app_config: &AppConfigContext,
+    snapshot: &MergeRequestSnapshot,
+) -> Vec<String> {
+    if let Some(codeowners) = &app_config.codeowners.file {
+        collect_usernames_for_snapshot(codeowners, snapshot)
+    } else {
+        Vec::new()
+    }
+}
+
+fn has_non_comment_actions(plan: &crate::actions::model::ActionPlan) -> bool {
+    plan.actions
+        .iter()
+        .any(|action| !matches!(action, Action::PostComment { .. }))
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -44,33 +88,16 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     }
 
     let mut outcome = evaluate_rules(&ctx);
+    let app_config = load_app_config_context();
 
     let snapshot = maybe_fetch_snapshot(&ctx).await?;
-    let routing_config = match load_config() {
-        Ok(config) => ReviewerRoutingConfig::from_config(&config),
-        Err(_) => ReviewerRoutingConfig::example(),
-    };
 
     if let Some(snapshot) = &snapshot {
-        let codeowners_usernames = if let Ok(config) = load_config() {
-            if let Some(codeowners_path) = resolve_codeowners_path(&config) {
-                if let Ok(codeowners) = parse_codeowners_file(&codeowners_path) {
-                    collect_usernames_for_snapshot(&codeowners, snapshot)
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
         outcome = enrich_with_reviewer_assignment(
             outcome,
             snapshot,
-            &routing_config,
-            &codeowners_usernames,
+            &app_config.routing_config,
+            &app_config.codeowners,
         );
     }
 
@@ -78,20 +105,21 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     outcome
         .action_plan
         .push(Action::PostComment { body: summary_comment });
+    let has_meaningful_actions = has_non_comment_actions(&outcome.action_plan);
 
     match mode {
         ExecutionMode::Observe => {
             print_outcome(&outcome);
             print_action_plan(&outcome);
 
-            if outcome.is_empty() && outcome.action_plan.is_empty() {
+            if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
             }
         }
         ExecutionMode::Refine => {
             if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
                 println!("{}", selector.select(ToneCategory::Blocking, &ctx));
-            } else if outcome.is_empty() && outcome.action_plan.is_empty() {
+            } else if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
             } else {
                 println!("{}", selector.select(ToneCategory::Refinement, &ctx));
@@ -137,8 +165,13 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 }
 
                 let excluded_reviewers = vec![snapshot.details.author_username.clone()];
-                let recommendation =
-                    recommend_reviewers(&area_summary, &routing_config, &excluded_reviewers);
+                let codeowners_usernames = codeowners_usernames_for_snapshot(&app_config, snapshot);
+                let recommendation = recommend_reviewers_with_codeowners(
+                    &area_summary,
+                    &app_config.routing_config,
+                    &excluded_reviewers,
+                    &codeowners_usernames,
+                );
 
                 if recommendation.is_empty() {
                     println!("No reviewer recommendation was produced.");
@@ -156,38 +189,30 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                     }
                 }
 
-                if let Ok(config) = load_config() {
-                    if let Some(codeowners_path) = resolve_codeowners_path(&config) {
-                        if let Ok(codeowners) = parse_codeowners_file(&codeowners_path) {
-                            println!("CODEOWNERS matches:");
+                if let Some(codeowners) = &app_config.codeowners.file {
+                    println!("CODEOWNERS matches:");
 
-                            for file in &snapshot.changed_files {
-                                let owners = match_usernames(&codeowners, &file.new_path);
+                    for file in &snapshot.changed_files {
+                        let owners = match_usernames(codeowners, &file.new_path);
 
-                                if owners.is_empty() {
-                                    println!("- {} => no individual owners", file.new_path);
-                                } else {
-                                    println!("- {} => {}", file.new_path, owners.join(", "));
-                                }
-                            }
+                        if owners.is_empty() {
+                            println!("- {} => no individual owners", file.new_path);
+                        } else {
+                            println!("- {} => {}", file.new_path, owners.join(", "));
                         }
                     }
                 }
 
-                if let Ok(config) = load_config() {
-                    if let Some(codeowners_path) = resolve_codeowners_path(&config) {
-                        if let Ok(codeowners) = parse_codeowners_file(&codeowners_path) {
-                            let usernames = collect_usernames_for_snapshot(&codeowners, snapshot);
+                if app_config.codeowners.is_enabled() {
+                    let usernames = codeowners_usernames_for_snapshot(&app_config, snapshot);
 
-                            println!("CODEOWNERS aggregated usernames:");
+                    println!("CODEOWNERS aggregated usernames:");
 
-                            if usernames.is_empty() {
-                                println!("- none");
-                            } else {
-                                for username in usernames {
-                                    println!("- {}", username);
-                                }
-                            }
+                    if usernames.is_empty() {
+                        println!("- none");
+                    } else {
+                        for username in usernames {
+                            println!("- {}", username);
                         }
                     }
                 }

@@ -1,5 +1,6 @@
 use crate::actions::model::Action;
-use crate::domain::reviewer_routing::{recommend_reviewers, ReviewerRoutingConfig};
+use crate::domain::codeowners::context::CodeownersContext;
+use crate::domain::reviewer_routing::{recommend_reviewers_with_codeowners, ReviewerRoutingConfig};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::MergeRequestSnapshot;
 use crate::rules::model::{RuleFinding, RuleOutcome};
@@ -8,15 +9,22 @@ pub fn enrich_with_reviewer_assignment(
     mut outcome: RuleOutcome,
     snapshot: &MergeRequestSnapshot,
     routing_config: &ReviewerRoutingConfig,
-    codeowners_usernames: &[String],
+    codeowners_ctx: &CodeownersContext,
 ) -> RuleOutcome {
     let area_summary = summarize_areas(snapshot);
     let excluded_reviewers = vec![snapshot.details.author_username.clone()];
-    let recommendation = crate::domain::reviewer_routing::recommend_reviewers_with_codeowners(
+
+    let codeowners_usernames = if let Some(file) = &codeowners_ctx.file {
+        crate::domain::codeowners::matcher::collect_usernames_for_snapshot(file, snapshot)
+    } else {
+        Vec::new()
+    };
+
+    let recommendation = recommend_reviewers_with_codeowners(
         &area_summary,
         routing_config,
         &excluded_reviewers,
-        codeowners_usernames,
+        &codeowners_usernames,
     );
 
     if snapshot.details.is_draft {
@@ -61,6 +69,7 @@ pub fn enrich_with_reviewer_assignment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::codeowners::context::CodeownersContext;
     use crate::domain::reviewer_routing::ReviewerRoutingConfig;
     use crate::gitlab::api::{
         ChangedFile, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState,
@@ -101,7 +110,7 @@ mod tests {
         let snapshot = sample_snapshot(false, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
@@ -119,7 +128,7 @@ mod tests {
         let snapshot = sample_snapshot(true, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
 
         assert!(enriched.action_plan.is_empty());
         assert_eq!(enriched.findings.len(), 1);
@@ -134,7 +143,7 @@ mod tests {
         let snapshot = sample_snapshot(false, vec!["bob"]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
 
         assert!(enriched.action_plan.is_empty());
         assert_eq!(enriched.findings.len(), 1);
@@ -179,7 +188,7 @@ mod tests {
         let mut config = ReviewerRoutingConfig::example();
         config.max_reviewers = 2;
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
@@ -197,7 +206,15 @@ mod tests {
         let snapshot = sample_snapshot(false, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let codeowners = vec!["daniel.andrei".to_string()];
+        let codeowners = CodeownersContext {
+            file: Some(crate::domain::codeowners::model::CodeownersFile {
+                rules: vec![crate::domain::codeowners::model::CodeownersRule {
+                    pattern: "/apps/frontend/".to_string(),
+                    owners: vec!["@daniel.andrei".to_string()],
+                    line_number: 1,
+                }],
+            }),
+        };
 
         let enriched =
             enrich_with_reviewer_assignment(outcome, &snapshot, &config, &codeowners);
