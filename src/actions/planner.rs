@@ -8,11 +8,16 @@ pub fn enrich_with_reviewer_assignment(
     mut outcome: RuleOutcome,
     snapshot: &MergeRequestSnapshot,
     routing_config: &ReviewerRoutingConfig,
+    codeowners_usernames: &[String],
 ) -> RuleOutcome {
     let area_summary = summarize_areas(snapshot);
     let excluded_reviewers = vec![snapshot.details.author_username.clone()];
-    let recommendation =
-        recommend_reviewers(&area_summary, routing_config, &excluded_reviewers);
+    let recommendation = crate::domain::reviewer_routing::recommend_reviewers_with_codeowners(
+        &area_summary,
+        routing_config,
+        &excluded_reviewers,
+        codeowners_usernames,
+    );
 
     if snapshot.details.is_draft {
         if !recommendation.reviewers.is_empty() {
@@ -96,7 +101,7 @@ mod tests {
         let snapshot = sample_snapshot(false, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
@@ -114,7 +119,7 @@ mod tests {
         let snapshot = sample_snapshot(true, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
 
         assert!(enriched.action_plan.is_empty());
         assert_eq!(enriched.findings.len(), 1);
@@ -129,7 +134,7 @@ mod tests {
         let snapshot = sample_snapshot(false, vec!["bob"]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
 
         assert!(enriched.action_plan.is_empty());
         assert_eq!(enriched.findings.len(), 1);
@@ -174,13 +179,37 @@ mod tests {
         let mut config = ReviewerRoutingConfig::example();
         config.max_reviewers = 2;
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &[]);
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
         match &enriched.action_plan.actions[0] {
             Action::AssignReviewers { reviewers } => {
                 assert_eq!(reviewers, &vec!["bob".to_string()]);
+            }
+            _ => panic!("expected AssignReviewers action"),
+        }
+    }
+
+    #[test]
+    fn prefers_codeowners_reviewers_when_provided() {
+        let outcome = RuleOutcome::new();
+        let snapshot = sample_snapshot(false, vec![]);
+        let config = ReviewerRoutingConfig::example();
+
+        let codeowners = vec!["daniel.andrei".to_string()];
+
+        let enriched =
+            enrich_with_reviewer_assignment(outcome, &snapshot, &config, &codeowners);
+
+        assert_eq!(enriched.action_plan.actions.len(), 1);
+
+        match &enriched.action_plan.actions[0] {
+            Action::AssignReviewers { reviewers } => {
+                assert_eq!(
+                    reviewers,
+                    &vec!["daniel.andrei".to_string(), "bob".to_string()]
+                );
             }
             _ => panic!("expected AssignReviewers action"),
         }

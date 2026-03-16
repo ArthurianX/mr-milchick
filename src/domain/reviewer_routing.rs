@@ -137,6 +137,67 @@ pub fn recommend_reviewers(
     ReviewerRecommendation { reviewers, reasons }
 }
 
+pub fn recommend_reviewers_with_codeowners(
+    summary: &MergeRequestAreaSummary,
+    config: &ReviewerRoutingConfig,
+    excluded_reviewers: &[String],
+    codeowners_usernames: &[String],
+) -> ReviewerRecommendation {
+    let mut reviewers = Vec::new();
+    let mut reasons = Vec::new();
+    let mut selected = HashSet::new();
+
+    for username in codeowners_usernames {
+        if reviewers.len() >= config.max_reviewers {
+            reasons.push(format!(
+                "Reviewer selection reached configured limit of {}.",
+                config.max_reviewers
+            ));
+            return ReviewerRecommendation { reviewers, reasons };
+        }
+
+        if excluded_reviewers.iter().any(|excluded| excluded == username) {
+            reasons.push(format!(
+                "Skipped CODEOWNERS reviewer '{}' because they are excluded.",
+                username
+            ));
+            continue;
+        }
+
+        if selected.insert(username.clone()) {
+            reviewers.push(username.clone());
+            reasons.push(format!(
+                "Selected reviewer '{}' from CODEOWNERS.",
+                username
+            ));
+        }
+    }
+
+    let fallback = recommend_reviewers(summary, config, excluded_reviewers);
+
+    for reviewer in fallback.reviewers {
+        if reviewers.len() >= config.max_reviewers {
+            reasons.push(format!(
+                "Reviewer selection reached configured limit of {}.",
+                config.max_reviewers
+            ));
+            break;
+        }
+
+        if selected.insert(reviewer.clone()) {
+            reasons.push(format!(
+                "Selected reviewer '{}' from area routing fallback.",
+                reviewer
+            ));
+            reviewers.push(reviewer);
+        }
+    }
+
+    reasons.extend(fallback.reasons);
+
+    ReviewerRecommendation { reviewers, reasons }
+}
+
 fn first_non_excluded<'a>(pool: &'a [String], excluded: &[String]) -> Option<&'a String> {
     pool.iter()
         .find(|candidate| !excluded.iter().any(|excluded| excluded == *candidate))
@@ -229,5 +290,60 @@ mod tests {
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
         assert_eq!(recommendation.reviewers.len(), 2);
+    }
+
+    #[test]
+    fn prefers_codeowners_reviewers_before_area_routing() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+
+        let config = ReviewerRoutingConfig::example();
+        let excluded = vec![];
+        let codeowners = vec!["daniel.andrei".to_string()];
+
+        let recommendation = recommend_reviewers_with_codeowners(
+            &summary,
+            &config,
+            &excluded,
+            &codeowners,
+        );
+
+        assert_eq!(recommendation.reviewers[0], "daniel.andrei");
+    }
+
+    #[test]
+    fn excludes_author_from_codeowners_candidates() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+
+        let config = ReviewerRoutingConfig::example();
+        let excluded = vec!["daniel.andrei".to_string()];
+        let codeowners = vec!["daniel.andrei".to_string(), "andrei.achim".to_string()];
+
+        let recommendation = recommend_reviewers_with_codeowners(
+            &summary,
+            &config,
+            &excluded,
+            &codeowners,
+        );
+
+        assert_eq!(recommendation.reviewers[0], "andrei.achim");
+    }
+
+    #[test]
+    fn falls_back_to_area_routing_when_codeowners_is_empty() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+
+        let config = ReviewerRoutingConfig::example();
+
+        let recommendation = recommend_reviewers_with_codeowners(
+            &summary,
+            &config,
+            &[],
+            &[],
+        );
+
+        assert_eq!(recommendation.reviewers[0], "alice");
     }
 }

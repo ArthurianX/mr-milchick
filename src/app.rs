@@ -18,7 +18,7 @@ use crate::comment::render::render_summary_comment;
 use crate::config::loader::resolve_codeowners_path;
 use crate::domain::codeowners::matcher::match_usernames;
 use crate::domain::codeowners::parser::parse_codeowners_file;
-
+use crate::domain::codeowners::matcher::collect_usernames_for_snapshot;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -52,7 +52,26 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     };
 
     if let Some(snapshot) = &snapshot {
-        outcome = enrich_with_reviewer_assignment(outcome, snapshot, &routing_config);
+        let codeowners_usernames = if let Ok(config) = load_config() {
+            if let Some(codeowners_path) = resolve_codeowners_path(&config) {
+                if let Ok(codeowners) = parse_codeowners_file(&codeowners_path) {
+                    collect_usernames_for_snapshot(&codeowners, snapshot)
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        outcome = enrich_with_reviewer_assignment(
+            outcome,
+            snapshot,
+            &routing_config,
+            &codeowners_usernames,
+        );
     }
 
     let summary_comment = render_summary_comment(&outcome);
@@ -149,6 +168,24 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                                     println!("- {} => no individual owners", file.new_path);
                                 } else {
                                     println!("- {} => {}", file.new_path, owners.join(", "));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Ok(config) = load_config() {
+                    if let Some(codeowners_path) = resolve_codeowners_path(&config) {
+                        if let Ok(codeowners) = parse_codeowners_file(&codeowners_path) {
+                            let usernames = collect_usernames_for_snapshot(&codeowners, snapshot);
+
+                            println!("CODEOWNERS aggregated usernames:");
+
+                            if usernames.is_empty() {
+                                println!("- none");
+                            } else {
+                                for username in usernames {
+                                    println!("- {}", username);
                                 }
                             }
                         }

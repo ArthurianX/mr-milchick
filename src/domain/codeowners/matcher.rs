@@ -1,4 +1,25 @@
 use crate::domain::codeowners::model::{CodeownersFile, CodeownersRule};
+use crate::gitlab::api::MergeRequestSnapshot;
+use std::collections::HashSet;
+
+
+pub fn collect_usernames_for_snapshot(
+    codeowners: &CodeownersFile,
+    snapshot: &MergeRequestSnapshot,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut owners = Vec::new();
+
+    for file in &snapshot.changed_files {
+        for username in match_usernames(codeowners, &file.new_path) {
+            if seen.insert(username.clone()) {
+                owners.push(username);
+            }
+        }
+    }
+
+    owners
+}
 
 pub fn match_owners(codeowners: &CodeownersFile, path: &str) -> Vec<String> {
     for rule in codeowners.rules.iter().rev() {
@@ -138,6 +159,49 @@ mod tests {
         let codeowners = sample_codeowners();
 
         let owners = match_usernames(&codeowners, "packages/proxy/index.ts");
+
+        assert_eq!(
+            owners,
+            vec!["daniel.andrei".to_string(), "andrei.achim".to_string()]
+        );
+    }
+
+    #[test]
+    fn collects_unique_usernames_for_snapshot() {
+        use crate::gitlab::api::{ChangedFile, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState};
+
+        let codeowners = sample_codeowners();
+
+        let snapshot = MergeRequestSnapshot {
+            details: MergeRequestDetails {
+                iid: 1,
+                title: "Test".to_string(),
+                description: None,
+                state: MergeRequestState::Opened,
+                is_draft: false,
+                web_url: "https://example.test".to_string(),
+                author_username: "arthur.kovacs".to_string(),
+                reviewer_usernames: vec![],
+            },
+            changed_files: vec![
+                ChangedFile {
+                    old_path: "".to_string(),
+                    new_path: "packages/proxy/a.ts".to_string(),
+                    is_new: false,
+                    is_renamed: false,
+                    is_deleted: false,
+                },
+                ChangedFile {
+                    old_path: "".to_string(),
+                    new_path: "packages/proxy/b.ts".to_string(),
+                    is_new: false,
+                    is_renamed: false,
+                    is_deleted: false,
+                },
+            ],
+        };
+
+        let owners = collect_usernames_for_snapshot(&codeowners, &snapshot);
 
         assert_eq!(
             owners,
