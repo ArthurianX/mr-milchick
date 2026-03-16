@@ -6,6 +6,7 @@ Then local smoke tests.
 
 Case 1 — epic to develop without label
 ```bash
+MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
@@ -23,6 +24,7 @@ blocking finding printed
 
 Case 2 — same but refine
 ```bash
+MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
@@ -41,6 +43,7 @@ process exits with error
 
 Case 3 — epic with label
 ```bash
+MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
@@ -61,6 +64,7 @@ no failure
 
 Real MR from monorepo
 ```shell
+MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \

@@ -20,6 +20,73 @@ impl GitLabClient {
         }
     }
 
+    pub async fn assign_reviewers(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+        reviewers: &[String],
+    ) -> Result<()> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        let mut reviewer_ids = Vec::with_capacity(reviewers.len());
+
+        for username in reviewers {
+            let user_id = self.resolve_user_id_by_username(username).await?;
+            reviewer_ids.push(user_id);
+        }
+
+        let response = self
+            .http
+            .put(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .json(&serde_json::json!({
+                "reviewer_ids": reviewer_ids
+            }))
+            .send()
+            .await
+            .context("failed to send reviewer assignment request")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            anyhow::bail!("GitLab reviewer assignment failed: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    pub async fn post_comment(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+        body: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}/notes",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        self.http
+            .post(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .json(&serde_json::json!({
+                "body": body
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(())
+    }
+
     pub async fn get_merge_request(
         &self,
         project_id: &str,
@@ -89,7 +156,9 @@ impl GitLabClient {
         project_id: &str,
         merge_request_iid: &str,
     ) -> Result<MergeRequestSnapshot> {
-        let details = self.get_merge_request(project_id, merge_request_iid).await?;
+        let details = self
+            .get_merge_request(project_id, merge_request_iid)
+            .await?;
         let changed_files = self
             .get_merge_request_changes(project_id, merge_request_iid)
             .await?;
@@ -98,6 +167,31 @@ impl GitLabClient {
             details,
             changed_files,
         })
+    }
+
+    pub async fn resolve_user_id_by_username(&self, username: &str) -> Result<u64> {
+        let url = format!("{}/users", self.config.base_url.trim_end_matches('/'));
+
+        let users = self
+            .http
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .query(&[("username", username)])
+            .send()
+            .await
+            .context("failed to send user lookup request to GitLab")?
+            .error_for_status()
+            .context("GitLab returned an error status while looking up user by username")?
+            .json::<Vec<crate::gitlab::dto::UserLookupDto>>()
+            .await
+            .context("failed to deserialize user lookup response")?;
+
+        let user = users
+            .into_iter()
+            .find(|u| u.username.eq_ignore_ascii_case(username))
+            .with_context(|| format!("no GitLab user found for username '{}'", username))?;
+
+        Ok(user.id)
     }
 }
 

@@ -1,3 +1,5 @@
+pub mod gitlab;
+
 use anyhow::Result;
 
 use crate::actions::model::{Action, ActionPlan};

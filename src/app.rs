@@ -66,7 +66,15 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             print_outcome(&outcome);
             print_action_plan(&outcome);
 
-            let executor = DryRunExecutor;
+            let config = GitLabConfig::from_env()?;
+            let client = GitLabClient::new(config);
+
+            let executor = crate::actions::executor::gitlab::GitLabExecutor {
+                client: &client,
+                project_id: ctx.project_id(),
+                merge_request_iid: ctx.merge_request_iid().unwrap(),
+            };
+
             let report = executor.execute(&outcome.action_plan)?;
             print_execution_report(&report);
 

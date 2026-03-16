@@ -35,3 +35,9 @@ pub struct ChangedFileDto {
     pub renamed_file: bool,
     pub deleted_file: bool,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserLookupDto {
+    pub id: u64,
+    pub username: String,
+}
