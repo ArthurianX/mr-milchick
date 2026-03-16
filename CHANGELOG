@@ -1,0 +1,151 @@
+
+
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+This project follows a pragmatic interpretation of Semantic Versioning.
+Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
+
+## [0.1.0] — 2026-03-16
+
+Initial public foundation of Mr Milchick, a deterministic merge-request governance steward designed to operate inside GitLab CI pipelines.
+
+This release establishes the architectural baseline, execution model, and policy enforcement primitives.
+
+### Added
+
+#### Core CLI framework
+- Initial CLI interface with commands:
+  - `observe`
+  - `refine`
+  - `explain`
+- Async runtime execution model
+- Centralized application orchestration layer
+
+#### CI context intelligence
+- Structured parsing of GitLab CI environment variables
+- Merge-request pipeline detection logic
+- Context normalization for rule evaluation
+- Graceful handling of missing CI metadata
+
+#### Rule engine foundation
+- Initial policy evaluation engine
+- Finding severity classification (blocking vs informational)
+- Branch policy validation primitives
+- Deterministic rule evaluation pipeline
+
+#### Tone system (deterministic communication engine)
+- Tone categories:
+  - Observation
+  - Refinement
+  - Resolution
+  - Blocking
+  - Praise (reserved for future behavioral activation)
+- Deterministic tone selection seeded by MR identity
+- Structured message registry
+- Configurable tone mode architecture (future-ready)
+
+#### GitLab snapshot intelligence
+- Initial GitLab API integration layer
+- Merge request snapshot model
+- Changed file surface retrieval
+- Snapshot-driven evaluation entry point
+
+#### Path topology classification
+- File path → engineering domain classification
+- Support for shared / frontend / backend surface detection
+- Aggregated area summary model for routing logic
+
+#### Reviewer routing engine
+- Deterministic reviewer recommendation logic
+- Author exclusion safeguards
+- Dominant area inference for reviewer selection
+- Config-driven routing policy model
+- Max reviewer enforcement
+
+#### CODEOWNERS support
+- CODEOWNERS file parsing and matching engine
+- Per-file ownership resolution
+- Aggregated ownership extraction
+- Hybrid routing policy:
+  - CODEOWNERS preferred
+  - topology routing fallback
+
+#### Action planning system
+- Action planning abstraction separating evaluation from execution
+- Initial action types:
+  - Assign reviewers
+  - Post summary comment
+  - Fail pipeline
+- Deterministic planning flow
+
+#### Execution strategy layer
+- Strategy-driven execution model:
+  - Dry-run executor
+  - GitLab mutation executor
+- Environment-controlled mutation safety
+- Idempotent action execution principles
+
+#### MR communication system
+- Structured summary comment renderer
+- Tone-aligned decision reporting
+- Human-readable governance output
+
+#### Ownership context refactor
+- Introduction of:
+  - `CodeownersContext`
+  - `AppConfigContext`
+- Single-pass CODEOWNERS parsing per run
+- Planner-owned ownership decision logic
+- Alignment between explain and refine decision paths
+
+### Changed
+
+- Reviewer routing now incorporates hybrid ownership + topology logic
+- Summary comment planning behavior standardized
+- Tone resolution alignment improved for final MR state reporting
+- Internal architectural boundaries clarified between:
+  - evaluation
+  - planning
+  - execution
+
+### Fixed
+
+- Inconsistent reviewer recommendation resolution when CODEOWNERS present
+- Tone selection drift between execution modes
+- Planner decision leakage into explain-only pathways
+- Summary comment tone mismatches in non-blocking scenarios
+
+### Architectural Guarantees Established
+
+This release formalizes the following system invariants:
+
+- Deterministic MR evaluation given identical inputs
+- CI-native operation without persistent infrastructure
+- Policy logic isolated from mutation logic
+- Tone generation treated as first-class system concern
+- Ownership intelligence treated as governance signal, not authority override
+
+### Known Limitations
+
+- Risk scoring engine not yet implemented
+- Reviewer load balancing not yet supported
+- Governance DSL not yet available
+- Merge readiness modeling not yet introduced
+- Policy configuration still code-driven
+- Partial GitLab API coverage
+- No persistent decision telemetry
+
+### Project State
+
+At this stage, Mr Milchick has transitioned from:
+
+concept → executable governance engine
+
+Future releases will focus on:
+
+- risk modeling
+- organizational topology awareness
+- policy declarative configuration
+- autonomous merge stewardship
