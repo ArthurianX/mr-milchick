@@ -1,0 +1,47 @@
+stages:
+  - test
+  - build
+  - release
+
+default:
+  image: rust:1.86
+
+variables:
+  CARGO_TERM_COLOR: always
+
+cache:
+  key: "${CI_PROJECT_NAME}"
+  paths:
+    - target/
+    - .cargo/
+
+test:
+  stage: test
+  script:
+    - cargo test --all --locked
+
+build_release_binary:
+  stage: build
+  script:
+    - cargo build --release --locked
+    - mkdir -p dist
+    - cp target/release/mr-milchick dist/mr-milchick
+    - chmod +x dist/mr-milchick
+  artifacts:
+    name: "mr-milchick-${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - dist/mr-milchick
+    expire_in: 30 days
+
+release_binary:
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - echo "Release artifact prepared"
+  artifacts:
+    name: "mr-milchick-release-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - dist/mr-milchick
+    expire_in: 90 days
