@@ -38,9 +38,28 @@ pub fn match_owners(codeowners: &CodeownersFile, path: &str) -> Vec<String> {
 
 pub fn match_usernames(codeowners: &CodeownersFile, path: &str) -> Vec<String> {
     match_owners(codeowners, path)
-        .into_iter()
-        .map(|owner| owner.trim_start_matches('@').to_string())
+}
+
+fn filter_individual_owners(owners: &[String]) -> Vec<String> {
+    owners
+        .iter()
+        .filter_map(|owner| {
+            let normalized = normalize_owner(owner);
+            if normalized.is_empty() || looks_like_team_handle(&normalized) {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
         .collect()
+}
+
+fn looks_like_team_handle(owner: &str) -> bool {
+    matches!(owner, "frontend-maintainers" | "frontend-approvers")
+}
+
+fn normalize_owner(owner: &str) -> String {
+    owner.trim().trim_start_matches('@').to_string()
 }
 
 fn rule_matches(rule: &CodeownersRule, path: &str) -> bool {
@@ -76,25 +95,6 @@ fn normalize_pattern(pattern: &str) -> String {
     }
 }
 
-fn filter_individual_owners(owners: &[String]) -> Vec<String> {
-    owners
-        .iter()
-        .filter(|owner| is_individual_owner(owner))
-        .cloned()
-        .collect()
-}
-
-fn is_individual_owner(owner: &str) -> bool {
-    owner.starts_with('@') && !looks_like_team_handle(owner)
-}
-
-fn looks_like_team_handle(owner: &str) -> bool {
-    matches!(
-        owner,
-        "@frontend-maintainers" | "@frontend-approvers"
-    )
-}
-
 
 
 #[cfg(test)]
@@ -107,12 +107,12 @@ mod tests {
             rules: vec![
                 CodeownersRule {
                     pattern: "/packages/".to_string(),
-                    owners: vec!["@frontend-maintainers".to_string(), "@bogdan.crisu".to_string()],
+                    owners: vec!["frontend-maintainers".to_string(), "bogdan.crisu".to_string()],
                     line_number: 1,
                 },
                 CodeownersRule {
                     pattern: "/packages/proxy/".to_string(),
-                    owners: vec!["@daniel.andrei".to_string(), "@andrei.achim".to_string()],
+                    owners: vec!["daniel.andrei".to_string(), "andrei.achim".to_string()],
                     line_number: 2,
                 },
                 CodeownersRule {
@@ -132,7 +132,7 @@ mod tests {
 
         assert_eq!(
             owners,
-            vec!["@daniel.andrei".to_string(), "@andrei.achim".to_string()]
+            vec!["daniel.andrei".to_string(), "andrei.achim".to_string()]
         );
     }
 
@@ -142,7 +142,7 @@ mod tests {
 
         let owners = match_owners(&codeowners, "packages/button.ts");
 
-        assert_eq!(owners, vec!["@bogdan.crisu".to_string()]);
+        assert_eq!(owners, vec!["bogdan.crisu".to_string()]);
     }
 
     #[test]
@@ -207,6 +207,21 @@ mod tests {
             owners,
             vec!["daniel.andrei".to_string(), "andrei.achim".to_string()]
         );
+    }
+
+    #[test]
+    fn accepts_owners_without_at_prefix() {
+        let codeowners = CodeownersFile {
+            rules: vec![CodeownersRule {
+                pattern: "/packages/".to_string(),
+                owners: vec!["bogdan.crisu".to_string(), "frontend-maintainers".to_string()],
+                line_number: 1,
+            }],
+        };
+
+        let owners = match_owners(&codeowners, "packages/button.ts");
+
+        assert_eq!(owners, vec!["bogdan.crisu".to_string()]);
     }
 }
 

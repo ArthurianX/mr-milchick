@@ -96,7 +96,7 @@ fn is_pattern_only_line(line: &str) -> bool {
 }
 
 fn normalize_owner(owner: &str) -> String {
-    owner.trim().to_string()
+    owner.trim().trim_start_matches('@').to_string()
 }
 
 #[cfg(test)]
@@ -116,11 +116,11 @@ mod tests {
 
         assert_eq!(parsed.rules.len(), 3);
         assert_eq!(parsed.rules[0].pattern, "/packages/");
-        assert_eq!(parsed.rules[0].owners, vec!["@frontend-maintainers", "@bogdan.crisu", "@arthur.kovacs"]);
+        assert_eq!(parsed.rules[0].owners, vec!["frontend-maintainers", "bogdan.crisu", "arthur.kovacs"]);
         assert_eq!(parsed.rules[1].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[1].owners, vec!["@daniel.andrei", "@bogdan.crisu"]);
+        assert_eq!(parsed.rules[1].owners, vec!["daniel.andrei", "bogdan.crisu"]);
         assert_eq!(parsed.rules[2].pattern, "*");
-        assert_eq!(parsed.rules[2].owners, vec!["@frontend-approvers"]);
+        assert_eq!(parsed.rules[2].owners, vec!["frontend-approvers"]);
     }
 
     #[test]
@@ -140,11 +140,11 @@ CODEOWNERS
 
         assert_eq!(parsed.rules.len(), 3);
         assert_eq!(parsed.rules[0].pattern, "CODEOWNERS");
-        assert_eq!(parsed.rules[0].owners, vec!["@arthur.kovacs"]);
+        assert_eq!(parsed.rules[0].owners, vec!["arthur.kovacs"]);
         assert_eq!(parsed.rules[1].pattern, "/packages/");
-        assert_eq!(parsed.rules[1].owners, vec!["@bogdan.crisu", "@arthur.kovacs"]);
+        assert_eq!(parsed.rules[1].owners, vec!["bogdan.crisu", "arthur.kovacs"]);
         assert_eq!(parsed.rules[2].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[2].owners, vec!["@daniel.andrei", "@bogdan.crisu", "@robert.rapiteanu", "@tbadescu", "@arthur.kovacs"]);
+        assert_eq!(parsed.rules[2].owners, vec!["daniel.andrei", "bogdan.crisu", "robert.rapiteanu", "tbadescu", "arthur.kovacs"]);
     }
 
     #[test]
@@ -160,11 +160,11 @@ CODEOWNERS
 
         assert_eq!(parsed.rules.len(), 3);
         assert_eq!(parsed.rules[0].pattern, "/packages/");
-        assert_eq!(parsed.rules[0].owners, vec!["@bogdan.crisu", "@arthur.kovacs"]);
+        assert_eq!(parsed.rules[0].owners, vec!["bogdan.crisu", "arthur.kovacs"]);
         assert_eq!(parsed.rules[1].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[1].owners, vec!["@daniel.andrei", "@bogdan.crisu"]);
+        assert_eq!(parsed.rules[1].owners, vec!["daniel.andrei", "bogdan.crisu"]);
         assert_eq!(parsed.rules[2].pattern, "*");
-        assert_eq!(parsed.rules[2].owners, vec!["@arthur.kovacs"]);
+        assert_eq!(parsed.rules[2].owners, vec!["arthur.kovacs"]);
     }
 
     #[test]
@@ -181,7 +181,7 @@ CODEOWNERS
 
         assert_eq!(parsed.rules.len(), 1);
         assert_eq!(parsed.rules[0].pattern, "*");
-        assert_eq!(parsed.rules[0].owners, vec!["@arthur.kovacs"]);
+        assert_eq!(parsed.rules[0].owners, vec!["arthur.kovacs"]);
     }
 
     #[test]
@@ -196,6 +196,6 @@ CODEOWNERS
 
         assert_eq!(parsed.rules.len(), 1);
         assert_eq!(parsed.rules[0].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[0].owners, vec!["@daniel.andrei", "@bogdan.crisu"]);
+        assert_eq!(parsed.rules[0].owners, vec!["daniel.andrei", "bogdan.crisu"]);
     }
 }
