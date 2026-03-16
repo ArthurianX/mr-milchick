@@ -10,6 +10,7 @@ pub fn render_summary_comment(outcome: &RuleOutcome) -> String {
     lines.push("## Mr. Milchick Review Summary".to_string());
     lines.push(String::new());
     lines.push("Mr. Milchick is reviewing the situation.".to_string());
+    lines.push(String::new());
 
     if outcome.findings.is_empty() {
         lines.push("No findings were produced.".to_string());
@@ -38,16 +39,23 @@ pub fn render_summary_comment(outcome: &RuleOutcome) -> String {
         lines.push("### Planned Actions".to_string());
         lines.push(String::new());
 
+        let mut rendered_action = false;
+
         for action in &outcome.action_plan.actions {
             let text = match action {
-                Action::PostComment { body } => format!("Post comment: {}", body),
+                Action::PostComment { .. } => continue,
                 Action::AssignReviewers { reviewers } => {
                     format!("Assign reviewers: {}", reviewers.join(", "))
                 }
                 Action::FailPipeline { reason } => format!("Fail pipeline: {}", reason),
             };
 
+            rendered_action = true;
             lines.push(format!("- {}", text));
+        }
+
+        if !rendered_action {
+            lines.push("- None".to_string());
         }
     }
 
