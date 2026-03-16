@@ -14,7 +14,7 @@ use crate::gitlab::client::GitLabClient;
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
-
+use crate::comment::render::render_summary_comment;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,11 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     if let Some(snapshot) = &snapshot {
         outcome = enrich_with_reviewer_assignment(outcome, snapshot, &routing_config);
     }
+
+    let summary_comment = render_summary_comment(&outcome);
+    outcome
+        .action_plan
+        .push(Action::PostComment { body: summary_comment });
 
     match mode {
         ExecutionMode::Observe => {

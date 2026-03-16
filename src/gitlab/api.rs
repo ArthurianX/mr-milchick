@@ -71,3 +71,9 @@ impl MergeRequestSnapshot {
         self.changed_files.len()
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeRequestNote {
+    pub id: u64,
+    pub body: String,
+}

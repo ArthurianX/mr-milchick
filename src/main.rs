@@ -10,6 +10,7 @@ mod rules;
 mod tone;
 mod domain;
 mod config;
+mod comment;
 
 use anyhow::Result;
 use clap::Parser;

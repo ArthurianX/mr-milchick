@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 
 use crate::gitlab::api::{
-    ChangedFile, GitLabConfig, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState,
+    ChangedFile, GitLabConfig, MergeRequestDetails, MergeRequestNote, MergeRequestSnapshot,
+    MergeRequestState,
 };
 use crate::gitlab::dto::{ChangedFileDto, MergeRequestChangesDto, MergeRequestDto};
 
@@ -198,7 +199,7 @@ impl GitLabClient {
         &self,
         project_id: &str,
         merge_request_iid: &str,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<MergeRequestNote>> {
         let url = format!(
             "{}/projects/{}/merge_requests/{}/notes",
             self.config.base_url.trim_end_matches('/'),
@@ -219,7 +220,46 @@ impl GitLabClient {
             .await
             .context("failed to deserialize merge request notes response")?;
 
-        Ok(notes.into_iter().map(|n| n.body).collect())
+        Ok(notes
+            .into_iter()
+            .map(|n| MergeRequestNote { id: n.id, body: n.body })
+            .collect())
+    }
+
+    pub async fn update_comment(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+        note_id: u64,
+        body: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}/notes/{}",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid,
+            note_id
+        );
+
+        let response = self
+            .http
+            .put(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .json(&serde_json::json!({
+            "body": body
+        }))
+            .send()
+            .await
+            .context("failed to send comment update request to GitLab")?;
+
+        let status = response.status();
+        let body_text = response.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            anyhow::bail!("GitLab comment update failed: {} - {}", status, body_text);
+        }
+
+        Ok(())
     }
 }
 

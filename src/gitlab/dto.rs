@@ -44,5 +44,6 @@ pub struct UserLookupDto {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeRequestNoteDto {
+    pub id: u64,
     pub body: String,
 }

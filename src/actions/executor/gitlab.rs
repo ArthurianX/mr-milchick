@@ -3,6 +3,7 @@ use async_trait::async_trait;
 
 use crate::actions::executor::{ActionExecutor, ExecutedAction, ExecutionReport};
 use crate::actions::model::{Action, ActionPlan};
+use crate::comment::render::MR_MILCHICK_MARKER;
 use crate::gitlab::client::GitLabClient;
 
 pub struct GitLabExecutor<'a> {
@@ -42,15 +43,43 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
                     });
                 }
                 Action::PostComment { body } => {
-                    let already_present =
-                        existing_notes.iter().any(|note| note.trim() == body.trim());
+                    if body.contains(MR_MILCHICK_MARKER) {
+                        if let Some(existing_note) = existing_notes
+                            .iter()
+                            .find(|note| note.body.contains(MR_MILCHICK_MARKER))
+                        {
+                            if existing_note.body.trim() == body.trim() {
+                                report.executed.push(
+                                    ExecutedAction::CommentSkippedAlreadyPresent {
+                                        body: body.clone(),
+                                    },
+                                );
+                                continue;
+                            }
 
-                    if already_present {
-                        report
-                            .executed
-                            .push(ExecutedAction::CommentSkippedAlreadyPresent {
+                            self.client
+                                .update_comment(
+                                    self.project_id,
+                                    self.merge_request_iid,
+                                    existing_note.id,
+                                    body,
+                                )
+                                .await?;
+
+                            report.executed.push(ExecutedAction::CommentPosted {
                                 body: body.clone(),
                             });
+                            continue;
+                        }
+                    }
+
+                    let already_present =
+                        existing_notes.iter().any(|note| note.body.trim() == body.trim());
+
+                    if already_present {
+                        report.executed.push(ExecutedAction::CommentSkippedAlreadyPresent {
+                            body: body.clone(),
+                        });
                         continue;
                     }
 
