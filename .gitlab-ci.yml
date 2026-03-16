@@ -22,13 +22,17 @@ test:
 
 build_release_binary:
   stage: build
+  image: rust:1.86
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: always
+    - when: never
   script:
     - cargo build --release --locked
     - mkdir -p dist
     - cp target/release/mr-milchick dist/mr-milchick
     - chmod +x dist/mr-milchick
   artifacts:
-    name: "mr-milchick-${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
     paths:
       - dist/mr-milchick
     expire_in: 30 days
