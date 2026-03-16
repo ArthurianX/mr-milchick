@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::config::model::MrMilchickConfig;
 use crate::domain::area_summary::MergeRequestAreaSummary;
 use crate::domain::code_area::CodeArea;
 
@@ -11,30 +12,41 @@ pub struct ReviewerRoutingConfig {
 }
 
 impl ReviewerRoutingConfig {
-    pub fn example() -> Self {
+    pub fn from_config(config: &MrMilchickConfig) -> Self {
         let mut reviewers_by_area = HashMap::new();
 
+        reviewers_by_area.insert(CodeArea::Frontend, config.reviewers.frontend.clone());
+        reviewers_by_area.insert(CodeArea::Backend, config.reviewers.backend.clone());
+        reviewers_by_area.insert(CodeArea::Shared, config.reviewers.shared.clone());
+        reviewers_by_area.insert(CodeArea::DevOps, config.reviewers.devops.clone());
         reviewers_by_area.insert(
-            CodeArea::Frontend,
-            vec!["alice".to_string(), "bob".to_string()],
+            CodeArea::Documentation,
+            config.reviewers.documentation.clone(),
         );
-        reviewers_by_area.insert(
-            CodeArea::Backend,
-            vec!["carol".to_string(), "dave".to_string()],
-        );
-        reviewers_by_area.insert(
-            CodeArea::Shared,
-            vec!["erin".to_string(), "frank".to_string()],
-        );
-        reviewers_by_area.insert(CodeArea::DevOps, vec!["grace".to_string()]);
-        reviewers_by_area.insert(CodeArea::Documentation, vec!["heidi".to_string()]);
-        reviewers_by_area.insert(CodeArea::Tests, vec!["ivan".to_string()]);
+        reviewers_by_area.insert(CodeArea::Tests, config.reviewers.tests.clone());
 
         Self {
             reviewers_by_area,
-            fallback_reviewers: vec!["milchick-duty".to_string()],
-            max_reviewers: 2,
+            fallback_reviewers: config.reviewers.fallback_reviewers.clone(),
+            max_reviewers: config.reviewers.max_reviewers,
         }
+    }
+
+    pub fn example() -> Self {
+        let raw = MrMilchickConfig {
+            reviewers: crate::config::model::ReviewerConfig {
+                max_reviewers: 2,
+                fallback_reviewers: vec!["milchick-duty".to_string()],
+                frontend: vec!["alice".to_string(), "bob".to_string()],
+                backend: vec!["carol".to_string(), "dave".to_string()],
+                shared: vec!["erin".to_string(), "frank".to_string()],
+                devops: vec!["grace".to_string()],
+                documentation: vec!["heidi".to_string()],
+                tests: vec!["ivan".to_string()],
+            },
+        };
+
+        Self::from_config(&raw)
     }
 }
 

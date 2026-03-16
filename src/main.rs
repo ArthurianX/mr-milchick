@@ -9,6 +9,7 @@ mod output;
 mod rules;
 mod tone;
 mod domain;
+mod config;
 
 use anyhow::Result;
 use clap::Parser;

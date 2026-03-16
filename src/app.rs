@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::config::loader::load_config;
 use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, ExecutedAction};
 use crate::actions::model::Action;
 use crate::actions::planner::enrich_with_reviewer_assignment;
@@ -12,6 +13,7 @@ use crate::gitlab::client::GitLabClient;
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -39,7 +41,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     let mut outcome = evaluate_rules(&ctx);
 
     let snapshot = maybe_fetch_snapshot(&ctx).await?;
-    let routing_config = ReviewerRoutingConfig::example();
+    let routing_config = match load_config() {
+        Ok(config) => ReviewerRoutingConfig::from_config(&config),
+        Err(_) => ReviewerRoutingConfig::example(),
+    };
 
     if let Some(snapshot) = &snapshot {
         outcome = enrich_with_reviewer_assignment(outcome, snapshot, &routing_config);
