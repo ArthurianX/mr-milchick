@@ -17,9 +17,6 @@ pub fn evaluate_branch_policy(ctx: &CiContext) -> RuleOutcome {
             outcome.push(RuleFinding::blocking(message.clone()));
             outcome
                 .action_plan
-                .push(Action::PostComment { body: message.clone() });
-            outcome
-                .action_plan
                 .push(Action::FailPipeline { reason: message });
         } else {
             outcome.push(RuleFinding::info(format!(
@@ -67,13 +64,9 @@ mod tests {
         assert!(outcome.has_blocking_findings());
         assert_eq!(outcome.findings.len(), 1);
         assert!(outcome.findings[0].message.contains("0. run-tests"));
-        assert_eq!(outcome.action_plan.actions.len(), 2);
+        assert_eq!(outcome.action_plan.actions.len(), 1);
         assert!(matches!(
             outcome.action_plan.actions[0],
-            Action::PostComment { .. }
-        ));
-        assert!(matches!(
-            outcome.action_plan.actions[1],
             Action::FailPipeline { .. }
         ));
     }

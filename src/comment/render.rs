@@ -9,6 +9,7 @@ pub fn render_summary_comment(outcome: &RuleOutcome) -> String {
     lines.push(MR_MILCHICK_MARKER.to_string());
     lines.push("## Mr. Milchick Review Summary".to_string());
     lines.push(String::new());
+    lines.push("Mr. Milchick is reviewing the situation.".to_string());
 
     if outcome.findings.is_empty() {
         lines.push("No findings were produced.".to_string());
@@ -51,7 +52,14 @@ pub fn render_summary_comment(outcome: &RuleOutcome) -> String {
     }
 
     lines.push(String::new());
-    lines.push("_The matter has been handled pleasantly._".to_string());
+
+    if outcome.has_blocking_findings() || outcome.action_plan.has_fail_pipeline() {
+        lines.push("_This merge request is not yet ready for a music dance experience._".to_string());
+    } else if outcome.is_empty() && outcome.action_plan.is_empty() {
+        lines.push("_The matter has been handled pleasantly._".to_string());
+    } else {
+        lines.push("_A refinement opportunity has been identified._".to_string());
+    }
 
     lines.join("\n")
 }
@@ -78,5 +86,6 @@ mod tests {
         assert!(comment.contains("## Mr. Milchick Review Summary"));
         assert!(comment.contains("**Blocking**: Missing label."));
         assert!(comment.contains("Fail pipeline: Missing label."));
+        assert!(comment.contains("music dance experience"));
     }
 }
