@@ -72,6 +72,11 @@ fn has_non_comment_actions(plan: &crate::actions::model::ActionPlan) -> bool {
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
+    if matches!(cli.command, crate::cli::Command::Version) {
+        crate::cli::print_version();
+        return Ok(());
+    }
+
     let mode: ExecutionMode = cli.command.into();
     run_mode(mode).await
 }

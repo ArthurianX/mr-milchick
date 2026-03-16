@@ -76,6 +76,14 @@ mr-milchick refine
 mr-milchick explain
 ```
 
+I mean ... four if we're being honest: 
+```
+mr-milchick version
+
+OUTPUT > mr-milchick 0.1.0 (2076d86 2026-03-16)
+```
+
+
 ### observe
 
 Policy evaluation dry‑run.
@@ -107,6 +115,17 @@ Used for:
 - understanding reviewer routing
 - validating ownership logic
 - inspecting rule outcomes
+
+### version
+
+Prints the binary version, git SHA and build date.
+
+```
+mr-milchick version
+→ mr-milchick 0.1.0 (3f2c8ab 2026-03-16)
+```
+
+Useful for confirming which build is active in a pipeline without triggering any evaluation logic.
 
 ---
 
