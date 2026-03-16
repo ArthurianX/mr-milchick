@@ -31,32 +31,26 @@ pub fn render_summary_comment(outcome: &RuleOutcome) -> String {
 
     lines.push(String::new());
 
-    if outcome.action_plan.actions.is_empty() {
-        lines.push("### Planned Actions".to_string());
-        lines.push(String::new());
+    lines.push("### Planned Actions".to_string());
+    lines.push(String::new());
+
+    let mut rendered_action = false;
+
+    for action in &outcome.action_plan.actions {
+        let text = match action {
+            Action::PostComment { .. } => continue,
+            Action::AssignReviewers { reviewers } => {
+                format!("Assign reviewers: {}", reviewers.join(", "))
+            }
+            Action::FailPipeline { reason } => format!("Fail pipeline: {}", reason),
+        };
+
+        rendered_action = true;
+        lines.push(format!("- {}", text));
+    }
+
+    if !rendered_action {
         lines.push("- None".to_string());
-    } else {
-        lines.push("### Planned Actions".to_string());
-        lines.push(String::new());
-
-        let mut rendered_action = false;
-
-        for action in &outcome.action_plan.actions {
-            let text = match action {
-                Action::PostComment { .. } => continue,
-                Action::AssignReviewers { reviewers } => {
-                    format!("Assign reviewers: {}", reviewers.join(", "))
-                }
-                Action::FailPipeline { reason } => format!("Fail pipeline: {}", reason),
-            };
-
-            rendered_action = true;
-            lines.push(format!("- {}", text));
-        }
-
-        if !rendered_action {
-            lines.push("- None".to_string());
-        }
     }
 
     lines.push(String::new());

@@ -90,6 +90,11 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             println!("Decision explanation:");
             print_outcome(&outcome);
             print_action_plan(&outcome);
+            let summary_comment = render_summary_comment(&outcome);
+            println!("Structured summary comment preview:");
+            println!("---");
+            println!("{}", summary_comment);
+            println!("---");
 
             if let Some(snapshot) = &snapshot {
                 print_snapshot_details(snapshot);
