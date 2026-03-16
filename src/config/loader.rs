@@ -2,7 +2,6 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use tracing::debug;
 
 use crate::config::model::MrMilchickConfig;
 
@@ -25,38 +24,17 @@ pub fn load_config_from(path: impl AsRef<Path>) -> Result<MrMilchickConfig> {
 }
 
 pub fn resolve_codeowners_path(config: &crate::config::model::MrMilchickConfig) -> Option<String> {
-    let raw_env = std::env::var("MR_MILCHICK_CODEOWNERS_PATH").ok();
-    debug!(raw_env = ?raw_env, "MR_MILCHICK_CODEOWNERS_PATH env value");
-
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "<unavailable>".to_string());
-    debug!(cwd = %cwd, "current working directory");
-
-    let resolved = match raw_env {
-        Some(ref path) if !path.trim().is_empty() => Some(path.clone()),
-        _ => config
-            .codeowners
-            .as_ref()
-            .filter(|c| c.enabled)
-            .map(|c| c.path.clone()),
-    };
-
-    match &resolved {
-        Some(path) => {
-            let absolute = Path::new(path)
-                .canonicalize()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| format!("{} (could not canonicalize)", path));
-            let exists = Path::new(path).exists();
-            debug!(resolved_path = %path, absolute_path = %absolute, exists = %exists, "resolved CODEOWNERS path");
-        }
-        None => {
-            debug!("no CODEOWNERS path resolved — codeowners disabled or not configured");
+    if let Ok(path) = std::env::var("MR_MILCHICK_CODEOWNERS_PATH") {
+        if !path.trim().is_empty() {
+            return Some(path);
         }
     }
 
-    resolved
+    config
+        .codeowners
+        .as_ref()
+        .filter(|c| c.enabled)
+        .map(|c| c.path.clone())
 }
 
 #[cfg(test)]
