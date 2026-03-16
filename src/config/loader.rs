@@ -23,6 +23,20 @@ pub fn load_config_from(path: impl AsRef<Path>) -> Result<MrMilchickConfig> {
     Ok(config)
 }
 
+pub fn resolve_codeowners_path(config: &crate::config::model::MrMilchickConfig) -> Option<String> {
+    if let Ok(path) = std::env::var("MR_MILCHICK_CODEOWNERS_PATH") {
+        if !path.trim().is_empty() {
+            return Some(path);
+        }
+    }
+
+    config
+        .codeowners
+        .as_ref()
+        .filter(|c| c.enabled)
+        .map(|c| c.path.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

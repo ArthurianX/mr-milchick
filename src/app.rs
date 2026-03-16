@@ -15,6 +15,9 @@ use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
 use crate::comment::render::render_summary_comment;
+use crate::config::loader::resolve_codeowners_path;
+use crate::domain::codeowners::matcher::match_usernames;
+use crate::domain::codeowners::parser::parse_codeowners_file;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +134,24 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
                     for reason in &recommendation.reasons {
                         println!("- {}", reason);
+                    }
+                }
+
+                if let Ok(config) = load_config() {
+                    if let Some(codeowners_path) = resolve_codeowners_path(&config) {
+                        if let Ok(codeowners) = parse_codeowners_file(&codeowners_path) {
+                            println!("CODEOWNERS matches:");
+
+                            for file in &snapshot.changed_files {
+                                let owners = match_usernames(&codeowners, &file.new_path);
+
+                                if owners.is_empty() {
+                                    println!("- {} => no individual owners", file.new_path);
+                                } else {
+                                    println!("- {} => {}", file.new_path, owners.join(", "));
+                                }
+                            }
+                        }
                     }
                 }
             }

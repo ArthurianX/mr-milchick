@@ -9,5 +9,6 @@ devops = ["arthur.kovacs", "adrian.nicoara", "alin.salaru" ]
 documentation = ["arthur.kovacs", "adrian.nicoara", "alin.salaru" ]
 tests = ["arthur.kovacs", "adrian.nicoara", "diordache2" ]
 
-
-
+[codeowners]
+enabled = true
+path = "CODEOWNERS"

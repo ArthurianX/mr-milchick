@@ -3,6 +3,10 @@ name = "mr-milchick"
 version = "0.1.0"
 edition = "2024"
 
+[codeowners]
+path = "CODEOWNERS"
+enabled = true
+
 [dependencies]
 async-trait = "0.1.89"
 anyhow = "1"

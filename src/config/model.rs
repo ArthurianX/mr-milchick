@@ -3,6 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct MrMilchickConfig {
     pub reviewers: ReviewerConfig,
+    pub codeowners: Option<CodeownersConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -15,4 +16,10 @@ pub struct ReviewerConfig {
     pub devops: Vec<String>,
     pub documentation: Vec<String>,
     pub tests: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodeownersConfig {
+    pub enabled: bool,
+    pub path: String,
 }

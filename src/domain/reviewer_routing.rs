@@ -44,6 +44,7 @@ impl ReviewerRoutingConfig {
                 documentation: vec!["heidi".to_string()],
                 tests: vec!["ivan".to_string()],
             },
+            codeowners: None,
         };
 
         Self::from_config(&raw)

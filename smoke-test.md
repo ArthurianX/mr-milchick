@@ -24,6 +24,7 @@ blocking finding printed
 
 Case 2 — same but refine
 ```bash
+MR_MILCHICK_CODEOWNERS_PATH=.github/CODEOWNERS \
 MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
@@ -43,6 +44,7 @@ process exits with error
 
 Case 3 — epic with label
 ```bash
+MR_MILCHICK_CODEOWNERS_PATH=.github/CODEOWNERS \
 MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
@@ -64,6 +66,7 @@ no failure
 
 Real MR from monorepo
 ```shell
+MR_MILCHICK_CODEOWNERS_PATH=.github/CODEOWNERS \
 MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
