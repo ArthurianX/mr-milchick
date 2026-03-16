@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures::executor::block_on;
+use async_trait::async_trait;
 
 use crate::actions::executor::{ActionExecutor, ExecutedAction, ExecutionReport};
 use crate::actions::model::{Action, ActionPlan};
@@ -11,52 +11,54 @@ pub struct GitLabExecutor<'a> {
     pub merge_request_iid: &'a str,
 }
 
+#[async_trait]
 impl<'a> ActionExecutor for GitLabExecutor<'a> {
-    fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport> {
+    async fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport> {
         let mut report = ExecutionReport::default();
 
-        let existing_notes = block_on(
-            self.client
-                .get_merge_request_notes(self.project_id, self.merge_request_iid),
-        )?;
+        let existing_notes = self
+            .client
+            .get_merge_request_notes(self.project_id, self.merge_request_iid)
+            .await?;
 
         for action in &plan.actions {
             match action {
                 Action::AssignReviewers { reviewers } => {
                     if reviewers.is_empty() {
-                        report.executed.push(ExecutedAction::ReviewersSkippedAlreadyPresent {
-                            reviewers: reviewers.clone(),
-                        });
+                        report
+                            .executed
+                            .push(ExecutedAction::ReviewersSkippedAlreadyPresent {
+                                reviewers: reviewers.clone(),
+                            });
                         continue;
                     }
 
-                    block_on(self.client.assign_reviewers(
-                        self.project_id,
-                        self.merge_request_iid,
-                        reviewers,
-                    ))?;
+                    self.client
+                        .assign_reviewers(self.project_id, self.merge_request_iid, reviewers)
+                        .await?;
 
-                    report.executed.push(ExecutedAction::ReviewersPlanned {
+                    report.executed.push(ExecutedAction::ReviewersAssigned {
                         reviewers: reviewers.clone(),
                     });
                 }
                 Action::PostComment { body } => {
-                    let already_present = existing_notes.iter().any(|note| note.trim() == body.trim());
+                    let already_present =
+                        existing_notes.iter().any(|note| note.trim() == body.trim());
 
                     if already_present {
-                        report.executed.push(ExecutedAction::CommentSkippedAlreadyPresent {
-                            body: body.clone(),
-                        });
+                        report
+                            .executed
+                            .push(ExecutedAction::CommentSkippedAlreadyPresent {
+                                body: body.clone(),
+                            });
                         continue;
                     }
 
-                    block_on(self.client.post_comment(
-                        self.project_id,
-                        self.merge_request_iid,
-                        body,
-                    ))?;
+                    self.client
+                        .post_comment(self.project_id, self.merge_request_iid, body)
+                        .await?;
 
-                    report.executed.push(ExecutedAction::CommentPlanned {
+                    report.executed.push(ExecutedAction::CommentPosted {
                         body: body.clone(),
                     });
                 }

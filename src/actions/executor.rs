@@ -1,13 +1,14 @@
 pub mod gitlab;
 
 use anyhow::Result;
+use async_trait::async_trait;
 
 use crate::actions::model::{Action, ActionPlan};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutedAction {
-    CommentPlanned { body: String },
-    ReviewersPlanned { reviewers: Vec<String> },
+    CommentPosted { body: String },
+    ReviewersAssigned { reviewers: Vec<String> },
     PipelineFailurePlanned { reason: String },
     CommentSkippedAlreadyPresent { body: String },
     ReviewersSkippedAlreadyPresent { reviewers: Vec<String> },
@@ -24,23 +25,25 @@ impl ExecutionReport {
     }
 }
 
+#[async_trait]
 pub trait ActionExecutor {
-    fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport>;
+    async fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport>;
 }
 
 #[derive(Debug, Default)]
 pub struct DryRunExecutor;
 
+#[async_trait]
 impl ActionExecutor for DryRunExecutor {
-    fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport> {
+    async fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport> {
         let mut report = ExecutionReport::default();
 
         for action in &plan.actions {
             let executed = match action {
-                Action::PostComment { body } => ExecutedAction::CommentPlanned {
+                Action::PostComment { body } => ExecutedAction::CommentPosted {
                     body: body.clone(),
                 },
-                Action::AssignReviewers { reviewers } => ExecutedAction::ReviewersPlanned {
+                Action::AssignReviewers { reviewers } => ExecutedAction::ReviewersAssigned {
                     reviewers: reviewers.clone(),
                 },
                 Action::FailPipeline { reason } => ExecutedAction::PipelineFailurePlanned {
@@ -60,8 +63,8 @@ mod tests {
     use super::*;
     use crate::actions::model::{Action, ActionPlan};
 
-    #[test]
-    fn dry_run_executor_reports_actions_without_side_effects() {
+    #[tokio::test]
+    async fn dry_run_executor_reports_actions_without_side_effects() {
         let mut plan = ActionPlan::new();
         plan.push(Action::PostComment {
             body: "A refinement opportunity has been identified.".to_string(),
@@ -71,12 +74,12 @@ mod tests {
         });
 
         let executor = DryRunExecutor;
-        let report = executor.execute(&plan).expect("dry run should succeed");
+        let report = executor.execute(&plan).await.expect("dry run should succeed");
 
         assert_eq!(report.executed.len(), 2);
         assert!(matches!(
             report.executed[0],
-            ExecutedAction::CommentPlanned { .. }
+            ExecutedAction::CommentPosted { .. }
         ));
         assert!(matches!(
             report.executed[1],

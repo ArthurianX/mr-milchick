@@ -4,6 +4,7 @@ use crate::config::loader::load_config;
 use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, ExecutedAction};
 use crate::actions::model::Action;
 use crate::actions::planner::enrich_with_reviewer_assignment;
+use crate::actions::runtime::ExecutionStrategy;
 use crate::cli::Cli;
 use crate::context::builder::build_ci_context;
 use crate::domain::reviewer_routing::{recommend_reviewers, ReviewerRoutingConfig};
@@ -13,6 +14,7 @@ use crate::gitlab::client::GitLabClient;
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
+
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,16 +73,8 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             print_outcome(&outcome);
             print_action_plan(&outcome);
 
-            let config = GitLabConfig::from_env()?;
-            let client = GitLabClient::new(config);
-
-            let executor = crate::actions::executor::gitlab::GitLabExecutor {
-                client: &client,
-                project_id: ctx.project_id(),
-                merge_request_iid: ctx.merge_request_iid().unwrap(),
-            };
-
-            let report = executor.execute(&outcome.action_plan)?;
+            let strategy = ExecutionStrategy::from_env();
+            let report = execute_action_plan(strategy, &ctx, &outcome.action_plan).await?;
             print_execution_report(&report);
 
             if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
@@ -136,6 +130,34 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     Ok(())
 }
 
+async fn execute_action_plan(
+    strategy: ExecutionStrategy,
+    ctx: &crate::context::model::CiContext,
+    plan: &crate::actions::model::ActionPlan,
+) -> Result<ExecutionReport> {
+    match strategy {
+        ExecutionStrategy::DryRun => {
+            let executor = DryRunExecutor;
+            executor.execute(plan).await
+        }
+        ExecutionStrategy::Real => {
+            let mr_iid = ctx
+                .merge_request_iid()
+                .ok_or_else(|| anyhow::anyhow!("missing merge request IID for execution"))?;
+
+            let config = GitLabConfig::from_env()?;
+            let client = GitLabClient::new(config);
+
+            let executor = crate::actions::executor::gitlab::GitLabExecutor {
+                client: &client,
+                project_id: ctx.project_id(),
+                merge_request_iid: mr_iid,
+            };
+
+            executor.execute(plan).await
+        }
+    }
+}
 async fn maybe_fetch_snapshot(
     ctx: &crate::context::model::CiContext,
 ) -> Result<Option<MergeRequestSnapshot>> {
@@ -246,11 +268,11 @@ fn print_execution_report(report: &ExecutionReport) {
 
     for executed in &report.executed {
         match executed {
-            ExecutedAction::CommentPlanned { body } => {
-                println!("- [CommentPlanned] {}", body);
+            ExecutedAction::CommentPosted { body } => {
+                println!("- [CommentPosted] {}", body);
             }
-            ExecutedAction::ReviewersPlanned { reviewers } => {
-                println!("- [ReviewersPlanned] {}", reviewers.join(", "));
+            ExecutedAction::ReviewersAssigned { reviewers } => {
+                println!("- [ReviewersAssigned] {}", reviewers.join(", "));
             }
             ExecutedAction::PipelineFailurePlanned { reason } => {
                 println!("- [PipelineFailurePlanned] {}", reason);
