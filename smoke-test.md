@@ -6,6 +6,7 @@ Then local smoke tests.
 
 Case 1 — epic to develop without label
 ```bash
+MR_MILCHICK_CODEOWNERS_PATH=.github/CODEOWNERS \
 MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
@@ -36,11 +37,10 @@ cargo run -- refine
 ```
 Expected:
 
-blocking tone
-
-blocking finding
-
-process exits with error
+- blocking tone
+- blocking finding
+- structured Mr Milchick summary comment planned
+- process exits with error
 
 Case 3 — epic with label
 ```bash
@@ -57,11 +57,10 @@ cargo run -- observe
 
 Expected:
 
-info finding
-
-no blocking
-
-no failure
+- info finding
+- no blocking
+- no failure
+- structured Mr Milchick summary comment planned
 
 
 Real MR from monorepo
@@ -71,8 +70,16 @@ MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/real-monorepo-change \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 cargo run -- explain
 ```
+
+Expected:
+
+- decision explanation
+- structured summary comment preview
+- changed files listed
+- CODEOWNERS matches listed
+- no GitLab mutation because dry-run is enabled
