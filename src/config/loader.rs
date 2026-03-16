@@ -2,7 +2,6 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use tracing::debug;
 
 use crate::config::model::MrMilchickConfig;
 
@@ -26,12 +25,12 @@ pub fn load_config_from(path: impl AsRef<Path>) -> Result<MrMilchickConfig> {
 
 pub fn resolve_codeowners_path(config: &crate::config::model::MrMilchickConfig) -> Option<String> {
     let raw_env = std::env::var("MR_MILCHICK_CODEOWNERS_PATH").ok();
-    debug!(raw_env = ?raw_env, "MR_MILCHICK_CODEOWNERS_PATH env value");
+    eprintln!("[mr-milchick] CODEOWNERS env: {:?}", raw_env);
 
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "<unavailable>".to_string());
-    debug!(cwd = %cwd, "current working directory");
+    eprintln!("[mr-milchick] working directory: {}", cwd);
 
     let resolved = match raw_env {
         Some(ref path) if !path.trim().is_empty() => Some(path.clone()),
@@ -47,12 +46,14 @@ pub fn resolve_codeowners_path(config: &crate::config::model::MrMilchickConfig) 
             let absolute = Path::new(path)
                 .canonicalize()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| format!("{} (could not canonicalize)", path));
+                .unwrap_or_else(|_| format!("{} (could not canonicalize — file may not exist)", path));
             let exists = Path::new(path).exists();
-            debug!(resolved_path = %path, absolute_path = %absolute, exists = %exists, "resolved CODEOWNERS path");
+            eprintln!("[mr-milchick] CODEOWNERS resolved: {}", path);
+            eprintln!("[mr-milchick] CODEOWNERS absolute: {}", absolute);
+            eprintln!("[mr-milchick] CODEOWNERS exists:   {}", exists);
         }
         None => {
-            debug!("no CODEOWNERS path resolved — codeowners disabled or not configured");
+            eprintln!("[mr-milchick] CODEOWNERS: not resolved (disabled or not configured)");
         }
     }
 
