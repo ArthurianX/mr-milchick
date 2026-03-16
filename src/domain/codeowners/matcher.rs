@@ -1,17 +1,18 @@
 use crate::domain::codeowners::model::{CodeownersFile, CodeownersRule};
 
 pub fn match_owners(codeowners: &CodeownersFile, path: &str) -> Vec<String> {
-    let mut matched_rule: Option<&CodeownersRule> = None;
+    for rule in codeowners.rules.iter().rev() {
+        if !rule_matches(rule, path) {
+            continue;
+        }
 
-    for rule in &codeowners.rules {
-        if rule_matches(rule, path) {
-            matched_rule = Some(rule);
+        let individual_owners = filter_individual_owners(&rule.owners);
+        if !individual_owners.is_empty() {
+            return individual_owners;
         }
     }
 
-    matched_rule
-        .map(|rule| filter_individual_owners(&rule.owners))
-        .unwrap_or_default()
+    Vec::new()
 }
 
 pub fn match_usernames(codeowners: &CodeownersFile, path: &str) -> Vec<String> {
