@@ -178,6 +178,7 @@ MR_MILCHICK_MAX_REVIEWERS=2
 ```
 
 Reviewers are supplied by the pipeline as JSON, not by a bundled repo config file.
+Mr. Milchick's runtime configuration is CI env-driven: reviewer routing, CODEOWNERS toggles, and related execution settings are all loaded from environment variables at invocation time.
 
 Each reviewer object can declare:
 

@@ -52,7 +52,7 @@ Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (d
 ## Key Conventions
 
 - **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `context/model.rs`. Always wrap raw strings in domain types.
-- **Config from TOML**: `mr-milchick.toml` defines reviewer pools per `CodeArea` and CODEOWNERS settings. Parsed via `config/loader.rs` into `config/model.rs` structs with `serde::Deserialize`.
+- **Runtime config from environment variables**: `config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`.
 - **GitLab DTO separation**: `gitlab/dto.rs` holds serde-deserialized API responses; `gitlab/api.rs` holds domain models. The client in `gitlab/client.rs` maps DTOs → domain types.
 - **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
 - **Async via tokio**: `#[tokio::main]` in `main.rs`. The `ActionExecutor` trait uses `#[async_trait]`. Only the GitLab client layer and execution are async.
@@ -69,9 +69,9 @@ Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (d
 
 1. Add variant to `CodeArea` enum in `domain/code_area.rs` (with `as_str()`)
 2. Add path matching rules in `domain/path_classifier.rs` — order matters (first match wins)
-3. Add the reviewer pool field to `ReviewerConfig` in `config/model.rs`
-4. Map it in `ReviewerRoutingConfig::from_config()` in `domain/reviewer_routing.rs`
-5. Add the pool to `mr-milchick.toml`
+3. Ensure the new area is recognized by `CodeArea::from_config_key()` in `domain/code_area.rs` if it needs a config key alias
+4. Keep `ReviewerRoutingConfig::from_config()` in `domain/reviewer_routing.rs` compatible with the new area
+5. Update env-based examples and docs that demonstrate `MR_MILCHICK_REVIEWERS` payloads
 
 ## Tone System
 
@@ -93,5 +93,8 @@ Tone is deterministic, not random. Messages are selected by hashing MR identity 
 | `CI_MERGE_REQUEST_LABELS` | No | Comma-separated labels |
 | `GITLAB_TOKEN` | For real execution | GitLab API token |
 | `GITLAB_BASE_URL` | No | Defaults to `https://gitlab.com/api/v4` |
+| `MR_MILCHICK_REVIEWERS` | No | JSON array of reviewer capability objects used for routing |
+| `MR_MILCHICK_MAX_REVIEWERS` | No | Max number of area-routed reviewers to add; defaults to `2` |
 | `MR_MILCHICK_DRY_RUN` | No | `true`/`1`/`yes` to force `refine` into dry-run execution |
-| `MR_MILCHICK_CODEOWNERS_PATH` | No | Overrides CODEOWNERS path from config |
+| `MR_MILCHICK_CODEOWNERS_ENABLED` | No | `true` by default; set to `false` to disable CODEOWNERS routing |
+| `MR_MILCHICK_CODEOWNERS_PATH` | No | Overrides CODEOWNERS auto-discovery path |
