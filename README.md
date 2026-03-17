@@ -139,7 +139,7 @@ Mr. Milchick behavior is controlled through runtime flags and environment contex
 MR_MILCHICK_DRY_RUN=true
 ```
 
-Forces execution into non‑mutating mode even when running `refine`.
+Forces `refine` into non‑mutating mode.
 
 Used for:
 
@@ -274,7 +274,6 @@ CI_PIPELINE_SOURCE=merge_request_event
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop
 CI_MERGE_REQUEST_LABELS="backend,needs-review"
-MR_MILCHICK_DRY_RUN=true
 
 cargo run -- observe
 ```

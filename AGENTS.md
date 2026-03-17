@@ -35,10 +35,9 @@ Tests are co-located with source code (`#[cfg(test)] mod tests` blocks), not in 
 
 ## Local Smoke Testing
 
-The tool reads GitLab CI env vars. For local runs, set them manually. See `smoke-test.md` for complete examples. Minimal invocation:
+The tool reads GitLab CI env vars. For local runs, set them manually. See `docs/local-testing.md` for complete examples. Minimal invocation:
 
 ```bash
-MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
@@ -94,6 +93,5 @@ Tone is deterministic, not random. Messages are selected by hashing MR identity 
 | `CI_MERGE_REQUEST_LABELS` | No | Comma-separated labels |
 | `GITLAB_TOKEN` | For real execution | GitLab API token |
 | `GITLAB_BASE_URL` | No | Defaults to `https://gitlab.com/api/v4` |
-| `MR_MILCHICK_DRY_RUN` | No | `true`/`1`/`yes` to force dry-run |
+| `MR_MILCHICK_DRY_RUN` | No | `true`/`1`/`yes` to force `refine` into dry-run execution |
 | `MR_MILCHICK_CODEOWNERS_PATH` | No | Overrides CODEOWNERS path from config |
-
