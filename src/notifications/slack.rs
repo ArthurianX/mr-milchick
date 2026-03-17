@@ -77,7 +77,7 @@ pub fn render_review_request_message(
     };
 
     format!(
-        "{} Review requested for \"{}\": {} {}",
+        "{}\n\nReview requested for:\n{}\n{}\n\n{}",
         tone_line, title, web_url, reviewers_text
     )
 }
@@ -96,7 +96,7 @@ mod tests {
         );
 
         assert!(message.contains("The department has a request."));
-        assert!(message.contains("\"Improve branch policy\""));
+        assert!(message.contains("Review requested for:\nImprove branch policy"));
         assert!(message.contains("https://gitlab.example.com/group/project/-/merge_requests/1"));
         assert!(message.contains("Assigned reviewers: alice, bob."));
     }
