@@ -2,6 +2,7 @@ pub mod gitlab;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use tracing::{debug, instrument};
 
 use crate::actions::model::{Action, ActionPlan};
 
@@ -35,8 +36,10 @@ pub struct DryRunExecutor;
 
 #[async_trait]
 impl ActionExecutor for DryRunExecutor {
+    #[instrument(skip_all, fields(action_count = plan.actions.len()))]
     async fn execute(&self, plan: &ActionPlan) -> Result<ExecutionReport> {
         let mut report = ExecutionReport::default();
+        debug!("recording planned actions without side effects");
 
         for action in &plan.actions {
             let executed = match action {
@@ -53,6 +56,10 @@ impl ActionExecutor for DryRunExecutor {
 
             report.executed.push(executed);
         }
+        debug!(
+            executed_actions = report.executed.len(),
+            "dry-run execution finished"
+        );
 
         Ok(report)
     }
