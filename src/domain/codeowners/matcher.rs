@@ -2,7 +2,6 @@ use crate::domain::codeowners::model::{CodeownersFile, CodeownersRule};
 use crate::gitlab::api::MergeRequestSnapshot;
 use std::collections::HashSet;
 
-
 pub fn collect_usernames_for_snapshot(
     codeowners: &CodeownersFile,
     snapshot: &MergeRequestSnapshot,
@@ -95,8 +94,6 @@ fn normalize_pattern(pattern: &str) -> String {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,7 +104,10 @@ mod tests {
             rules: vec![
                 CodeownersRule {
                     pattern: "/packages/".to_string(),
-                    owners: vec!["frontend-maintainers".to_string(), "bogdan.crisu".to_string()],
+                    owners: vec![
+                        "frontend-maintainers".to_string(),
+                        "bogdan.crisu".to_string(),
+                    ],
                     line_number: 1,
                 },
                 CodeownersRule {
@@ -168,7 +168,9 @@ mod tests {
 
     #[test]
     fn collects_unique_usernames_for_snapshot() {
-        use crate::gitlab::api::{ChangedFile, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState};
+        use crate::gitlab::api::{
+            ChangedFile, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState,
+        };
 
         let codeowners = sample_codeowners();
 
@@ -214,7 +216,10 @@ mod tests {
         let codeowners = CodeownersFile {
             rules: vec![CodeownersRule {
                 pattern: "/packages/".to_string(),
-                owners: vec!["bogdan.crisu".to_string(), "frontend-maintainers".to_string()],
+                owners: vec![
+                    "bogdan.crisu".to_string(),
+                    "frontend-maintainers".to_string(),
+                ],
                 line_number: 1,
             }],
         };
@@ -224,4 +229,3 @@ mod tests {
         assert_eq!(owners, vec!["bogdan.crisu".to_string()]);
     }
 }
-

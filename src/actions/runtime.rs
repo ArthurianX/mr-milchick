@@ -10,10 +10,6 @@ impl ExecutionStrategy {
             .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
             .unwrap_or(false);
 
-        if dry_run {
-            Self::DryRun
-        } else {
-            Self::Real
-        }
+        if dry_run { Self::DryRun } else { Self::Real }
     }
 }

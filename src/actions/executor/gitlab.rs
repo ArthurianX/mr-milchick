@@ -66,20 +66,23 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
                                 )
                                 .await?;
 
-                            report.executed.push(ExecutedAction::CommentPosted {
-                                body: body.clone(),
-                            });
+                            report
+                                .executed
+                                .push(ExecutedAction::CommentPosted { body: body.clone() });
                             continue;
                         }
                     }
 
-                    let already_present =
-                        existing_notes.iter().any(|note| note.body.trim() == body.trim());
+                    let already_present = existing_notes
+                        .iter()
+                        .any(|note| note.body.trim() == body.trim());
 
                     if already_present {
-                        report.executed.push(ExecutedAction::CommentSkippedAlreadyPresent {
-                            body: body.clone(),
-                        });
+                        report
+                            .executed
+                            .push(ExecutedAction::CommentSkippedAlreadyPresent {
+                                body: body.clone(),
+                            });
                         continue;
                     }
 
@@ -87,14 +90,16 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
                         .post_comment(self.project_id, self.merge_request_iid, body)
                         .await?;
 
-                    report.executed.push(ExecutedAction::CommentPosted {
-                        body: body.clone(),
-                    });
+                    report
+                        .executed
+                        .push(ExecutedAction::CommentPosted { body: body.clone() });
                 }
                 Action::FailPipeline { reason } => {
-                    report.executed.push(ExecutedAction::PipelineFailurePlanned {
-                        reason: reason.clone(),
-                    });
+                    report
+                        .executed
+                        .push(ExecutedAction::PipelineFailurePlanned {
+                            reason: reason.clone(),
+                        });
                 }
             }
         }

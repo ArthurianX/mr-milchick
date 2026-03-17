@@ -16,7 +16,9 @@ pub fn summarize_areas(snapshot: &MergeRequestSnapshot) -> MergeRequestAreaSumma
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gitlab::api::{ChangedFile, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState};
+    use crate::gitlab::api::{
+        ChangedFile, MergeRequestDetails, MergeRequestSnapshot, MergeRequestState,
+    };
 
     fn sample_snapshot() -> MergeRequestSnapshot {
         MergeRequestSnapshot {

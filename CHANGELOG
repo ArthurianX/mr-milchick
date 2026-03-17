@@ -7,6 +7,31 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [0.2.0] — 2026-03-17
+
+Configuration architecture has been intentionally broken and rebuilt around pipeline-provided environment variables.
+
+This release removes the bundled `mr-milchick.toml` model and replaces it with runtime configuration sourced directly from CI.
+
+### Changed
+
+- Reviewer routing is now configured through `MR_MILCHICK_REVIEWERS` JSON instead of repository TOML.
+- `MR_MILCHICK_MAX_REVIEWERS` now controls reviewer selection limits at runtime.
+- CODEOWNERS integration is now controlled through `MR_MILCHICK_CODEOWNERS_ENABLED`, which defaults to `true`.
+- CODEOWNERS path resolution now auto-discovers common file locations when `MR_MILCHICK_CODEOWNERS_PATH` is not set.
+
+### Removed
+
+- `mr-milchick.toml` as a runtime configuration source.
+- Embedded default config fallback baked into the binary.
+- TOML-based reviewer pool configuration.
+
+### Migration Notes
+
+- Pipelines must now provide reviewer capability data explicitly through environment variables.
+- Teams upgrading from `0.1.0` should replace TOML reviewer pools with JSON entries shaped like `{"username":"alice","areas":["frontend","packages"]}`.
+- If CODEOWNERS-based routing should be disabled, set `MR_MILCHICK_CODEOWNERS_ENABLED=false`.
+
 ## [0.1.0] — 2026-03-16
 
 Initial public foundation of Mr Milchick, a deterministic merge-request governance steward designed to operate inside GitLab CI pipelines.

@@ -150,6 +150,7 @@ Used for:
 ### CODEOWNERS Integration
 
 ```
+MR_MILCHICK_CODEOWNERS_ENABLED=true
 MR_MILCHICK_CODEOWNERS_PATH=.gitlab/CODEOWNERS
 ```
 
@@ -157,11 +158,31 @@ Enables:
 
 - ownership‑aware reviewer routing
 - per‑file ownership aggregation
-- hybrid routing (ownership + topology config)
+- hybrid routing (ownership + reviewer capability env)
 
 If not provided:
 
-- routing falls back to configured domain reviewers
+- CODEOWNERS defaults to enabled and Mr. Milchick looks for `CODEOWNERS`, `.github/CODEOWNERS`, `.gitlab/CODEOWNERS`, then `.CODEOWNERS`
+
+### Reviewer Routing Configuration
+
+```
+MR_MILCHICK_REVIEWERS='[
+  {"username":"milchick-duty","fallback":true},
+  {"username":"alice","areas":["frontend","packages"]},
+  {"username":"carol","areas":["backend"]},
+  {"username":"grace","areas":["devops"]}
+]'
+MR_MILCHICK_MAX_REVIEWERS=2
+```
+
+Reviewers are supplied by the pipeline as JSON, not by a bundled repo config file.
+
+Each reviewer object can declare:
+
+- `username`: GitLab username
+- `areas`: list of review capabilities such as `frontend`, `backend`, `packages`, `devops`, `documentation`, `tests`
+- `fallback`: optional boolean that makes the reviewer eligible when no area match can be selected
 
 ---
 
@@ -257,7 +278,7 @@ As of current development phase:
 - GitLab MR snapshot ingestion
 - rule engine with severity classification
 - deterministic reviewer routing
-- hybrid CODEOWNERS + config routing
+- hybrid CODEOWNERS + env routing
 - action planning layer
 - dry‑run execution strategy
 - structured summary comment rendering

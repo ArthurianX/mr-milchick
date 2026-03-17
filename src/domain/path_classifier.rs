@@ -38,7 +38,10 @@ mod tests {
 
     #[test]
     fn detects_frontend() {
-        assert_eq!(classify_path("apps/frontend/button.tsx"), CodeArea::Frontend);
+        assert_eq!(
+            classify_path("apps/frontend/button.tsx"),
+            CodeArea::Frontend
+        );
     }
 
     #[test]

@@ -3,14 +3,14 @@ mod cli;
 mod error;
 
 mod actions;
+mod comment;
+mod config;
 mod context;
+mod domain;
 mod gitlab;
 mod output;
 mod rules;
 mod tone;
-mod domain;
-mod config;
-mod comment;
 
 use anyhow::Result;
 use clap::Parser;
@@ -27,8 +27,7 @@ async fn main() -> Result<()> {
 fn init_tracing() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "mr_milchick=debug,info".to_string()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "mr_milchick=debug,info".to_string()),
         )
         .init();
 }

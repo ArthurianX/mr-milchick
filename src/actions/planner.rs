@@ -1,6 +1,6 @@
 use crate::actions::model::Action;
 use crate::domain::codeowners::context::CodeownersContext;
-use crate::domain::reviewer_routing::{recommend_reviewers_with_codeowners, ReviewerRoutingConfig};
+use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers_with_codeowners};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::MergeRequestSnapshot;
 use crate::rules::model::{RuleFinding, RuleOutcome};
@@ -76,10 +76,7 @@ mod tests {
     };
     use crate::rules::model::RuleOutcome;
 
-    fn sample_snapshot(
-        is_draft: bool,
-        existing_reviewers: Vec<&str>,
-    ) -> MergeRequestSnapshot {
+    fn sample_snapshot(is_draft: bool, existing_reviewers: Vec<&str>) -> MergeRequestSnapshot {
         MergeRequestSnapshot {
             details: MergeRequestDetails {
                 iid: 1,
@@ -110,7 +107,12 @@ mod tests {
         let snapshot = sample_snapshot(false, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
+        let enriched = enrich_with_reviewer_assignment(
+            outcome,
+            &snapshot,
+            &config,
+            &CodeownersContext::empty(),
+        );
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
@@ -128,13 +130,20 @@ mod tests {
         let snapshot = sample_snapshot(true, vec![]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
+        let enriched = enrich_with_reviewer_assignment(
+            outcome,
+            &snapshot,
+            &config,
+            &CodeownersContext::empty(),
+        );
 
         assert!(enriched.action_plan.is_empty());
         assert_eq!(enriched.findings.len(), 1);
-        assert!(enriched.findings[0]
-            .message
-            .contains("deferred because the merge request is draft"));
+        assert!(
+            enriched.findings[0]
+                .message
+                .contains("deferred because the merge request is draft")
+        );
     }
 
     #[test]
@@ -143,13 +152,16 @@ mod tests {
         let snapshot = sample_snapshot(false, vec!["bob"]);
         let config = ReviewerRoutingConfig::example();
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
+        let enriched = enrich_with_reviewer_assignment(
+            outcome,
+            &snapshot,
+            &config,
+            &CodeownersContext::empty(),
+        );
 
         assert!(enriched.action_plan.is_empty());
         assert_eq!(enriched.findings.len(), 1);
-        assert!(enriched.findings[0]
-            .message
-            .contains("already assigned"));
+        assert!(enriched.findings[0].message.contains("already assigned"));
     }
 
     #[test]
@@ -188,7 +200,12 @@ mod tests {
         let mut config = ReviewerRoutingConfig::example();
         config.max_reviewers = 2;
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &CodeownersContext::empty());
+        let enriched = enrich_with_reviewer_assignment(
+            outcome,
+            &snapshot,
+            &config,
+            &CodeownersContext::empty(),
+        );
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
@@ -207,6 +224,7 @@ mod tests {
         let config = ReviewerRoutingConfig::example();
 
         let codeowners = CodeownersContext {
+            enabled: true,
             file: Some(crate::domain::codeowners::model::CodeownersFile {
                 rules: vec![crate::domain::codeowners::model::CodeownersRule {
                     pattern: "/apps/frontend/".to_string(),
@@ -216,8 +234,7 @@ mod tests {
             }),
         };
 
-        let enriched =
-            enrich_with_reviewer_assignment(outcome, &snapshot, &config, &codeowners);
+        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &codeowners);
 
         assert_eq!(enriched.action_plan.actions.len(), 1);
 

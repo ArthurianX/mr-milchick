@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::config::model::MrMilchickConfig;
+use crate::config::model::ReviewerConfig;
 use crate::domain::area_summary::MergeRequestAreaSummary;
 use crate::domain::code_area::CodeArea;
 
@@ -12,39 +12,85 @@ pub struct ReviewerRoutingConfig {
 }
 
 impl ReviewerRoutingConfig {
-    pub fn from_config(config: &MrMilchickConfig) -> Self {
+    pub fn from_config(config: &ReviewerConfig) -> Self {
         let mut reviewers_by_area = HashMap::new();
+        let mut fallback_reviewers = Vec::new();
 
-        reviewers_by_area.insert(CodeArea::Frontend, config.reviewers.frontend.clone());
-        reviewers_by_area.insert(CodeArea::Backend, config.reviewers.backend.clone());
-        reviewers_by_area.insert(CodeArea::Shared, config.reviewers.shared.clone());
-        reviewers_by_area.insert(CodeArea::DevOps, config.reviewers.devops.clone());
-        reviewers_by_area.insert(
-            CodeArea::Documentation,
-            config.reviewers.documentation.clone(),
-        );
-        reviewers_by_area.insert(CodeArea::Tests, config.reviewers.tests.clone());
+        for definition in &config.definitions {
+            if definition.is_fallback {
+                fallback_reviewers.push(definition.username.clone());
+            }
+
+            for area in &definition.areas {
+                reviewers_by_area
+                    .entry(*area)
+                    .or_insert_with(Vec::new)
+                    .push(definition.username.clone());
+            }
+        }
 
         Self {
             reviewers_by_area,
-            fallback_reviewers: config.reviewers.fallback_reviewers.clone(),
-            max_reviewers: config.reviewers.max_reviewers,
+            fallback_reviewers,
+            max_reviewers: config.max_reviewers,
         }
     }
 
     pub fn example() -> Self {
-        let raw = MrMilchickConfig {
-            reviewers: crate::config::model::ReviewerConfig {
-                max_reviewers: 2,
-                fallback_reviewers: vec!["milchick-duty".to_string()],
-                frontend: vec!["alice".to_string(), "bob".to_string()],
-                backend: vec!["carol".to_string(), "dave".to_string()],
-                shared: vec!["erin".to_string(), "frank".to_string()],
-                devops: vec!["grace".to_string()],
-                documentation: vec!["heidi".to_string()],
-                tests: vec!["ivan".to_string()],
-            },
-            codeowners: None,
+        let raw = crate::config::model::ReviewerConfig {
+            definitions: vec![
+                crate::config::model::ReviewerDefinition {
+                    username: "milchick-duty".to_string(),
+                    areas: vec![],
+                    is_fallback: true,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "alice".to_string(),
+                    areas: vec![CodeArea::Frontend],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "bob".to_string(),
+                    areas: vec![CodeArea::Frontend],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "carol".to_string(),
+                    areas: vec![CodeArea::Backend],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "dave".to_string(),
+                    areas: vec![CodeArea::Backend],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "erin".to_string(),
+                    areas: vec![CodeArea::Shared],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "frank".to_string(),
+                    areas: vec![CodeArea::Shared],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "grace".to_string(),
+                    areas: vec![CodeArea::DevOps],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "heidi".to_string(),
+                    areas: vec![CodeArea::Documentation],
+                    is_fallback: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "ivan".to_string(),
+                    areas: vec![CodeArea::Tests],
+                    is_fallback: false,
+                },
+            ],
+            max_reviewers: 2,
         };
 
         Self::from_config(&raw)
@@ -79,7 +125,9 @@ pub fn recommend_reviewers(
             reviewers.push(fallback.clone());
             reasons.push("No dominant area detected; fallback reviewer selected.".to_string());
         } else {
-            reasons.push("No dominant area detected and no eligible fallback reviewer exists.".to_string());
+            reasons.push(
+                "No dominant area detected and no eligible fallback reviewer exists.".to_string(),
+            );
         }
 
         return ReviewerRecommendation { reviewers, reasons };
@@ -95,11 +143,9 @@ pub fn recommend_reviewers(
         }
 
         if let Some(pool) = config.reviewers_by_area.get(&area) {
-            if let Some(candidate) = first_non_excluded_and_unselected(
-                pool,
-                excluded_reviewers,
-                &selected,
-            ) {
+            if let Some(candidate) =
+                first_non_excluded_and_unselected(pool, excluded_reviewers, &selected)
+            {
                 reviewers.push(candidate.clone());
                 selected.insert(candidate.clone());
                 reasons.push(format!(
@@ -128,9 +174,14 @@ pub fn recommend_reviewers(
             &selected,
         ) {
             reviewers.push(fallback.clone());
-            reasons.push("No area reviewer could be selected; fallback reviewer selected.".to_string());
+            reasons.push(
+                "No area reviewer could be selected; fallback reviewer selected.".to_string(),
+            );
         } else {
-            reasons.push("No eligible reviewer could be selected from configured areas or fallback pool.".to_string());
+            reasons.push(
+                "No eligible reviewer could be selected from configured areas or fallback pool."
+                    .to_string(),
+            );
         }
     }
 
@@ -156,7 +207,10 @@ pub fn recommend_reviewers_with_codeowners(
             return ReviewerRecommendation { reviewers, reasons };
         }
 
-        if excluded_reviewers.iter().any(|excluded| excluded == username) {
+        if excluded_reviewers
+            .iter()
+            .any(|excluded| excluded == username)
+        {
             reasons.push(format!(
                 "Skipped CODEOWNERS reviewer '{}' because they are excluded.",
                 username
@@ -166,10 +220,7 @@ pub fn recommend_reviewers_with_codeowners(
 
         if selected.insert(username.clone()) {
             reviewers.push(username.clone());
-            reasons.push(format!(
-                "Selected reviewer '{}' from CODEOWNERS.",
-                username
-            ));
+            reasons.push(format!("Selected reviewer '{}' from CODEOWNERS.", username));
         }
     }
 
@@ -301,12 +352,8 @@ mod tests {
         let excluded = vec![];
         let codeowners = vec!["daniel.andrei".to_string()];
 
-        let recommendation = recommend_reviewers_with_codeowners(
-            &summary,
-            &config,
-            &excluded,
-            &codeowners,
-        );
+        let recommendation =
+            recommend_reviewers_with_codeowners(&summary, &config, &excluded, &codeowners);
 
         assert_eq!(recommendation.reviewers[0], "daniel.andrei");
     }
@@ -320,12 +367,8 @@ mod tests {
         let excluded = vec!["daniel.andrei".to_string()];
         let codeowners = vec!["daniel.andrei".to_string(), "andrei.achim".to_string()];
 
-        let recommendation = recommend_reviewers_with_codeowners(
-            &summary,
-            &config,
-            &excluded,
-            &codeowners,
-        );
+        let recommendation =
+            recommend_reviewers_with_codeowners(&summary, &config, &excluded, &codeowners);
 
         assert_eq!(recommendation.reviewers[0], "andrei.achim");
     }
@@ -337,12 +380,7 @@ mod tests {
 
         let config = ReviewerRoutingConfig::example();
 
-        let recommendation = recommend_reviewers_with_codeowners(
-            &summary,
-            &config,
-            &[],
-            &[],
-        );
+        let recommendation = recommend_reviewers_with_codeowners(&summary, &config, &[], &[]);
 
         assert_eq!(recommendation.reviewers[0], "alice");
     }

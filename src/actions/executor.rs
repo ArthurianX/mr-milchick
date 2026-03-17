@@ -40,9 +40,9 @@ impl ActionExecutor for DryRunExecutor {
 
         for action in &plan.actions {
             let executed = match action {
-                Action::PostComment { body } => ExecutedAction::CommentPosted {
-                    body: body.clone(),
-                },
+                Action::PostComment { body } => {
+                    ExecutedAction::CommentPosted { body: body.clone() }
+                }
                 Action::AssignReviewers { reviewers } => ExecutedAction::ReviewersAssigned {
                     reviewers: reviewers.clone(),
                 },
@@ -74,7 +74,10 @@ mod tests {
         });
 
         let executor = DryRunExecutor;
-        let report = executor.execute(&plan).await.expect("dry run should succeed");
+        let report = executor
+            .execute(&plan)
+            .await
+            .expect("dry run should succeed");
 
         assert_eq!(report.executed.len(), 2);
         assert!(matches!(

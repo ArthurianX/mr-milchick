@@ -16,11 +16,9 @@ pub fn build_ci_context_from(raw: RawCiEnv) -> Result<CiContext> {
 
     let pipeline_source = parse_pipeline_source(raw.pipeline_source);
 
-    let merge_request = raw
-        .merge_request_iid
-        .map(|iid| MergeRequestRef {
-            iid: MergeRequestIid(iid),
-        });
+    let merge_request = raw.merge_request_iid.map(|iid| MergeRequestRef {
+        iid: MergeRequestIid(iid),
+    });
 
     let branches = BranchInfo {
         source: BranchName(raw.source_branch.unwrap_or_default()),

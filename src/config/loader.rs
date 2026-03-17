@@ -1,59 +1,149 @@
-use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::Deserialize;
 
-use crate::config::model::MrMilchickConfig;
+use crate::config::model::{CodeownersConfig, ReviewerConfig, ReviewerDefinition, RuntimeConfig};
+use crate::domain::code_area::CodeArea;
 
-const DEFAULT_CONFIG_PATH: &str = "mr-milchick.toml";
+const DEFAULT_MAX_REVIEWERS: usize = 2;
+const REVIEWERS_ENV: &str = "MR_MILCHICK_REVIEWERS";
+const MAX_REVIEWERS_ENV: &str = "MR_MILCHICK_MAX_REVIEWERS";
+const CODEOWNERS_ENABLED_ENV: &str = "MR_MILCHICK_CODEOWNERS_ENABLED";
+const CODEOWNERS_PATH_ENV: &str = "MR_MILCHICK_CODEOWNERS_PATH";
+const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
+    "CODEOWNERS",
+    ".github/CODEOWNERS",
+    ".gitlab/CODEOWNERS",
+    ".CODEOWNERS",
+];
 
-/// The `mr-milchick.toml` bundled at compile time so the binary is
-/// self-contained when deployed as a CI artifact.
-const EMBEDDED_DEFAULT_CONFIG: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/mr-milchick.toml"
-));
+#[derive(Debug, Clone, Deserialize)]
+struct ReviewerDefinitionDto {
+    username: String,
+    #[serde(default)]
+    areas: Vec<String>,
+    #[serde(default, alias = "fallback")]
+    is_fallback: bool,
+}
 
-pub fn load_config() -> Result<MrMilchickConfig> {
-    match load_config_from(DEFAULT_CONFIG_PATH) {
-        Ok(cfg) => Ok(cfg),
-        Err(_) => {
-            // Fall back to the config baked into the binary at compile time.
-            eprintln!(
-                "mr-milchick: '{}' not found on disk — using embedded default config",
-                DEFAULT_CONFIG_PATH
-            );
-            load_config_from_str(EMBEDDED_DEFAULT_CONFIG, "<embedded>")
+pub fn load_config() -> Result<RuntimeConfig> {
+    Ok(RuntimeConfig {
+        reviewers: load_reviewers_config()?,
+        codeowners: load_codeowners_config()?,
+    })
+}
+
+pub fn resolve_codeowners_path(config: &CodeownersConfig) -> Option<String> {
+    if !config.enabled {
+        return None;
+    }
+
+    if let Some(path) = &config.path {
+        return Some(path.clone());
+    }
+
+    DEFAULT_CODEOWNERS_CANDIDATES
+        .iter()
+        .find(|candidate| Path::new(candidate).exists())
+        .map(|candidate| (*candidate).to_string())
+}
+
+fn load_reviewers_config() -> Result<ReviewerConfig> {
+    let definitions = match std::env::var(REVIEWERS_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => parse_reviewer_definitions(&raw)?,
+        _ => Vec::new(),
+    };
+
+    Ok(ReviewerConfig {
+        definitions,
+        max_reviewers: parse_max_reviewers()?,
+    })
+}
+
+fn load_codeowners_config() -> Result<CodeownersConfig> {
+    let enabled = match std::env::var(CODEOWNERS_ENABLED_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => parse_bool_flag(CODEOWNERS_ENABLED_ENV, &raw)?,
+        _ => true,
+    };
+
+    let path = std::env::var(CODEOWNERS_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Ok(CodeownersConfig { enabled, path })
+}
+
+fn parse_reviewer_definitions(raw: &str) -> Result<Vec<ReviewerDefinition>> {
+    let parsed: Vec<ReviewerDefinitionDto> = serde_json::from_str(raw).with_context(|| {
+        format!(
+            "failed to parse '{}' as JSON reviewer definitions",
+            REVIEWERS_ENV
+        )
+    })?;
+
+    parsed
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let username = item.username.trim();
+            if username.is_empty() {
+                bail!(
+                    "reviewer entry {} in '{}' is missing a username",
+                    index,
+                    REVIEWERS_ENV
+                );
+            }
+
+            let areas = item
+                .areas
+                .into_iter()
+                .map(|area| {
+                    CodeArea::from_config_key(&area).ok_or_else(|| {
+                        anyhow!(
+                            "reviewer '{}' uses unknown area '{}' in '{}'",
+                            username,
+                            area,
+                            REVIEWERS_ENV
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            Ok(ReviewerDefinition {
+                username: username.to_string(),
+                areas,
+                is_fallback: item.is_fallback,
+            })
+        })
+        .collect()
+}
+
+fn parse_max_reviewers() -> Result<usize> {
+    match std::env::var(MAX_REVIEWERS_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => {
+            let value = raw
+                .trim()
+                .parse::<usize>()
+                .with_context(|| format!("'{}' must be a positive integer", MAX_REVIEWERS_ENV))?;
+
+            if value == 0 {
+                bail!("'{}' must be greater than zero", MAX_REVIEWERS_ENV);
+            }
+
+            Ok(value)
         }
+        _ => Ok(DEFAULT_MAX_REVIEWERS),
     }
 }
 
-pub fn load_config_from(path: impl AsRef<Path>) -> Result<MrMilchickConfig> {
-    let path = path.as_ref();
-
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("failed to read config file '{}'", path.display()))?;
-
-    load_config_from_str(&raw, &path.display().to_string())
-}
-
-fn load_config_from_str(raw: &str, label: &str) -> Result<MrMilchickConfig> {
-    toml::from_str::<MrMilchickConfig>(raw)
-        .with_context(|| format!("failed to parse config file '{}'", label))
-}
-
-pub fn resolve_codeowners_path(config: &crate::config::model::MrMilchickConfig) -> Option<String> {
-    if let Ok(path) = std::env::var("MR_MILCHICK_CODEOWNERS_PATH") {
-        if !path.trim().is_empty() {
-            return Some(path);
-        }
+fn parse_bool_flag(name: &str, raw: &str) -> Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => bail!("'{}' must be one of true/false/1/0/yes/no/on/off", name),
     }
-
-    config
-        .codeowners
-        .as_ref()
-        .filter(|c| c.enabled)
-        .map(|c| c.path.clone())
 }
 
 #[cfg(test)]
@@ -61,33 +151,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loads_config_from_toml_string() {
+    fn parses_reviewer_definitions_from_json() {
         let raw = r#"
-[reviewers]
-max_reviewers = 2
-fallback_reviewers = ["milchick-duty"]
-frontend = ["alice", "bob"]
-backend = ["carol", "dave"]
-shared = ["erin", "frank"]
-devops = ["grace"]
-documentation = ["heidi"]
-tests = ["ivan"]
+[
+  {"username":"alice","areas":["frontend","packages"]},
+  {"username":"milchick-duty","fallback":true}
+]
 "#;
 
-        let config: MrMilchickConfig = toml::from_str(raw).expect("config should parse");
+        let reviewers = parse_reviewer_definitions(raw).expect("reviewers should parse");
 
-        assert_eq!(config.reviewers.max_reviewers, 2);
-        assert_eq!(config.reviewers.frontend, vec!["alice", "bob"]);
-        assert_eq!(config.reviewers.fallback_reviewers, vec!["milchick-duty"]);
+        assert_eq!(reviewers.len(), 2);
+        assert_eq!(reviewers[0].username, "alice");
+        assert_eq!(
+            reviewers[0].areas,
+            vec![CodeArea::Frontend, CodeArea::Shared]
+        );
+        assert!(reviewers[1].is_fallback);
     }
 
     #[test]
-    fn embedded_default_config_is_valid() {
-        let config = load_config_from_str(EMBEDDED_DEFAULT_CONFIG, "<embedded>")
-            .expect("embedded default config must be parseable");
-        assert!(
-            !config.reviewers.fallback_reviewers.is_empty(),
-            "embedded config should have at least one fallback reviewer"
+    fn resolves_first_existing_codeowners_candidate() {
+        let config = CodeownersConfig {
+            enabled: true,
+            path: None,
+        };
+
+        assert_eq!(
+            resolve_codeowners_path(&config),
+            Some("CODEOWNERS".to_string())
         );
+    }
+
+    #[test]
+    fn supports_explicit_codeowners_disable_flag() {
+        assert!(!parse_bool_flag(CODEOWNERS_ENABLED_ENV, "false").unwrap());
+    }
+
+    #[test]
+    fn rejects_unknown_area_name() {
+        let raw = r#"[{"username":"alice","areas":["mystery-zone"]}]"#;
+
+        let error = parse_reviewer_definitions(raw).expect_err("unknown areas should fail");
+        assert!(error.to_string().contains("unknown area"));
     }
 }

@@ -1,25 +1,26 @@
-use serde::Deserialize;
+use crate::domain::code_area::CodeArea;
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct MrMilchickConfig {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeConfig {
     pub reviewers: ReviewerConfig,
-    pub codeowners: Option<CodeownersConfig>,
+    pub codeowners: CodeownersConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewerConfig {
+    pub definitions: Vec<ReviewerDefinition>,
     pub max_reviewers: usize,
-    pub fallback_reviewers: Vec<String>,
-    pub frontend: Vec<String>,
-    pub backend: Vec<String>,
-    pub shared: Vec<String>,
-    pub devops: Vec<String>,
-    pub documentation: Vec<String>,
-    pub tests: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewerDefinition {
+    pub username: String,
+    pub areas: Vec<CodeArea>,
+    pub is_fallback: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeownersConfig {
     pub enabled: bool,
-    pub path: String,
+    pub path: Option<String>,
 }

@@ -222,7 +222,10 @@ impl GitLabClient {
 
         Ok(notes
             .into_iter()
-            .map(|n| MergeRequestNote { id: n.id, body: n.body })
+            .map(|n| MergeRequestNote {
+                id: n.id,
+                body: n.body,
+            })
             .collect())
     }
 
@@ -246,8 +249,8 @@ impl GitLabClient {
             .put(url)
             .header("PRIVATE-TOKEN", &self.config.token)
             .json(&serde_json::json!({
-            "body": body
-        }))
+                "body": body
+            }))
             .send()
             .await
             .context("failed to send comment update request to GitLab")?;

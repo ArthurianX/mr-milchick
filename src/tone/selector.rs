@@ -33,24 +33,17 @@ impl ToneSelector {
                 )
             }
 
-            ToneMode::DeterministicPipeline => {
-                stable_index(
-                    &format!(
-                        "{}:{}:{:?}",
-                        ctx.project_id.0,
-                        ctx.pipeline.source as u8,
-                        category
-                    ),
-                    messages.len(),
-                )
-            }
+            ToneMode::DeterministicPipeline => stable_index(
+                &format!(
+                    "{}:{}:{:?}",
+                    ctx.project_id.0, ctx.pipeline.source as u8, category
+                ),
+                messages.len(),
+            ),
 
             ToneMode::Random => {
                 // Placeholder: real RNG later
-                stable_index(
-                    &format!("fallback-random:{:?}", category),
-                    messages.len(),
-                )
+                stable_index(&format!("fallback-random:{:?}", category), messages.len())
             }
         };
 

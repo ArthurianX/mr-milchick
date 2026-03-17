@@ -56,7 +56,9 @@ pub fn render_summary_comment(outcome: &RuleOutcome) -> String {
     lines.push(String::new());
 
     if outcome.has_blocking_findings() || outcome.action_plan.has_fail_pipeline() {
-        lines.push("_This merge request is not yet ready for a music dance experience._".to_string());
+        lines.push(
+            "_This merge request is not yet ready for a music dance experience._".to_string(),
+        );
     } else if outcome.is_empty() && outcome.action_plan.is_empty() {
         lines.push("_The matter has been handled pleasantly._".to_string());
     } else {

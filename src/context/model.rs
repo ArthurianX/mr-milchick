@@ -149,7 +149,10 @@ mod tests {
 
     #[test]
     fn classifies_other_branch() {
-        assert_eq!(BranchKind::from_branch_name("hotfix/urgent"), BranchKind::Other);
+        assert_eq!(
+            BranchKind::from_branch_name("hotfix/urgent"),
+            BranchKind::Other
+        );
     }
 
     #[test]

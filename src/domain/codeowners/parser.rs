@@ -116,9 +116,15 @@ mod tests {
 
         assert_eq!(parsed.rules.len(), 3);
         assert_eq!(parsed.rules[0].pattern, "/packages/");
-        assert_eq!(parsed.rules[0].owners, vec!["frontend-maintainers", "bogdan.crisu", "arthur.kovacs"]);
+        assert_eq!(
+            parsed.rules[0].owners,
+            vec!["frontend-maintainers", "bogdan.crisu", "arthur.kovacs"]
+        );
         assert_eq!(parsed.rules[1].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[1].owners, vec!["daniel.andrei", "bogdan.crisu"]);
+        assert_eq!(
+            parsed.rules[1].owners,
+            vec!["daniel.andrei", "bogdan.crisu"]
+        );
         assert_eq!(parsed.rules[2].pattern, "*");
         assert_eq!(parsed.rules[2].owners, vec!["frontend-approvers"]);
     }
@@ -142,9 +148,21 @@ CODEOWNERS
         assert_eq!(parsed.rules[0].pattern, "CODEOWNERS");
         assert_eq!(parsed.rules[0].owners, vec!["arthur.kovacs"]);
         assert_eq!(parsed.rules[1].pattern, "/packages/");
-        assert_eq!(parsed.rules[1].owners, vec!["bogdan.crisu", "arthur.kovacs"]);
+        assert_eq!(
+            parsed.rules[1].owners,
+            vec!["bogdan.crisu", "arthur.kovacs"]
+        );
         assert_eq!(parsed.rules[2].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[2].owners, vec!["daniel.andrei", "bogdan.crisu", "robert.rapiteanu", "tbadescu", "arthur.kovacs"]);
+        assert_eq!(
+            parsed.rules[2].owners,
+            vec![
+                "daniel.andrei",
+                "bogdan.crisu",
+                "robert.rapiteanu",
+                "tbadescu",
+                "arthur.kovacs"
+            ]
+        );
     }
 
     #[test]
@@ -160,9 +178,15 @@ CODEOWNERS
 
         assert_eq!(parsed.rules.len(), 3);
         assert_eq!(parsed.rules[0].pattern, "/packages/");
-        assert_eq!(parsed.rules[0].owners, vec!["bogdan.crisu", "arthur.kovacs"]);
+        assert_eq!(
+            parsed.rules[0].owners,
+            vec!["bogdan.crisu", "arthur.kovacs"]
+        );
         assert_eq!(parsed.rules[1].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[1].owners, vec!["daniel.andrei", "bogdan.crisu"]);
+        assert_eq!(
+            parsed.rules[1].owners,
+            vec!["daniel.andrei", "bogdan.crisu"]
+        );
         assert_eq!(parsed.rules[2].pattern, "*");
         assert_eq!(parsed.rules[2].owners, vec!["arthur.kovacs"]);
     }
@@ -196,6 +220,9 @@ CODEOWNERS
 
         assert_eq!(parsed.rules.len(), 1);
         assert_eq!(parsed.rules[0].pattern, "/apps/lobby/");
-        assert_eq!(parsed.rules[0].owners, vec!["daniel.andrei", "bogdan.crisu"]);
+        assert_eq!(
+            parsed.rules[0].owners,
+            vec!["daniel.andrei", "bogdan.crisu"]
+        );
     }
 }

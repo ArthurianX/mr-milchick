@@ -1,24 +1,24 @@
 use anyhow::Result;
 
-use crate::config::loader::{load_config, resolve_codeowners_path};
-use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutionReport, ExecutedAction};
+use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutedAction, ExecutionReport};
 use crate::actions::model::Action;
 use crate::actions::planner::enrich_with_reviewer_assignment;
 use crate::actions::runtime::ExecutionStrategy;
 use crate::cli::Cli;
+use crate::comment::render::render_summary_comment;
+use crate::config::loader::{load_config, resolve_codeowners_path};
 use crate::context::builder::build_ci_context;
-use crate::domain::reviewer_routing::{recommend_reviewers_with_codeowners, ReviewerRoutingConfig};
+use crate::domain::codeowners::context::CodeownersContext;
+use crate::domain::codeowners::matcher::collect_usernames_for_snapshot;
+use crate::domain::codeowners::matcher::match_usernames;
+use crate::domain::codeowners::parser::parse_codeowners_file;
+use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers_with_codeowners};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
-use crate::comment::render::render_summary_comment;
-use crate::domain::codeowners::matcher::match_usernames;
-use crate::domain::codeowners::parser::parse_codeowners_file;
-use crate::domain::codeowners::matcher::collect_usernames_for_snapshot;
-use crate::domain::codeowners::context::CodeownersContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -33,25 +33,19 @@ struct AppConfigContext {
     codeowners: CodeownersContext,
 }
 
-fn load_app_config_context() -> AppConfigContext {
-    match load_config() {
-        Ok(config) => {
-            let routing_config = ReviewerRoutingConfig::from_config(&config);
-            let codeowners = CodeownersContext {
-                file: resolve_codeowners_path(&config)
-                    .and_then(|path| parse_codeowners_file(&path).ok()),
-            };
+fn load_app_config_context() -> Result<AppConfigContext> {
+    let config = load_config()?;
+    let routing_config = ReviewerRoutingConfig::from_config(&config.reviewers);
+    let codeowners = CodeownersContext {
+        enabled: config.codeowners.enabled,
+        file: resolve_codeowners_path(&config.codeowners)
+            .and_then(|path| parse_codeowners_file(&path).ok()),
+    };
 
-            AppConfigContext {
-                routing_config,
-                codeowners,
-            }
-        }
-        Err(_) => AppConfigContext {
-            routing_config: ReviewerRoutingConfig::example(),
-            codeowners: CodeownersContext::empty(),
-        },
-    }
+    Ok(AppConfigContext {
+        routing_config,
+        codeowners,
+    })
 }
 
 fn codeowners_usernames_for_snapshot(
@@ -93,7 +87,7 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     }
 
     let mut outcome = evaluate_rules(&ctx);
-    let app_config = load_app_config_context();
+    let app_config = load_app_config_context()?;
 
     let snapshot = maybe_fetch_snapshot(&ctx).await?;
 
@@ -107,9 +101,9 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     }
 
     let summary_comment = render_summary_comment(&outcome);
-    outcome
-        .action_plan
-        .push(Action::PostComment { body: summary_comment });
+    outcome.action_plan.push(Action::PostComment {
+        body: summary_comment,
+    });
     let has_meaningful_actions = has_non_comment_actions(&outcome.action_plan);
 
     match mode {
@@ -155,7 +149,9 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 print_snapshot_details(snapshot);
 
                 if snapshot.details.is_draft {
-                    println!("Reviewer assignment is currently deferred because this merge request is draft.");
+                    println!(
+                        "Reviewer assignment is currently deferred because this merge request is draft."
+                    );
                 }
 
                 let area_summary = summarize_areas(snapshot);
@@ -220,6 +216,8 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                             println!("- {}", username);
                         }
                     }
+                } else {
+                    println!("CODEOWNERS integration is disabled.");
                 }
             }
         }
