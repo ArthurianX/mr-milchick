@@ -126,12 +126,6 @@ pub struct ReviewerRecommendation {
     pub reasons: Vec<String>,
 }
 
-impl ReviewerRecommendation {
-    pub fn is_empty(&self) -> bool {
-        self.reviewers.is_empty()
-    }
-}
-
 pub fn recommend_reviewers(
     summary: &MergeRequestAreaSummary,
     config: &ReviewerRoutingConfig,

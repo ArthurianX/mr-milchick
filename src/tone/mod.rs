@@ -1,5 +1,4 @@
 pub mod category;
-pub mod config;
 pub mod registry;
 pub mod selector;
 
