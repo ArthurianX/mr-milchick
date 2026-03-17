@@ -1,6 +1,7 @@
 use crate::actions::model::Action;
 use crate::domain::codeowners::context::CodeownersContext;
-use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers_with_codeowners};
+use crate::domain::codeowners::planner::plan_codeowners_assignments;
+use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::MergeRequestSnapshot;
 use crate::rules::model::{RuleFinding, RuleOutcome};
@@ -13,19 +14,29 @@ pub fn enrich_with_reviewer_assignment(
 ) -> RuleOutcome {
     let area_summary = summarize_areas(snapshot);
     let excluded_reviewers = vec![snapshot.details.author_username.clone()];
+    let mut recommendation =
+        recommend_reviewers(&area_summary, routing_config, &excluded_reviewers);
 
-    let codeowners_usernames = if let Some(file) = &codeowners_ctx.file {
-        crate::domain::codeowners::matcher::collect_usernames_for_snapshot(file, snapshot)
-    } else {
-        Vec::new()
-    };
+    if let Some(file) = &codeowners_ctx.file {
+        let codeowners_plan = plan_codeowners_assignments(file, snapshot);
 
-    let recommendation = recommend_reviewers_with_codeowners(
-        &area_summary,
-        routing_config,
-        &excluded_reviewers,
-        &codeowners_usernames,
-    );
+        if !codeowners_plan.matched_sections.is_empty() {
+            recommendation.reviewers = codeowners_plan.assigned_reviewers.clone();
+            recommendation.reasons = codeowners_plan.reasons.clone();
+
+            if !codeowners_plan.uncovered_sections.is_empty() {
+                outcome.push(RuleFinding::warning(format!(
+                    "CODEOWNERS coverage is incomplete for {}.",
+                    codeowners_plan
+                        .uncovered_sections
+                        .iter()
+                        .map(|gap| gap.section_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+        }
+    }
 
     if snapshot.details.is_draft {
         if !recommendation.reviewers.is_empty() {
@@ -225,13 +236,15 @@ mod tests {
 
         let codeowners = CodeownersContext {
             enabled: true,
-            file: Some(crate::domain::codeowners::model::CodeownersFile {
-                rules: vec![crate::domain::codeowners::model::CodeownersRule {
-                    pattern: "/apps/frontend/".to_string(),
-                    owners: vec!["@daniel.andrei".to_string()],
-                    line_number: 1,
-                }],
-            }),
+            file: Some(
+                crate::domain::codeowners::parser::parse_codeowners_str(
+                    r#"
+[Frontend][1] @daniel.andrei
+/apps/frontend/
+"#,
+                )
+                .expect("codeowners should parse"),
+            ),
         };
 
         let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &codeowners);
@@ -240,10 +253,7 @@ mod tests {
 
         match &enriched.action_plan.actions[0] {
             Action::AssignReviewers { reviewers } => {
-                assert_eq!(
-                    reviewers,
-                    &vec!["daniel.andrei".to_string(), "bob".to_string()]
-                );
+                assert_eq!(reviewers, &vec!["daniel.andrei".to_string()]);
             }
             _ => panic!("expected AssignReviewers action"),
         }

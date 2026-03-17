@@ -9,10 +9,10 @@ use crate::comment::render::render_summary_comment;
 use crate::config::loader::{load_config, resolve_codeowners_path};
 use crate::context::builder::build_ci_context;
 use crate::domain::codeowners::context::CodeownersContext;
-use crate::domain::codeowners::matcher::collect_usernames_for_snapshot;
-use crate::domain::codeowners::matcher::match_usernames;
+use crate::domain::codeowners::matcher::{collect_matched_rules_for_snapshot, match_usernames};
 use crate::domain::codeowners::parser::parse_codeowners_file;
-use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers_with_codeowners};
+use crate::domain::codeowners::planner::plan_codeowners_assignments;
+use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
@@ -46,17 +46,6 @@ fn load_app_config_context() -> Result<AppConfigContext> {
         routing_config,
         codeowners,
     })
-}
-
-fn codeowners_usernames_for_snapshot(
-    app_config: &AppConfigContext,
-    snapshot: &MergeRequestSnapshot,
-) -> Vec<String> {
-    if let Some(codeowners) = &app_config.codeowners.file {
-        collect_usernames_for_snapshot(codeowners, snapshot)
-    } else {
-        Vec::new()
-    }
 }
 
 fn has_non_comment_actions(plan: &crate::actions::model::ActionPlan) -> bool {
@@ -166,26 +155,62 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 }
 
                 let excluded_reviewers = vec![snapshot.details.author_username.clone()];
-                let codeowners_usernames = codeowners_usernames_for_snapshot(&app_config, snapshot);
-                let recommendation = recommend_reviewers_with_codeowners(
+                let fallback_recommendation = recommend_reviewers(
                     &area_summary,
                     &app_config.routing_config,
                     &excluded_reviewers,
-                    &codeowners_usernames,
                 );
 
-                if recommendation.is_empty() {
+                let mut recommendation_reviewers = fallback_recommendation.reviewers;
+                let mut recommendation_reasons = fallback_recommendation.reasons;
+
+                if let Some(codeowners) = &app_config.codeowners.file {
+                    let codeowners_plan = plan_codeowners_assignments(codeowners, snapshot);
+
+                    if !codeowners_plan.matched_sections.is_empty() {
+                        println!("CODEOWNERS approval plan:");
+
+                        for section in &codeowners_plan.matched_sections {
+                            println!(
+                                "- {} => needs {}, eligible [{}], paths [{}]",
+                                section.section_name,
+                                section.required_approvals,
+                                section.eligible_users.join(", "),
+                                section.matched_paths.join(", ")
+                            );
+                        }
+
+                        recommendation_reviewers = codeowners_plan.assigned_reviewers.clone();
+                        recommendation_reasons = codeowners_plan.reasons.clone();
+
+                        if !codeowners_plan.uncovered_sections.is_empty() {
+                            println!("CODEOWNERS coverage gaps:");
+
+                            for gap in &codeowners_plan.uncovered_sections {
+                                println!(
+                                    "- {} => reachable {}/{} with eligible [{}]",
+                                    gap.section_name,
+                                    gap.reachable_approvals,
+                                    gap.required_approvals,
+                                    gap.eligible_users.join(", ")
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if recommendation_reviewers.is_empty() {
                     println!("No reviewer recommendation was produced.");
                 } else {
-                    println!("Recommended reviewers:");
+                    println!("Recommended reviewers to add:");
 
-                    for reviewer in &recommendation.reviewers {
+                    for reviewer in &recommendation_reviewers {
                         println!("- {}", reviewer);
                     }
 
                     println!("Routing reasons:");
 
-                    for reason in &recommendation.reasons {
+                    for reason in &recommendation_reasons {
                         println!("- {}", reason);
                     }
                 }
@@ -193,29 +218,36 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 if let Some(codeowners) = &app_config.codeowners.file {
                     println!("CODEOWNERS matches:");
 
-                    for file in &snapshot.changed_files {
-                        let owners = match_usernames(codeowners, &file.new_path);
+                    for matched in collect_matched_rules_for_snapshot(codeowners, snapshot) {
+                        let owners = match_usernames(codeowners, &matched.path);
 
                         if owners.is_empty() {
-                            println!("- {} => no individual owners", file.new_path);
+                            println!(
+                                "- {} => {} => no individual owners",
+                                matched.path, matched.pattern
+                            );
+                        } else if let Some(section_name) = matched.section_name {
+                            println!(
+                                "- {} => {} [{} approvals in section '{}'] => {}",
+                                matched.path,
+                                matched.pattern,
+                                matched.required_approvals,
+                                section_name,
+                                owners.join(", ")
+                            );
                         } else {
-                            println!("- {} => {}", file.new_path, owners.join(", "));
+                            println!(
+                                "- {} => {} => {}",
+                                matched.path,
+                                matched.pattern,
+                                owners.join(", ")
+                            );
                         }
                     }
                 }
 
                 if app_config.codeowners.is_enabled() {
-                    let usernames = codeowners_usernames_for_snapshot(&app_config, snapshot);
-
-                    println!("CODEOWNERS aggregated usernames:");
-
-                    if usernames.is_empty() {
-                        println!("- none");
-                    } else {
-                        for username in usernames {
-                            println!("- {}", username);
-                        }
-                    }
+                    println!("CODEOWNERS integration is enabled.");
                 } else {
                     println!("CODEOWNERS integration is disabled.");
                 }

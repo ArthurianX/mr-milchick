@@ -76,9 +76,9 @@ Expected:
 MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
 MR_MILCHICK_CODEOWNERS_PATH=CODEOWNERS \
 CI_PROJECT_ID=412 \
-CI_MERGE_REQUEST_IID=4009 \
+CI_MERGE_REQUEST_IID=4015 \
 CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/ERD-22750/big-cock-knockout \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
 cargo run -- explain
