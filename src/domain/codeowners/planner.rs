@@ -264,11 +264,11 @@ mod tests {
     fn picks_minimum_set_for_overlapping_sections() {
         let codeowners = parse(
             r#"
-[Libraries][2] @bogdan.crisu @robert.rapiteanu @tbadescu @arthur.kovacs
+[Libraries][2] @anon04 @anon05 @anon06 @anon01
 /packages/
-[Lobby][2] @daniel.andrei @bogdan.crisu @robert.rapiteanu @tbadescu @arthur.kovacs
+[Lobby][2] @anon03 @anon04 @anon05 @anon06 @anon01
 /apps/lobby/
-[Matka][2] @adrian.nicoara @diordache2 @ndirzu @narcis.buzatu @arthur.kovacs
+[Matka][2] @anon02 @anon12 @anon13 @anon14 @anon01
 /apps/matka/
 "#,
         );
@@ -277,7 +277,7 @@ mod tests {
             &codeowners,
             &snapshot(
                 &["packages/a.ts", "apps/lobby/a.ts", "apps/matka/a.ts"],
-                "arthur.kovacs",
+                "anon01",
                 &[],
             ),
         );
@@ -285,10 +285,10 @@ mod tests {
         assert_eq!(
             plan.assigned_reviewers,
             vec![
-                "bogdan.crisu".to_string(),
-                "robert.rapiteanu".to_string(),
-                "adrian.nicoara".to_string(),
-                "diordache2".to_string()
+                "anon04".to_string(),
+                "anon05".to_string(),
+                "anon02".to_string(),
+                "anon12".to_string()
             ]
         );
         assert!(plan.uncovered_sections.is_empty());
@@ -298,19 +298,19 @@ mod tests {
     fn existing_reviewers_reduce_additional_assignments() {
         let codeowners = parse(
             r#"
-[Libraries][2] @bogdan.crisu @robert.rapiteanu @tbadescu
+[Libraries][2] @anon04 @anon05 @anon06
 /packages/
 "#,
         );
 
         let plan = plan_codeowners_assignments(
             &codeowners,
-            &snapshot(&["packages/a.ts"], "arthur.kovacs", &["bogdan.crisu"]),
+            &snapshot(&["packages/a.ts"], "anon01", &["anon04"]),
         );
 
         assert_eq!(
             plan.assigned_reviewers,
-            vec!["robert.rapiteanu".to_string()]
+            vec!["anon05".to_string()]
         );
         assert!(plan.uncovered_sections.is_empty());
     }
@@ -319,17 +319,17 @@ mod tests {
     fn reports_impossible_coverage() {
         let codeowners = parse(
             r#"
-[Libraries][2] @arthur.kovacs @bogdan.crisu
+[Libraries][2] @anon01 @anon04
 /packages/
 "#,
         );
 
         let plan = plan_codeowners_assignments(
             &codeowners,
-            &snapshot(&["packages/a.ts"], "arthur.kovacs", &[]),
+            &snapshot(&["packages/a.ts"], "anon01", &[]),
         );
 
-        assert_eq!(plan.assigned_reviewers, vec!["bogdan.crisu".to_string()]);
+        assert_eq!(plan.assigned_reviewers, vec!["anon04".to_string()]);
         assert_eq!(plan.uncovered_sections.len(), 1);
         assert_eq!(plan.uncovered_sections[0].section_name, "Libraries");
     }

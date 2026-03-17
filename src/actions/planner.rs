@@ -251,7 +251,7 @@ mod tests {
             file: Some(
                 crate::domain::codeowners::parser::parse_codeowners_str(
                     r#"
-[Frontend][1] @daniel.andrei
+[Frontend][1] @anon03
 /apps/frontend/
 "#,
                 )
@@ -269,7 +269,7 @@ mod tests {
                     reviewers,
                     &vec![
                         "principal-reviewer".to_string(),
-                        "daniel.andrei".to_string()
+                        "anon03".to_string()
                     ]
                 );
             }
