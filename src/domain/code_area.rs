@@ -27,7 +27,9 @@ impl CodeArea {
             "apps" | "frontend" | "ui" => Some(CodeArea::Frontend),
             "backend" | "api" => Some(CodeArea::Backend),
             "bootstrap" | "shared" | "packages" => Some(CodeArea::Shared),
-            "patches" | "scripts" | "proxy" | "devops" | "ops" | "infrastructure" => Some(CodeArea::DevOps),
+            "patches" | "scripts" | "proxy" | "devops" | "ops" | "infrastructure" => {
+                Some(CodeArea::DevOps)
+            }
             "reports" | "documentation" | "docs" => Some(CodeArea::Documentation),
             "tests" | "test" | "qa" => Some(CodeArea::Tests),
             "unknown" => Some(CodeArea::Unknown),

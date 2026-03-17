@@ -5,4 +5,5 @@ pub enum ToneCategory {
     Resolution,
     Blocking,
     Praise,
+    ReviewRequest,
 }

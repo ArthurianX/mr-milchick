@@ -32,5 +32,11 @@ pub fn messages_for(category: ToneCategory) -> &'static [&'static str] {
             "Compliance has been achieved with elegance.",
             "This outcome is deeply pleasing.",
         ],
+        ToneCategory::ReviewRequest => &[
+            "The department would appreciate a timely review.",
+            "A pleasant review opportunity has arrived for your consideration.",
+            "Attention is requested for a newly aligned merge request.",
+            "A structured look at this merge request would be warmly received.",
+        ],
     }
 }

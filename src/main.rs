@@ -8,6 +8,7 @@ mod config;
 mod context;
 mod domain;
 mod gitlab;
+mod notifications;
 mod output;
 mod rules;
 mod tone;

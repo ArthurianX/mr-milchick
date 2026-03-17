@@ -5,8 +5,9 @@ use crate::actions::model::Action;
 use crate::actions::planner::enrich_with_reviewer_assignment;
 use crate::actions::runtime::ExecutionStrategy;
 use crate::cli::Cli;
-use crate::comment::render::{render_summary_comment, MR_MILCHICK_MARKER};
+use crate::comment::render::{MR_MILCHICK_MARKER, render_summary_comment};
 use crate::config::loader::{load_config, resolve_codeowners_path};
+use crate::config::model::SlackConfig;
 use crate::context::builder::build_ci_context;
 use crate::domain::codeowners::context::CodeownersContext;
 use crate::domain::codeowners::matcher::{collect_matched_rules_for_snapshot, match_usernames};
@@ -18,6 +19,7 @@ use crate::domain::reviewer_routing::{
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
+use crate::notifications::slack::{SlackNotifier, render_review_request_message};
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
@@ -33,6 +35,7 @@ pub enum ExecutionMode {
 struct AppConfigContext {
     routing_config: ReviewerRoutingConfig,
     codeowners: CodeownersContext,
+    slack: SlackConfig,
 }
 
 fn load_app_config_context() -> Result<AppConfigContext> {
@@ -47,6 +50,7 @@ fn load_app_config_context() -> Result<AppConfigContext> {
     Ok(AppConfigContext {
         routing_config,
         codeowners,
+        slack: config.slack,
     })
 }
 
@@ -121,6 +125,16 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             let strategy = ExecutionStrategy::from_env();
             let report = execute_action_plan(strategy, &ctx, &outcome.action_plan).await?;
             print_execution_report(&report);
+            maybe_notify_slack(
+                strategy,
+                &ctx,
+                &outcome,
+                &report,
+                snapshot.as_ref(),
+                &app_config.slack,
+                &selector,
+            )
+            .await?;
 
             if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
                 anyhow::bail!("merge request policy requirements were not satisfied");
@@ -423,6 +437,64 @@ fn print_execution_report(report: &ExecutionReport) {
     }
 }
 
+async fn maybe_notify_slack(
+    strategy: ExecutionStrategy,
+    ctx: &crate::context::model::CiContext,
+    outcome: &RuleOutcome,
+    report: &ExecutionReport,
+    snapshot: Option<&MergeRequestSnapshot>,
+    slack_config: &SlackConfig,
+    selector: &ToneSelector,
+) -> Result<()> {
+    let Some(assigned_reviewers) =
+        reviewers_assigned_for_notification(strategy, outcome, report, slack_config)
+    else {
+        return Ok(());
+    };
+
+    let Some(snapshot) = snapshot else {
+        return Ok(());
+    };
+
+    let tone_line = selector.select(ToneCategory::ReviewRequest, ctx);
+    let message = render_review_request_message(
+        tone_line,
+        &snapshot.details.title,
+        &snapshot.details.web_url,
+        &assigned_reviewers,
+    );
+
+    let notifier = SlackNotifier::new(slack_config.clone());
+    notifier.send_review_request(&message).await
+}
+
+fn reviewers_assigned_for_notification(
+    strategy: ExecutionStrategy,
+    outcome: &RuleOutcome,
+    report: &ExecutionReport,
+    slack_config: &SlackConfig,
+) -> Option<Vec<String>> {
+    if strategy != ExecutionStrategy::Real {
+        return None;
+    }
+
+    if !slack_config.enabled
+        || slack_config.webhook_url.is_none()
+        || slack_config.channel.is_none()
+        || outcome.action_plan.has_fail_pipeline()
+        || outcome.has_blocking_findings()
+    {
+        return None;
+    }
+
+    report.executed.iter().find_map(|executed| match executed {
+        ExecutedAction::ReviewersAssigned { reviewers } if !reviewers.is_empty() => {
+            Some(reviewers.clone())
+        }
+        _ => None,
+    })
+}
+
 fn print_observe_action_plan(outcome: &RuleOutcome) {
     let rendered_actions: Vec<String> = outcome
         .action_plan
@@ -476,6 +548,8 @@ fn describe_skipped_comment(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::model::SlackConfig;
+    use crate::rules::model::RuleFinding;
 
     #[test]
     fn summarizes_structured_comment_in_planned_actions() {
@@ -501,5 +575,101 @@ mod tests {
             describe_skipped_comment(&body),
             "[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"
         );
+    }
+
+    #[test]
+    fn notifies_only_when_real_reviewer_assignment_occurs() {
+        let outcome = RuleOutcome::new();
+        let report = ExecutionReport {
+            executed: vec![ExecutedAction::ReviewersAssigned {
+                reviewers: vec!["alice".to_string(), "bob".to_string()],
+            }],
+        };
+
+        let reviewers = reviewers_assigned_for_notification(
+            ExecutionStrategy::Real,
+            &outcome,
+            &report,
+            &SlackConfig {
+                enabled: true,
+                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                channel: Some("C123".to_string()),
+            },
+        );
+
+        assert_eq!(
+            reviewers,
+            Some(vec!["alice".to_string(), "bob".to_string()])
+        );
+    }
+
+    #[test]
+    fn does_not_notify_on_dry_run() {
+        let outcome = RuleOutcome::new();
+        let report = ExecutionReport {
+            executed: vec![ExecutedAction::ReviewersAssigned {
+                reviewers: vec!["alice".to_string()],
+            }],
+        };
+
+        let reviewers = reviewers_assigned_for_notification(
+            ExecutionStrategy::DryRun,
+            &outcome,
+            &report,
+            &SlackConfig {
+                enabled: true,
+                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                channel: Some("C123".to_string()),
+            },
+        );
+
+        assert_eq!(reviewers, None);
+    }
+
+    #[test]
+    fn does_not_notify_when_pipeline_will_fail() {
+        let mut outcome = RuleOutcome::new();
+        outcome.push(RuleFinding::blocking("stop"));
+        let report = ExecutionReport {
+            executed: vec![ExecutedAction::ReviewersAssigned {
+                reviewers: vec!["alice".to_string()],
+            }],
+        };
+
+        let reviewers = reviewers_assigned_for_notification(
+            ExecutionStrategy::Real,
+            &outcome,
+            &report,
+            &SlackConfig {
+                enabled: true,
+                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                channel: Some("C123".to_string()),
+            },
+        );
+
+        assert_eq!(reviewers, None);
+    }
+
+    #[test]
+    fn does_not_notify_when_reviewers_were_skipped() {
+        let outcome = RuleOutcome::new();
+        let report = ExecutionReport {
+            executed: vec![ExecutedAction::ReviewersSkippedAlreadyPresent {
+                reviewers: vec!["alice".to_string()],
+            }],
+        };
+
+        let reviewers = reviewers_assigned_for_notification(
+            ExecutionStrategy::Real,
+            &outcome,
+            &report,
+            &SlackConfig {
+                enabled: true,
+                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                channel: Some("C123".to_string()),
+            },
+        );
+
+        assert_eq!(reviewers, None);
     }
 }

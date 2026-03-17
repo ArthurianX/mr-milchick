@@ -3,7 +3,9 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
-use crate::config::model::{CodeownersConfig, ReviewerConfig, ReviewerDefinition, RuntimeConfig};
+use crate::config::model::{
+    CodeownersConfig, ReviewerConfig, ReviewerDefinition, RuntimeConfig, SlackConfig,
+};
 use crate::domain::code_area::CodeArea;
 
 const DEFAULT_MAX_REVIEWERS: usize = 2;
@@ -11,6 +13,9 @@ const REVIEWERS_ENV: &str = "MR_MILCHICK_REVIEWERS";
 const MAX_REVIEWERS_ENV: &str = "MR_MILCHICK_MAX_REVIEWERS";
 const CODEOWNERS_ENABLED_ENV: &str = "MR_MILCHICK_CODEOWNERS_ENABLED";
 const CODEOWNERS_PATH_ENV: &str = "MR_MILCHICK_CODEOWNERS_PATH";
+const SLACK_ENABLED_ENV: &str = "MR_MILCHICK_SLACK_ENABLED";
+const SLACK_WEBHOOK_URL_ENV: &str = "MR_MILCHICK_SLACK_WEBHOOK_URL";
+const SLACK_CHANNEL_ENV: &str = "MR_MILCHICK_SLACK_CHANNEL";
 const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
     "CODEOWNERS",
     ".github/CODEOWNERS",
@@ -33,6 +38,7 @@ pub fn load_config() -> Result<RuntimeConfig> {
     Ok(RuntimeConfig {
         reviewers: load_reviewers_config()?,
         codeowners: load_codeowners_config()?,
+        slack: load_slack_config()?,
     })
 }
 
@@ -83,6 +89,29 @@ fn load_codeowners_config() -> Result<CodeownersConfig> {
         .filter(|value| !value.is_empty());
 
     Ok(CodeownersConfig { enabled, path })
+}
+
+fn load_slack_config() -> Result<SlackConfig> {
+    let enabled = match std::env::var(SLACK_ENABLED_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => parse_bool_flag(SLACK_ENABLED_ENV, &raw)?,
+        _ => true,
+    };
+
+    let webhook_url = std::env::var(SLACK_WEBHOOK_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let channel = std::env::var(SLACK_CHANNEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Ok(SlackConfig {
+        enabled,
+        webhook_url,
+        channel,
+    })
 }
 
 fn parse_reviewer_definitions(raw: &str) -> Result<Vec<ReviewerDefinition>> {
@@ -211,5 +240,19 @@ mod tests {
 
         let error = parse_reviewer_definitions(raw).expect_err("unknown areas should fail");
         assert!(error.to_string().contains("unknown area"));
+    }
+
+    #[test]
+    fn slack_config_defaults_to_enabled_without_values() {
+        let config = load_slack_config().expect("slack config should load");
+
+        assert!(config.enabled);
+        assert_eq!(config.webhook_url, None);
+        assert_eq!(config.channel, None);
+    }
+
+    #[test]
+    fn supports_explicit_slack_disable_flag() {
+        assert!(!parse_bool_flag(SLACK_ENABLED_ENV, "false").unwrap());
     }
 }
