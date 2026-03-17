@@ -5,7 +5,7 @@ use crate::actions::model::Action;
 use crate::actions::planner::enrich_with_reviewer_assignment;
 use crate::actions::runtime::ExecutionStrategy;
 use crate::cli::Cli;
-use crate::comment::render::render_summary_comment;
+use crate::comment::render::{render_summary_comment, MR_MILCHICK_MARKER};
 use crate::config::loader::{load_config, resolve_codeowners_path};
 use crate::context::builder::build_ci_context;
 use crate::domain::codeowners::context::CodeownersContext;
@@ -100,7 +100,7 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     match mode {
         ExecutionMode::Observe => {
             print_outcome(&outcome);
-            print_action_plan(&outcome);
+            print_observe_action_plan(&outcome);
 
             if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
@@ -372,25 +372,22 @@ fn print_outcome(outcome: &RuleOutcome) {
 }
 
 fn print_action_plan(outcome: &RuleOutcome) {
-    if outcome.action_plan.is_empty() {
+    let rendered_actions: Vec<String> = outcome
+        .action_plan
+        .actions
+        .iter()
+        .map(describe_planned_action)
+        .collect();
+
+    if rendered_actions.is_empty() {
         println!("No actions are currently planned.");
         return;
     }
 
     println!("Planned actions:");
 
-    for action in &outcome.action_plan.actions {
-        match action {
-            Action::PostComment { body } => {
-                println!("- [PostComment] {}", body);
-            }
-            Action::AssignReviewers { reviewers } => {
-                println!("- [AssignReviewers] {}", reviewers.join(", "));
-            }
-            Action::FailPipeline { reason } => {
-                println!("- [FailPipeline] {}", reason);
-            }
-        }
+    for action in rendered_actions {
+        println!("- {}", action);
     }
 }
 
@@ -405,7 +402,7 @@ fn print_execution_report(report: &ExecutionReport) {
     for executed in &report.executed {
         match executed {
             ExecutedAction::CommentPosted { body } => {
-                println!("- [CommentPosted] {}", body);
+                println!("- {}", describe_posted_comment(body));
             }
             ExecutedAction::ReviewersAssigned { reviewers } => {
                 println!("- [ReviewersAssigned] {}", reviewers.join(", "));
@@ -414,7 +411,7 @@ fn print_execution_report(report: &ExecutionReport) {
                 println!("- [PipelineFailurePlanned] {}", reason);
             }
             ExecutedAction::CommentSkippedAlreadyPresent { body } => {
-                println!("- [CommentSkippedAlreadyPresent] {}", body);
+                println!("- {}", describe_skipped_comment(body));
             }
             ExecutedAction::ReviewersSkippedAlreadyPresent { reviewers } => {
                 println!(
@@ -423,5 +420,86 @@ fn print_execution_report(report: &ExecutionReport) {
                 );
             }
         }
+    }
+}
+
+fn print_observe_action_plan(outcome: &RuleOutcome) {
+    let rendered_actions: Vec<String> = outcome
+        .action_plan
+        .actions
+        .iter()
+        .filter(|action| !matches!(action, Action::PostComment { .. }))
+        .map(describe_planned_action)
+        .collect();
+
+    if rendered_actions.is_empty() {
+        println!("No follow-up actions would be taken by `refine`.");
+        return;
+    }
+
+    println!("If you run `refine`, it would:");
+
+    for action in rendered_actions {
+        println!("- {}", action);
+    }
+}
+
+fn describe_planned_action(action: &Action) -> String {
+    match action {
+        Action::PostComment { body } if body.contains(MR_MILCHICK_MARKER) => {
+            "[PostComment] Update Mr. Milchick summary comment".to_string()
+        }
+        Action::PostComment { .. } => "[PostComment] Post comment".to_string(),
+        Action::AssignReviewers { reviewers } => {
+            format!("[AssignReviewers] {}", reviewers.join(", "))
+        }
+        Action::FailPipeline { reason } => format!("[FailPipeline] {}", reason),
+    }
+}
+
+fn describe_posted_comment(body: &str) -> String {
+    if body.contains(MR_MILCHICK_MARKER) {
+        "[CommentPosted] Mr. Milchick summary comment".to_string()
+    } else {
+        "[CommentPosted] Comment posted".to_string()
+    }
+}
+
+fn describe_skipped_comment(body: &str) -> String {
+    if body.contains(MR_MILCHICK_MARKER) {
+        "[CommentSkippedAlreadyPresent] Mr. Milchick summary comment".to_string()
+    } else {
+        "[CommentSkippedAlreadyPresent] Comment already present".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summarizes_structured_comment_in_planned_actions() {
+        let action = Action::PostComment {
+            body: format!("{MR_MILCHICK_MARKER}\nsummary"),
+        };
+
+        assert_eq!(
+            describe_planned_action(&action),
+            "[PostComment] Update Mr. Milchick summary comment"
+        );
+    }
+
+    #[test]
+    fn summarizes_structured_comment_in_execution_output() {
+        let body = format!("{MR_MILCHICK_MARKER}\nsummary");
+
+        assert_eq!(
+            describe_posted_comment(&body),
+            "[CommentPosted] Mr. Milchick summary comment"
+        );
+        assert_eq!(
+            describe_skipped_comment(&body),
+            "[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"
+        );
     }
 }
