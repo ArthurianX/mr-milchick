@@ -60,6 +60,12 @@ fn has_non_comment_actions(plan: &crate::actions::model::ActionPlan) -> bool {
         .any(|action| !matches!(action, Action::PostComment { .. }))
 }
 
+fn has_reviewer_assignment_action(plan: &crate::actions::model::ActionPlan) -> bool {
+    plan.actions
+        .iter()
+        .any(|action| matches!(action, Action::AssignReviewers { .. }))
+}
+
 pub async fn run(cli: Cli) -> Result<()> {
     if matches!(cli.command, crate::cli::Command::Version) {
         crate::cli::print_version();
@@ -95,7 +101,7 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
         );
     }
 
-    let summary_comment = render_summary_comment(&outcome);
+    let summary_comment = render_summary_comment(&outcome, &ctx, &selector);
     outcome.action_plan.push(Action::PostComment {
         body: summary_comment,
     });
@@ -108,6 +114,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
             if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
+            } else if outcome.findings.is_empty()
+                && has_reviewer_assignment_action(&outcome.action_plan)
+            {
+                println!("{}", selector.select(ToneCategory::ReviewerAssigned, &ctx));
             }
         }
         ExecutionMode::Refine => {
@@ -115,6 +125,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 println!("{}", selector.select(ToneCategory::Blocking, &ctx));
             } else if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
+            } else if outcome.findings.is_empty()
+                && has_reviewer_assignment_action(&outcome.action_plan)
+            {
+                println!("{}", selector.select(ToneCategory::ReviewerAssigned, &ctx));
             } else {
                 println!("{}", selector.select(ToneCategory::Refinement, &ctx));
             }
@@ -144,7 +158,7 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             println!("Decision explanation:");
             print_outcome(&outcome);
             print_action_plan(&outcome);
-            let summary_comment = render_summary_comment(&outcome);
+            let summary_comment = render_summary_comment(&outcome, &ctx, &selector);
             println!("Structured summary comment preview:");
             println!("---");
             println!("{}", summary_comment);

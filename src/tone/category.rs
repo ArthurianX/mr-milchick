@@ -6,4 +6,6 @@ pub enum ToneCategory {
     Blocking,
     Praise,
     ReviewRequest,
+    NoAction,
+    ReviewerAssigned,
 }

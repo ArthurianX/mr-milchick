@@ -308,10 +308,7 @@ mod tests {
             &snapshot(&["packages/a.ts"], "anon01", &["anon04"]),
         );
 
-        assert_eq!(
-            plan.assigned_reviewers,
-            vec!["anon05".to_string()]
-        );
+        assert_eq!(plan.assigned_reviewers, vec!["anon05".to_string()]);
         assert!(plan.uncovered_sections.is_empty());
     }
 
@@ -324,10 +321,8 @@ mod tests {
 "#,
         );
 
-        let plan = plan_codeowners_assignments(
-            &codeowners,
-            &snapshot(&["packages/a.ts"], "anon01", &[]),
-        );
+        let plan =
+            plan_codeowners_assignments(&codeowners, &snapshot(&["packages/a.ts"], "anon01", &[]));
 
         assert_eq!(plan.assigned_reviewers, vec!["anon04".to_string()]);
         assert_eq!(plan.uncovered_sections.len(), 1);

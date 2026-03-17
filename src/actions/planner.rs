@@ -267,10 +267,7 @@ mod tests {
             Action::AssignReviewers { reviewers } => {
                 assert_eq!(
                     reviewers,
-                    &vec![
-                        "principal-reviewer".to_string(),
-                        "anon03".to_string()
-                    ]
+                    &vec!["principal-reviewer".to_string(), "anon03".to_string()]
                 );
             }
             _ => panic!("expected AssignReviewers action"),
