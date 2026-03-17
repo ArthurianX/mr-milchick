@@ -43,10 +43,18 @@ pub fn resolve_codeowners_path(config: &CodeownersConfig) -> Option<String> {
         return Some(path.clone());
     }
 
-    DEFAULT_CODEOWNERS_CANDIDATES
-        .iter()
-        .find(|candidate| Path::new(candidate).exists())
-        .map(|candidate| (*candidate).to_string())
+    resolve_first_existing_path(DEFAULT_CODEOWNERS_CANDIDATES)
+}
+
+fn resolve_first_existing_path<I, P>(candidates: I) -> Option<String>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    candidates.into_iter().find_map(|candidate| {
+        let candidate = candidate.as_ref();
+        candidate.exists().then(|| candidate.display().to_string())
+    })
 }
 
 fn load_reviewers_config() -> Result<ReviewerConfig> {
@@ -172,15 +180,19 @@ mod tests {
 
     #[test]
     fn resolves_first_existing_codeowners_candidate() {
-        let config = CodeownersConfig {
-            enabled: true,
-            path: None,
-        };
+        let temp_path = std::env::temp_dir().join(format!(
+            "mr-milchick-codeowners-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&temp_path, "* @alice").expect("temp codeowners file should be created");
 
         assert_eq!(
-            resolve_codeowners_path(&config),
-            Some("CODEOWNERS".to_string())
+            resolve_first_existing_path([temp_path.as_path()]),
+            Some(temp_path.display().to_string())
         );
+
+        std::fs::remove_file(&temp_path).expect("temp codeowners file should be removed");
     }
 
     #[test]
