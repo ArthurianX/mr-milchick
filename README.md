@@ -169,6 +169,7 @@ If not provided:
 ```
 MR_MILCHICK_REVIEWERS='[
   {"username":"milchick-duty","fallback":true},
+  {"username":"principal-reviewer","mandatory":true},
   {"username":"alice","areas":["frontend","packages"]},
   {"username":"carol","areas":["backend"]},
   {"username":"grace","areas":["devops"]}
@@ -183,6 +184,13 @@ Each reviewer object can declare:
 - `username`: GitLab username
 - `areas`: list of review capabilities such as `frontend`, `backend`, `packages`, `devops`, `documentation`, `tests`
 - `fallback`: optional boolean that makes the reviewer eligible when no area match can be selected
+- `mandatory`: optional boolean that always includes the reviewer when they are eligible, even when area routing or CODEOWNERS would otherwise choose someone else
+
+Mandatory reviewers are additive:
+
+- they are selected before area-based or fallback routing
+- they are also prepended to CODEOWNERS-driven assignment plans
+- they do not consume the `MR_MILCHICK_MAX_REVIEWERS` cap used for area routing
 
 ---
 

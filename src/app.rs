@@ -12,7 +12,9 @@ use crate::domain::codeowners::context::CodeownersContext;
 use crate::domain::codeowners::matcher::{collect_matched_rules_for_snapshot, match_usernames};
 use crate::domain::codeowners::parser::parse_codeowners_file;
 use crate::domain::codeowners::planner::plan_codeowners_assignments;
-use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers};
+use crate::domain::reviewer_routing::{
+    ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
+};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
@@ -180,8 +182,14 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                             );
                         }
 
-                        recommendation_reviewers = codeowners_plan.assigned_reviewers.clone();
-                        recommendation_reasons = codeowners_plan.reasons.clone();
+                        let recommendation = prepend_mandatory_reviewers(
+                            &app_config.routing_config,
+                            &excluded_reviewers,
+                            &codeowners_plan.assigned_reviewers,
+                            &codeowners_plan.reasons,
+                        );
+                        recommendation_reviewers = recommendation.reviewers;
+                        recommendation_reasons = recommendation.reasons;
 
                         if !codeowners_plan.uncovered_sections.is_empty() {
                             println!("CODEOWNERS coverage gaps:");

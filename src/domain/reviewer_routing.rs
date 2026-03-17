@@ -8,6 +8,7 @@ use crate::domain::code_area::CodeArea;
 pub struct ReviewerRoutingConfig {
     pub reviewers_by_area: HashMap<CodeArea, Vec<String>>,
     pub fallback_reviewers: Vec<String>,
+    pub mandatory_reviewers: Vec<String>,
     pub max_reviewers: usize,
 }
 
@@ -15,10 +16,15 @@ impl ReviewerRoutingConfig {
     pub fn from_config(config: &ReviewerConfig) -> Self {
         let mut reviewers_by_area = HashMap::new();
         let mut fallback_reviewers = Vec::new();
+        let mut mandatory_reviewers = Vec::new();
 
         for definition in &config.definitions {
             if definition.is_fallback {
                 fallback_reviewers.push(definition.username.clone());
+            }
+
+            if definition.is_mandatory {
+                mandatory_reviewers.push(definition.username.clone());
             }
 
             for area in &definition.areas {
@@ -32,6 +38,7 @@ impl ReviewerRoutingConfig {
         Self {
             reviewers_by_area,
             fallback_reviewers,
+            mandatory_reviewers,
             max_reviewers: config.max_reviewers,
         }
     }
@@ -43,51 +50,67 @@ impl ReviewerRoutingConfig {
                     username: "milchick-duty".to_string(),
                     areas: vec![],
                     is_fallback: true,
+                    is_mandatory: false,
+                },
+                crate::config::model::ReviewerDefinition {
+                    username: "principal-reviewer".to_string(),
+                    areas: vec![],
+                    is_fallback: false,
+                    is_mandatory: true,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "alice".to_string(),
                     areas: vec![CodeArea::Frontend],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "bob".to_string(),
                     areas: vec![CodeArea::Frontend],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "carol".to_string(),
                     areas: vec![CodeArea::Backend],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "dave".to_string(),
                     areas: vec![CodeArea::Backend],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "erin".to_string(),
                     areas: vec![CodeArea::Shared],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "frank".to_string(),
                     areas: vec![CodeArea::Shared],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "grace".to_string(),
                     areas: vec![CodeArea::DevOps],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "heidi".to_string(),
                     areas: vec![CodeArea::Documentation],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
                 crate::config::model::ReviewerDefinition {
                     username: "ivan".to_string(),
                     areas: vec![CodeArea::Tests],
                     is_fallback: false,
+                    is_mandatory: false,
                 },
             ],
             max_reviewers: 2,
@@ -118,6 +141,15 @@ pub fn recommend_reviewers(
     let mut reasons = Vec::new();
     let mut selected = HashSet::new();
 
+    add_mandatory_reviewers(
+        &config.mandatory_reviewers,
+        excluded_reviewers,
+        &mut selected,
+        &mut reviewers,
+        &mut reasons,
+    );
+    let mandatory_count = reviewers.len();
+
     let significant_areas = summary.significant_areas();
 
     if significant_areas.is_empty() {
@@ -134,7 +166,7 @@ pub fn recommend_reviewers(
     }
 
     for area in significant_areas {
-        if reviewers.len() >= config.max_reviewers {
+        if reviewers.len().saturating_sub(mandatory_count) >= config.max_reviewers {
             reasons.push(format!(
                 "Reviewer selection reached configured limit of {}.",
                 config.max_reviewers
@@ -184,6 +216,35 @@ pub fn recommend_reviewers(
             );
         }
     }
+
+    ReviewerRecommendation { reviewers, reasons }
+}
+
+pub fn prepend_mandatory_reviewers(
+    config: &ReviewerRoutingConfig,
+    excluded_reviewers: &[String],
+    base_reviewers: &[String],
+    base_reasons: &[String],
+) -> ReviewerRecommendation {
+    let mut reviewers = Vec::new();
+    let mut reasons = Vec::new();
+    let mut selected = HashSet::new();
+
+    add_mandatory_reviewers(
+        &config.mandatory_reviewers,
+        excluded_reviewers,
+        &mut selected,
+        &mut reviewers,
+        &mut reasons,
+    );
+
+    for reviewer in base_reviewers {
+        if selected.insert(reviewer.clone()) {
+            reviewers.push(reviewer.clone());
+        }
+    }
+
+    reasons.extend(base_reasons.iter().cloned());
 
     ReviewerRecommendation { reviewers, reasons }
 }
@@ -264,6 +325,35 @@ fn first_non_excluded_and_unselected<'a>(
     })
 }
 
+fn add_mandatory_reviewers(
+    mandatory_reviewers: &[String],
+    excluded_reviewers: &[String],
+    selected: &mut HashSet<String>,
+    reviewers: &mut Vec<String>,
+    reasons: &mut Vec<String>,
+) {
+    for reviewer in mandatory_reviewers {
+        if excluded_reviewers
+            .iter()
+            .any(|excluded| excluded == reviewer)
+        {
+            reasons.push(format!(
+                "Skipped mandatory reviewer '{}' because they are excluded.",
+                reviewer
+            ));
+            continue;
+        }
+
+        if selected.insert(reviewer.clone()) {
+            reviewers.push(reviewer.clone());
+            reasons.push(format!(
+                "Selected reviewer '{}' from mandatory reviewer configuration.",
+                reviewer
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,9 +371,10 @@ mod tests {
         let config = ReviewerRoutingConfig::example();
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(recommendation.reviewers.len(), 2);
-        assert_eq!(recommendation.reviewers[0], "carol");
-        assert_eq!(recommendation.reviewers[1], "alice");
+        assert_eq!(recommendation.reviewers.len(), 3);
+        assert_eq!(recommendation.reviewers[0], "principal-reviewer");
+        assert_eq!(recommendation.reviewers[1], "carol");
+        assert_eq!(recommendation.reviewers[2], "alice");
     }
 
     #[test]
@@ -295,7 +386,10 @@ mod tests {
         let excluded = vec!["alice".to_string()];
         let recommendation = recommend_reviewers(&summary, &config, &excluded);
 
-        assert_eq!(recommendation.reviewers, vec!["bob".to_string()]);
+        assert_eq!(
+            recommendation.reviewers,
+            vec!["principal-reviewer".to_string(), "bob".to_string()]
+        );
     }
 
     #[test]
@@ -315,7 +409,10 @@ mod tests {
 
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(recommendation.reviewers, vec!["alice".to_string()]);
+        assert_eq!(
+            recommendation.reviewers,
+            vec!["principal-reviewer".to_string(), "alice".to_string()]
+        );
     }
 
     #[test]
@@ -325,7 +422,13 @@ mod tests {
         let config = ReviewerRoutingConfig::example();
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(recommendation.reviewers, vec!["milchick-duty".to_string()]);
+        assert_eq!(
+            recommendation.reviewers,
+            vec![
+                "principal-reviewer".to_string(),
+                "milchick-duty".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -340,7 +443,7 @@ mod tests {
 
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
-        assert_eq!(recommendation.reviewers.len(), 2);
+        assert_eq!(recommendation.reviewers.len(), 3);
     }
 
     #[test]
@@ -382,6 +485,7 @@ mod tests {
 
         let recommendation = recommend_reviewers_with_codeowners(&summary, &config, &[], &[]);
 
-        assert_eq!(recommendation.reviewers[0], "alice");
+        assert_eq!(recommendation.reviewers[0], "principal-reviewer");
+        assert_eq!(recommendation.reviewers[1], "alice");
     }
 }

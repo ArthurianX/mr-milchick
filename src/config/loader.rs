@@ -25,6 +25,8 @@ struct ReviewerDefinitionDto {
     areas: Vec<String>,
     #[serde(default, alias = "fallback")]
     is_fallback: bool,
+    #[serde(default, alias = "mandatory")]
+    is_mandatory: bool,
 }
 
 pub fn load_config() -> Result<RuntimeConfig> {
@@ -123,6 +125,7 @@ fn parse_reviewer_definitions(raw: &str) -> Result<Vec<ReviewerDefinition>> {
                 username: username.to_string(),
                 areas,
                 is_fallback: item.is_fallback,
+                is_mandatory: item.is_mandatory,
             })
         })
         .collect()
@@ -163,19 +166,21 @@ mod tests {
         let raw = r#"
 [
   {"username":"alice","areas":["frontend","packages"]},
-  {"username":"milchick-duty","fallback":true}
+  {"username":"milchick-duty","fallback":true},
+  {"username":"principal-reviewer","mandatory":true}
 ]
 "#;
 
         let reviewers = parse_reviewer_definitions(raw).expect("reviewers should parse");
 
-        assert_eq!(reviewers.len(), 2);
+        assert_eq!(reviewers.len(), 3);
         assert_eq!(reviewers[0].username, "alice");
         assert_eq!(
             reviewers[0].areas,
             vec![CodeArea::Frontend, CodeArea::Shared]
         );
         assert!(reviewers[1].is_fallback);
+        assert!(reviewers[2].is_mandatory);
     }
 
     #[test]

@@ -11,7 +11,7 @@ Then run one or more local smoke tests by setting the GitLab CI environment vari
 ## Observe: epic to `develop` without label
 
 ```bash
-MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
+MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
 MR_MILCHICK_CODEOWNERS_PATH=.github/CODEOWNERS \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
@@ -30,7 +30,7 @@ Expected:
 ## Refine: epic to `develop` without label
 
 ```bash
-MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
+MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
 MR_MILCHICK_CODEOWNERS_PATH=CODEOWNERS \
 MR_MILCHICK_DRY_RUN=true \
 CI_PROJECT_ID=412 \
@@ -52,7 +52,7 @@ Expected:
 ## Observe: epic to `develop` with label
 
 ```bash
-MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
+MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
 MR_MILCHICK_CODEOWNERS_PATH=.github/CODEOWNERS \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
@@ -73,7 +73,7 @@ Expected:
 ## Explain: real MR from the monorepo
 
 ```bash
-MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
+MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
 MR_MILCHICK_CODEOWNERS_PATH=CODEOWNERS \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=4015 \
@@ -96,5 +96,6 @@ Expected:
 
 - `observe` and `explain` do not execute the action plan, so `MR_MILCHICK_DRY_RUN` is only relevant for `refine`.
 - In merge request mode, `observe` and `explain` still fetch the MR snapshot from GitLab, so you may still need `GITLAB_TOKEN`.
-- `MR_MILCHICK_REVIEWERS` accepts a JSON array of reviewer capability objects, for example `{"username":"alice","areas":["frontend","packages"]}`.
+- `MR_MILCHICK_REVIEWERS` accepts a JSON array of reviewer capability objects, for example `{"username":"alice","areas":["frontend","packages"]}`, `{"username":"milchick-duty","fallback":true}`, or `{"username":"principal-reviewer","mandatory":true}`.
+- Reviewers marked with `mandatory: true` are always included when eligible and do not consume the normal area-routing reviewer cap.
 - `MR_MILCHICK_CODEOWNERS_ENABLED` defaults to `true`. Set it to `false` to disable ownership-based routing completely.

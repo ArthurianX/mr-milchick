@@ -1,7 +1,9 @@
 use crate::actions::model::Action;
 use crate::domain::codeowners::context::CodeownersContext;
 use crate::domain::codeowners::planner::plan_codeowners_assignments;
-use crate::domain::reviewer_routing::{ReviewerRoutingConfig, recommend_reviewers};
+use crate::domain::reviewer_routing::{
+    ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
+};
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::MergeRequestSnapshot;
 use crate::rules::model::{RuleFinding, RuleOutcome};
@@ -21,8 +23,12 @@ pub fn enrich_with_reviewer_assignment(
         let codeowners_plan = plan_codeowners_assignments(file, snapshot);
 
         if !codeowners_plan.matched_sections.is_empty() {
-            recommendation.reviewers = codeowners_plan.assigned_reviewers.clone();
-            recommendation.reasons = codeowners_plan.reasons.clone();
+            recommendation = prepend_mandatory_reviewers(
+                routing_config,
+                &excluded_reviewers,
+                &codeowners_plan.assigned_reviewers,
+                &codeowners_plan.reasons,
+            );
 
             if !codeowners_plan.uncovered_sections.is_empty() {
                 outcome.push(RuleFinding::warning(format!(
@@ -129,7 +135,10 @@ mod tests {
 
         match &enriched.action_plan.actions[0] {
             Action::AssignReviewers { reviewers } => {
-                assert_eq!(reviewers, &vec!["bob".to_string()]);
+                assert_eq!(
+                    reviewers,
+                    &vec!["principal-reviewer".to_string(), "bob".to_string()]
+                );
             }
             _ => panic!("expected AssignReviewers action"),
         }
@@ -160,7 +169,7 @@ mod tests {
     #[test]
     fn does_not_plan_assignment_when_recommended_reviewers_are_already_present() {
         let outcome = RuleOutcome::new();
-        let snapshot = sample_snapshot(false, vec!["bob"]);
+        let snapshot = sample_snapshot(false, vec!["principal-reviewer", "bob"]);
         let config = ReviewerRoutingConfig::example();
 
         let enriched = enrich_with_reviewer_assignment(
@@ -222,7 +231,10 @@ mod tests {
 
         match &enriched.action_plan.actions[0] {
             Action::AssignReviewers { reviewers } => {
-                assert_eq!(reviewers, &vec!["bob".to_string()]);
+                assert_eq!(
+                    reviewers,
+                    &vec!["principal-reviewer".to_string(), "bob".to_string()]
+                );
             }
             _ => panic!("expected AssignReviewers action"),
         }
@@ -253,7 +265,13 @@ mod tests {
 
         match &enriched.action_plan.actions[0] {
             Action::AssignReviewers { reviewers } => {
-                assert_eq!(reviewers, &vec!["daniel.andrei".to_string()]);
+                assert_eq!(
+                    reviewers,
+                    &vec![
+                        "principal-reviewer".to_string(),
+                        "daniel.andrei".to_string()
+                    ]
+                );
             }
             _ => panic!("expected AssignReviewers action"),
         }

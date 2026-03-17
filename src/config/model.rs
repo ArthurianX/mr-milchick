@@ -17,6 +17,7 @@ pub struct ReviewerDefinition {
     pub username: String,
     pub areas: Vec<CodeArea>,
     pub is_fallback: bool,
+    pub is_mandatory: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
