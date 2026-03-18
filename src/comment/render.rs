@@ -45,7 +45,7 @@ pub fn render_summary_comment(
     for action in &outcome.action_plan.actions {
         let text = match action {
             Action::PostComment { .. } => continue,
-            Action::AssignReviewers { reviewers } => {
+            Action::AssignReviewers { reviewers, .. } => {
                 format!("Assign reviewers: {}", reviewers.join(", "))
             }
             Action::FailPipeline { reason } => format!("Fail pipeline: {}", reason),

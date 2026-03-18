@@ -116,6 +116,7 @@ pub fn enrich_with_reviewer_assignment(
 
     outcome.action_plan.push(Action::AssignReviewers {
         reviewers: missing_reviewers,
+        existing_reviewers: snapshot.details.reviewer_usernames.clone(),
     });
     info!(
         action_count = outcome.action_plan.actions.len(),
@@ -176,11 +177,15 @@ mod tests {
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
         match &enriched.action_plan.actions[0] {
-            Action::AssignReviewers { reviewers } => {
+            Action::AssignReviewers {
+                reviewers,
+                existing_reviewers,
+            } => {
                 assert_eq!(
                     reviewers,
                     &vec!["principal-reviewer".to_string(), "bob".to_string()]
                 );
+                assert!(existing_reviewers.is_empty());
             }
             _ => panic!("expected AssignReviewers action"),
         }
@@ -272,11 +277,15 @@ mod tests {
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
         match &enriched.action_plan.actions[0] {
-            Action::AssignReviewers { reviewers } => {
+            Action::AssignReviewers {
+                reviewers,
+                existing_reviewers,
+            } => {
                 assert_eq!(
                     reviewers,
                     &vec!["principal-reviewer".to_string(), "bob".to_string()]
                 );
+                assert_eq!(existing_reviewers, &vec!["carol".to_string()]);
             }
             _ => panic!("expected AssignReviewers action"),
         }
@@ -306,11 +315,15 @@ mod tests {
         assert_eq!(enriched.action_plan.actions.len(), 1);
 
         match &enriched.action_plan.actions[0] {
-            Action::AssignReviewers { reviewers } => {
+            Action::AssignReviewers {
+                reviewers,
+                existing_reviewers,
+            } => {
                 assert_eq!(
                     reviewers,
                     &vec!["principal-reviewer".to_string(), "anon03".to_string()]
                 );
+                assert!(existing_reviewers.is_empty());
             }
             _ => panic!("expected AssignReviewers action"),
         }

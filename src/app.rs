@@ -620,7 +620,7 @@ fn describe_planned_action(action: &Action) -> String {
             "[PostComment] Update Mr. Milchick summary comment".to_string()
         }
         Action::PostComment { .. } => "[PostComment] Post comment".to_string(),
-        Action::AssignReviewers { reviewers } => {
+        Action::AssignReviewers { reviewers, .. } => {
             format!("[AssignReviewers] {}", reviewers.join(", "))
         }
         Action::FailPipeline { reason } => format!("[FailPipeline] {}", reason),

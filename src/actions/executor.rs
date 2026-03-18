@@ -46,8 +46,15 @@ impl ActionExecutor for DryRunExecutor {
                 Action::PostComment { body } => {
                     ExecutedAction::CommentPosted { body: body.clone() }
                 }
-                Action::AssignReviewers { reviewers } => ExecutedAction::ReviewersAssigned {
-                    reviewers: reviewers.clone(),
+                Action::AssignReviewers {
+                    reviewers,
+                    existing_reviewers,
+                } => ExecutedAction::ReviewersAssigned {
+                    reviewers: existing_reviewers
+                        .iter()
+                        .chain(reviewers.iter())
+                        .cloned()
+                        .collect(),
                 },
                 Action::FailPipeline { reason } => ExecutedAction::PipelineFailurePlanned {
                     reason: reason.clone(),
