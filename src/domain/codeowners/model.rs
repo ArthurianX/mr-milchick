@@ -39,10 +39,6 @@ pub struct CodeownersFile {
 }
 
 impl CodeownersFile {
-    pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
-    }
-
     pub fn section_by_id(&self, section_id: &str) -> Option<&CodeownersSection> {
         self.sections
             .iter()
@@ -73,10 +69,4 @@ pub struct CodeownersAssignmentPlan {
     pub assigned_reviewers: Vec<String>,
     pub uncovered_sections: Vec<CoverageGap>,
     pub reasons: Vec<String>,
-}
-
-impl CodeownersAssignmentPlan {
-    pub fn is_empty(&self) -> bool {
-        self.matched_sections.is_empty() && self.assigned_reviewers.is_empty()
-    }
 }

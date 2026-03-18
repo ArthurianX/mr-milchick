@@ -151,8 +151,8 @@ mod tests {
     #[test]
     fn parses_inline_rules() {
         let raw = r#"
-/packages/ @frontend-maintainers @bogdan.crisu @arthur.kovacs
-/apps/lobby/ @daniel.andrei @bogdan.crisu
+/packages/ @frontend-maintainers @anon04 @anon01
+/apps/lobby/ @anon03 @anon04
 # comment
 * @frontend-approvers
 "#;
@@ -166,16 +166,16 @@ mod tests {
             parsed.rules[0].owners,
             vec![
                 OwnerRef::User("frontend-maintainers".to_string()),
-                OwnerRef::User("bogdan.crisu".to_string()),
-                OwnerRef::User("arthur.kovacs".to_string())
+                OwnerRef::User("anon04".to_string()),
+                OwnerRef::User("anon01".to_string())
             ]
         );
         assert_eq!(parsed.rules[1].pattern, "/apps/lobby/");
         assert_eq!(
             parsed.rules[1].owners,
             vec![
-                OwnerRef::User("daniel.andrei".to_string()),
-                OwnerRef::User("bogdan.crisu".to_string())
+                OwnerRef::User("anon03".to_string()),
+                OwnerRef::User("anon04".to_string())
             ]
         );
         assert_eq!(parsed.rules[2].pattern, "*");
@@ -188,13 +188,13 @@ mod tests {
     #[test]
     fn parses_gitlab_section_style_rules() {
         let raw = r#"
-[Owner][1] @arthur.kovacs
+[Owner][1] @anon01
 CODEOWNERS
 
-[Libraries][2] @bogdan.crisu @arthur.kovacs
+[Libraries][2] @anon04 @anon01
 /packages/
 
-[Lobby__Bootstrap_Team][2] @daniel.andrei @bogdan.crisu @robert.rapiteanu @tbadescu @arthur.kovacs
+[Lobby__Bootstrap_Team][2] @anon03 @anon04 @anon05 @anon06 @anon01
 /apps/lobby/
 "#;
 
@@ -205,26 +205,26 @@ CODEOWNERS
         assert_eq!(parsed.rules[0].pattern, "CODEOWNERS");
         assert_eq!(
             parsed.rules[0].owners,
-            vec![OwnerRef::User("arthur.kovacs".to_string())]
+            vec![OwnerRef::User("anon01".to_string())]
         );
         assert_eq!(parsed.rules[0].section_id.as_deref(), Some("owner"));
         assert_eq!(parsed.rules[1].pattern, "/packages/");
         assert_eq!(
             parsed.rules[1].owners,
             vec![
-                OwnerRef::User("bogdan.crisu".to_string()),
-                OwnerRef::User("arthur.kovacs".to_string())
+                OwnerRef::User("anon04".to_string()),
+                OwnerRef::User("anon01".to_string())
             ]
         );
         assert_eq!(parsed.rules[2].pattern, "/apps/lobby/");
         assert_eq!(
             parsed.rules[2].owners,
             vec![
-                OwnerRef::User("daniel.andrei".to_string()),
-                OwnerRef::User("bogdan.crisu".to_string()),
-                OwnerRef::User("robert.rapiteanu".to_string()),
-                OwnerRef::User("tbadescu".to_string()),
-                OwnerRef::User("arthur.kovacs".to_string())
+                OwnerRef::User("anon03".to_string()),
+                OwnerRef::User("anon04".to_string()),
+                OwnerRef::User("anon05".to_string()),
+                OwnerRef::User("anon06".to_string()),
+                OwnerRef::User("anon01".to_string())
             ]
         );
         assert_eq!(parsed.sections[1].required_approvals, 2);
@@ -233,7 +233,7 @@ CODEOWNERS
     #[test]
     fn parses_multiple_paths_inside_one_section() {
         let raw = r#"
-[Libraries][2] @bogdan.crisu @arthur.kovacs
+[Libraries][2] @anon04 @anon01
 /packages/
 /libs/
 "#;
@@ -245,8 +245,8 @@ CODEOWNERS
         assert_eq!(
             parsed.rules[0].owners,
             vec![
-                OwnerRef::User("bogdan.crisu".to_string()),
-                OwnerRef::User("arthur.kovacs".to_string())
+                OwnerRef::User("anon04".to_string()),
+                OwnerRef::User("anon01".to_string())
             ]
         );
         assert_eq!(parsed.rules[1].pattern, "/libs/");
@@ -256,8 +256,8 @@ CODEOWNERS
     #[test]
     fn inline_rule_inside_section_keeps_section_membership() {
         let raw = r#"
-[Libraries][2] @bogdan.crisu @arthur.kovacs
-/apps/lobby/ @daniel.andrei @bogdan.crisu
+[Libraries][2] @anon04 @anon01
+/apps/lobby/ @anon03 @anon04
 "#;
 
         let parsed = parse_codeowners_str(raw).expect("should parse");
@@ -268,8 +268,8 @@ CODEOWNERS
         assert_eq!(
             parsed.rules[0].owners,
             vec![
-                OwnerRef::User("daniel.andrei".to_string()),
-                OwnerRef::User("bogdan.crisu".to_string())
+                OwnerRef::User("anon03".to_string()),
+                OwnerRef::User("anon04".to_string())
             ]
         );
     }
@@ -277,7 +277,7 @@ CODEOWNERS
     #[test]
     fn parses_invalid_section_count_as_one() {
         let raw = r#"
-[Libraries][x] @bogdan.crisu @arthur.kovacs
+[Libraries][x] @anon04 @anon01
 /packages/
 "#;
 

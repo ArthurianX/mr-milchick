@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
+use tracing::{debug, instrument};
 
 use crate::gitlab::api::{
     ChangedFile, GitLabConfig, MergeRequestDetails, MergeRequestNote, MergeRequestSnapshot,
@@ -21,6 +22,7 @@ impl GitLabClient {
         }
     }
 
+    #[instrument(skip(self, reviewers), fields(project_id = %project_id, merge_request_iid = %merge_request_iid, reviewer_count = reviewers.len()))]
     pub async fn assign_reviewers(
         &self,
         project_id: &str,
@@ -40,6 +42,7 @@ impl GitLabClient {
             let user_id = self.resolve_user_id_by_username(username).await?;
             reviewer_ids.push(user_id);
         }
+        debug!("resolved reviewer usernames to GitLab user IDs");
 
         let response = self
             .http
@@ -58,10 +61,12 @@ impl GitLabClient {
         if !status.is_success() {
             anyhow::bail!("GitLab reviewer assignment failed: {} - {}", status, body);
         }
+        debug!(http_status = %status, "GitLab reviewer assignment request succeeded");
 
         Ok(())
     }
 
+    #[instrument(skip(self, body), fields(project_id = %project_id, merge_request_iid = %merge_request_iid, body_len = body.len()))]
     pub async fn post_comment(
         &self,
         project_id: &str,
@@ -84,10 +89,12 @@ impl GitLabClient {
             .send()
             .await?
             .error_for_status()?;
+        debug!("GitLab comment post request succeeded");
 
         Ok(())
     }
 
+    #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
     pub async fn get_merge_request(
         &self,
         project_id: &str,
@@ -116,10 +123,17 @@ impl GitLabClient {
             .json::<MergeRequestDto>()
             .await
             .context("failed to deserialize merge request response")?;
+        debug!(
+            iid = dto.iid,
+            reviewer_count = dto.reviewers.len(),
+            draft = dto.draft,
+            "fetched merge request details"
+        );
 
         Ok(map_merge_request(dto))
     }
 
+    #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
     pub async fn get_merge_request_changes(
         &self,
         project_id: &str,
@@ -148,10 +162,15 @@ impl GitLabClient {
             .json::<MergeRequestChangesDto>()
             .await
             .context("failed to deserialize merge request changes response")?;
+        debug!(
+            changed_files = dto.changes.len(),
+            "fetched merge request changes"
+        );
 
         Ok(dto.changes.into_iter().map(map_changed_file).collect())
     }
 
+    #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
     pub async fn get_merge_request_snapshot(
         &self,
         project_id: &str,
@@ -163,6 +182,12 @@ impl GitLabClient {
         let changed_files = self
             .get_merge_request_changes(project_id, merge_request_iid)
             .await?;
+        debug!(
+            changed_files = changed_files.len(),
+            draft = details.is_draft,
+            reviewer_count = details.reviewer_usernames.len(),
+            "assembled merge request snapshot"
+        );
 
         Ok(MergeRequestSnapshot {
             details,
@@ -170,6 +195,7 @@ impl GitLabClient {
         })
     }
 
+    #[instrument(skip(self), fields(username = %username))]
     pub async fn resolve_user_id_by_username(&self, username: &str) -> Result<u64> {
         let url = format!("{}/users", self.config.base_url.trim_end_matches('/'));
 
@@ -191,10 +217,12 @@ impl GitLabClient {
             .into_iter()
             .find(|u| u.username.eq_ignore_ascii_case(username))
             .with_context(|| format!("no GitLab user found for username '{}'", username))?;
+        debug!(user_id = user.id, "resolved GitLab username");
 
         Ok(user.id)
     }
 
+    #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
     pub async fn get_merge_request_notes(
         &self,
         project_id: &str,
@@ -219,6 +247,7 @@ impl GitLabClient {
             .json::<Vec<crate::gitlab::dto::MergeRequestNoteDto>>()
             .await
             .context("failed to deserialize merge request notes response")?;
+        debug!(notes = notes.len(), "fetched merge request notes");
 
         Ok(notes
             .into_iter()
@@ -229,6 +258,7 @@ impl GitLabClient {
             .collect())
     }
 
+    #[instrument(skip(self, body), fields(project_id = %project_id, merge_request_iid = %merge_request_iid, note_id = note_id, body_len = body.len()))]
     pub async fn update_comment(
         &self,
         project_id: &str,
@@ -261,6 +291,7 @@ impl GitLabClient {
         if !status.is_success() {
             anyhow::bail!("GitLab comment update failed: {} - {}", status, body_text);
         }
+        debug!(http_status = %status, "GitLab comment update request succeeded");
 
         Ok(())
     }
