@@ -584,6 +584,7 @@ fn refine_mode_is_idempotent_across_runs() {
     let notes = server.note_bodies();
     assert_eq!(notes.len(), 1);
     assert!(notes[0].contains("<!-- mr-milchick:summary -->"));
+    assert!(notes[0].contains("Assign reviewers: @principal-reviewer, @bob"));
     assert_eq!(
         server.assigned_reviewers(),
         vec!["principal-reviewer".to_string(), "bob".to_string()]
@@ -709,5 +710,5 @@ fn refine_mode_posts_compact_slack_message_and_thread_payload() {
     assert!(
         thread_message.contains("https://gitlab.example.com/group/project/-/merge_requests/3995")
     );
-    assert!(thread_message.contains("Assigned reviewers: principal-reviewer, bob."));
+    assert!(thread_message.contains("Assigned reviewers: @principal-reviewer, @bob."));
 }

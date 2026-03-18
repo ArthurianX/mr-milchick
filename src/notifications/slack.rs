@@ -70,7 +70,7 @@ impl SlackNotifier {
     }
 }
 
-pub fn render_review_request_summary(title: &str, web_url: &str) -> String {
+pub fn render_review_request_summary(_title: &str, web_url: &str) -> String {
     format!(":gitlab: :noted2: Reviews Needed : {} > :thread:", web_url)
 }
 
@@ -83,7 +83,12 @@ pub fn render_review_request_thread(
     let reviewers_text = if reviewers.is_empty() {
         "Assigned reviewers are already in position.".to_string()
     } else {
-        format!("Assigned reviewers: {}.", reviewers.join(", "))
+        let mentions = reviewers
+            .iter()
+            .map(|reviewer| format!("@{}", reviewer))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Assigned reviewers: {}.", mentions)
     };
 
     format!(
@@ -121,7 +126,7 @@ mod tests {
         assert!(message.contains("The department has a request."));
         assert!(message.contains("Review requested for:\nImprove branch policy"));
         assert!(message.contains("https://gitlab.example.com/group/project/-/merge_requests/1"));
-        assert!(message.contains("Assigned reviewers: alice, bob."));
+        assert!(message.contains("Assigned reviewers: @alice, @bob."));
     }
 
     #[test]
