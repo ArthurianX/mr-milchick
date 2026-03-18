@@ -1,8 +1,15 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    PostComment { body: String },
-    AssignReviewers { reviewers: Vec<String> },
-    FailPipeline { reason: String },
+    PostComment {
+        body: String,
+    },
+    AssignReviewers {
+        reviewers: Vec<String>,
+        existing_reviewers: Vec<String>,
+    },
+    FailPipeline {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

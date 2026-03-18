@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashSet;
 use tracing::{debug, info, instrument};
 
 use crate::actions::executor::{ActionExecutor, ExecutedAction, ExecutionReport};
@@ -37,7 +38,10 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
 
         for action in &plan.actions {
             match action {
-                Action::AssignReviewers { reviewers } => {
+                Action::AssignReviewers {
+                    reviewers,
+                    existing_reviewers,
+                } => {
                     debug!(
                         reviewer_count = reviewers.len(),
                         "processing reviewer assignment action"
@@ -51,16 +55,33 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
                         continue;
                     }
 
+                    let final_reviewers = merge_reviewer_usernames(existing_reviewers, reviewers);
+
+                    if final_reviewers.len() == existing_reviewers.len() {
+                        debug!(
+                            existing_reviewers = existing_reviewers.len(),
+                            requested_reviewers = reviewers.len(),
+                            "skipping reviewer assignment because all requested reviewers are already present"
+                        );
+                        report
+                            .executed
+                            .push(ExecutedAction::ReviewersSkippedAlreadyPresent {
+                                reviewers: reviewers.clone(),
+                            });
+                        continue;
+                    }
+
                     self.client
-                        .assign_reviewers(self.project_id, self.merge_request_iid, reviewers)
+                        .assign_reviewers(self.project_id, self.merge_request_iid, &final_reviewers)
                         .await?;
                     info!(
-                        reviewer_count = reviewers.len(),
+                        added_reviewer_count = reviewers.len(),
+                        final_reviewer_count = final_reviewers.len(),
                         "assigned reviewers in GitLab"
                     );
 
                     report.executed.push(ExecutedAction::ReviewersAssigned {
-                        reviewers: reviewers.clone(),
+                        reviewers: final_reviewers,
                     });
                 }
                 Action::PostComment { body } => {
@@ -149,5 +170,63 @@ impl<'a> ActionExecutor for GitLabExecutor<'a> {
         );
 
         Ok(report)
+    }
+}
+
+fn merge_reviewer_usernames(
+    existing_reviewers: &[String],
+    reviewers_to_add: &[String],
+) -> Vec<String> {
+    let mut selected = HashSet::new();
+    let mut merged = Vec::with_capacity(existing_reviewers.len() + reviewers_to_add.len());
+
+    for reviewer in existing_reviewers {
+        if selected.insert(reviewer.clone()) {
+            merged.push(reviewer.clone());
+        }
+    }
+
+    for reviewer in reviewers_to_add {
+        if selected.insert(reviewer.clone()) {
+            merged.push(reviewer.clone());
+        }
+    }
+
+    merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_reviewer_usernames;
+
+    #[test]
+    fn preserves_existing_reviewers_and_appends_missing_ones() {
+        let merged = merge_reviewer_usernames(
+            &["alice".to_string(), "bob".to_string()],
+            &["carol".to_string(), "dora".to_string()],
+        );
+
+        assert_eq!(
+            merged,
+            vec![
+                "alice".to_string(),
+                "bob".to_string(),
+                "carol".to_string(),
+                "dora".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn deduplicates_requested_reviewers_against_existing_assignments() {
+        let merged = merge_reviewer_usernames(
+            &["alice".to_string(), "bob".to_string()],
+            &["bob".to_string(), "carol".to_string(), "alice".to_string()],
+        );
+
+        assert_eq!(
+            merged,
+            vec!["alice".to_string(), "bob".to_string(), "carol".to_string(),]
+        );
     }
 }
