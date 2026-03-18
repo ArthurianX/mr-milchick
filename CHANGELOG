@@ -7,6 +7,20 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [0.3.1] — 2026-03-18
+
+This release corrects reviewer assignment behavior in active monorepos and hardens the CLI integration harness.
+
+### Fixed
+
+- `refine` now preserves reviewers already assigned on the merge request and complements them with Milchick's recommendations instead of replacing them.
+- Slack review-request follow-up now reflects the final merged reviewer set actually assigned on the merge request.
+- The CLI integration mock server now tolerates transient nonblocking socket reads during full test runs, preventing spurious connection resets under `cargo test --all --locked`.
+
+### Added
+
+- Reviewer-merge coverage in both unit tests and CLI integration tests, including a case where an existing reviewer remains assigned after refinement.
+
 ## [0.3.0] — 2026-03-18
 
 This release hardens day-to-day operability with better diagnostics, stronger integration confidence, and tighter project documentation.

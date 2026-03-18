@@ -43,6 +43,10 @@ struct MockGitLabServer {
 
 impl MockGitLabServer {
     fn start() -> Self {
+        Self::start_with_reviewers(Vec::new())
+    }
+
+    fn start_with_reviewers(reviewers: Vec<&str>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
         listener
             .set_nonblocking(true)
@@ -52,7 +56,10 @@ impl MockGitLabServer {
             .expect("mock server should have address");
         let running = Arc::new(AtomicBool::new(true));
         let state = Arc::new(Mutex::new(ServerState {
-            reviewers: Vec::new(),
+            reviewers: reviewers
+                .into_iter()
+                .map(|value| value.to_string())
+                .collect(),
             notes: Vec::new(),
             request_log: Vec::new(),
             next_note_id: 1,
@@ -149,6 +156,10 @@ impl Drop for MockGitLabServer {
 }
 
 fn handle_connection(stream: &mut TcpStream, state: &Arc<Mutex<ServerState>>) {
+    stream
+        .set_nonblocking(false)
+        .expect("accepted stream should be switched to blocking mode");
+
     let request = read_http_request(stream);
     let mut guard = state.lock().expect("state lock should succeed");
     guard.request_log.push(RequestRecord {
@@ -183,7 +194,7 @@ fn read_http_request(stream: &mut TcpStream) -> HttpRequest {
     let mut temp = [0_u8; 1024];
 
     loop {
-        let read = stream.read(&mut temp).expect("request read should succeed");
+        let read = read_from_stream(stream, &mut temp, "request read should succeed");
         if read == 0 {
             break;
         }
@@ -206,9 +217,7 @@ fn read_http_request(stream: &mut TcpStream) -> HttpRequest {
 
             let total_length = header_end + 4 + content_length;
             while buffer.len() < total_length {
-                let read = stream
-                    .read(&mut temp)
-                    .expect("request body read should succeed");
+                let read = read_from_stream(stream, &mut temp, "request body read should succeed");
                 if read == 0 {
                     break;
                 }
@@ -234,6 +243,23 @@ fn read_http_request(stream: &mut TcpStream) -> HttpRequest {
     }
 
     panic!("incomplete HTTP request received by mock server");
+}
+
+fn read_from_stream(stream: &mut TcpStream, buffer: &mut [u8], error_message: &str) -> usize {
+    loop {
+        match stream.read(buffer) {
+            Ok(read) => return read,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => panic!("{error_message}: {err}"),
+        }
+    }
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -598,4 +624,41 @@ fn refine_mode_is_idempotent_across_runs() {
     );
     assert_eq!(server.note_bodies().len(), 1);
     assert!(server.note_bodies()[0].contains("All recommended reviewers are already assigned."));
+}
+
+#[test]
+fn refine_mode_merges_existing_reviewers_instead_of_replacing_them() {
+    let server = MockGitLabServer::start_with_reviewers(vec!["alice"]);
+    let envs = base_env(&server);
+    let borrowed_envs = borrow_env(&envs);
+    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
+
+    let output = run_cli("refine", &borrowed_envs);
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[AssignReviewers] principal-reviewer, bob"));
+    assert!(stdout.contains("[ReviewersAssigned] alice, principal-reviewer, bob"));
+
+    assert_eq!(
+        server.assigned_reviewers(),
+        vec![
+            "alice".to_string(),
+            "principal-reviewer".to_string(),
+            "bob".to_string(),
+        ]
+    );
+
+    let reviewer_assignment_bodies = server.request_bodies("PUT", &mr_path);
+    assert_eq!(reviewer_assignment_bodies.len(), 1);
+    assert_eq!(
+        serde_json::from_str::<Value>(&reviewer_assignment_bodies[0])
+            .expect("reviewer assignment body should parse"),
+        json!({"reviewer_ids": [1004, 1001, 1002]})
+    );
 }
