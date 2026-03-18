@@ -7,6 +7,21 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [0.3.0] — 2026-03-18
+
+This release hardens day-to-day operability with better diagnostics, stronger integration confidence, and tighter project documentation.
+
+### Added
+
+- End-to-end CLI integration tests covering mode output, GitLab HTTP behavior, and idempotency across repeated `refine` runs.
+- README guidance for running the integration harness locally.
+
+### Changed
+
+- Structured `tracing` spans and logs now cover snapshot fetch, reviewer planning, execution, and notification decisions.
+- Contributor and user docs now consistently describe runtime configuration as environment-driven.
+- Small dead-code cleanup to keep the codebase intentional as it grows.
+
 ## [0.2.0] — 2026-03-17
 
 Configuration architecture has been intentionally broken and rebuilt around pipeline-provided environment variables.
