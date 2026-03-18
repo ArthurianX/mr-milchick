@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tracing::{debug, info, instrument, warn};
 
 use crate::actions::executor::{ActionExecutor, DryRunExecutor, ExecutedAction, ExecutionReport};
 use crate::actions::model::Action;
@@ -60,6 +61,12 @@ fn has_non_comment_actions(plan: &crate::actions::model::ActionPlan) -> bool {
         .any(|action| !matches!(action, Action::PostComment { .. }))
 }
 
+fn has_reviewer_assignment_action(plan: &crate::actions::model::ActionPlan) -> bool {
+    plan.actions
+        .iter()
+        .any(|action| matches!(action, Action::AssignReviewers { .. }))
+}
+
 pub async fn run(cli: Cli) -> Result<()> {
     if matches!(cli.command, crate::cli::Command::Version) {
         crate::cli::print_version();
@@ -70,19 +77,45 @@ pub async fn run(cli: Cli) -> Result<()> {
     run_mode(mode).await
 }
 
+#[instrument(skip_all, fields(mode = ?mode))]
 pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     let ctx = build_ci_context()?;
     let selector = ToneSelector::default();
+    info!(
+        project_id = %ctx.project_id(),
+        merge_request_iid = ctx.merge_request_iid().unwrap_or("none"),
+        pipeline_source = ?ctx.pipeline.source,
+        source_branch = %ctx.source_branch(),
+        target_branch = %ctx.target_branch(),
+        labels = ctx.labels.len(),
+        "starting command execution"
+    );
 
     println!("{}", selector.select(ToneCategory::Observation, &ctx));
 
     if !ctx.is_merge_request_pipeline() {
+        info!("pipeline is not a merge request pipeline; exiting early");
         println!("This pipeline does not currently present merge request responsibilities.");
         return Ok(());
     }
 
     let mut outcome = evaluate_rules(&ctx);
+    debug!(
+        findings = outcome.findings.len(),
+        planned_actions = outcome.action_plan.actions.len(),
+        "rule evaluation completed"
+    );
     let app_config = load_app_config_context()?;
+    debug!(
+        codeowners_enabled = app_config.codeowners.enabled,
+        codeowners_file_loaded = app_config.codeowners.file.is_some(),
+        slack_enabled = app_config.slack.enabled,
+        reviewer_area_pools = app_config.routing_config.reviewers_by_area.len(),
+        fallback_reviewers = app_config.routing_config.fallback_reviewers.len(),
+        mandatory_reviewers = app_config.routing_config.mandatory_reviewers.len(),
+        max_reviewers = app_config.routing_config.max_reviewers,
+        "application configuration loaded"
+    );
 
     let snapshot = maybe_fetch_snapshot(&ctx).await?;
 
@@ -93,13 +126,26 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             &app_config.routing_config,
             &app_config.codeowners,
         );
+        debug!(
+            findings = outcome.findings.len(),
+            planned_actions = outcome.action_plan.actions.len(),
+            draft = snapshot.details.is_draft,
+            changed_files = snapshot.changed_file_count(),
+            "reviewer planning completed"
+        );
     }
 
-    let summary_comment = render_summary_comment(&outcome);
+    let summary_comment = render_summary_comment(&outcome, &ctx, &selector);
     outcome.action_plan.push(Action::PostComment {
         body: summary_comment,
     });
     let has_meaningful_actions = has_non_comment_actions(&outcome.action_plan);
+    info!(
+        findings = outcome.findings.len(),
+        action_count = outcome.action_plan.actions.len(),
+        has_meaningful_actions,
+        "final outcome assembled"
+    );
 
     match mode {
         ExecutionMode::Observe => {
@@ -108,6 +154,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
             if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
+            } else if outcome.findings.is_empty()
+                && has_reviewer_assignment_action(&outcome.action_plan)
+            {
+                println!("{}", selector.select(ToneCategory::ReviewerAssigned, &ctx));
             }
         }
         ExecutionMode::Refine => {
@@ -115,6 +165,10 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
                 println!("{}", selector.select(ToneCategory::Blocking, &ctx));
             } else if outcome.is_empty() && !has_meaningful_actions {
                 println!("{}", selector.select(ToneCategory::Resolution, &ctx));
+            } else if outcome.findings.is_empty()
+                && has_reviewer_assignment_action(&outcome.action_plan)
+            {
+                println!("{}", selector.select(ToneCategory::ReviewerAssigned, &ctx));
             } else {
                 println!("{}", selector.select(ToneCategory::Refinement, &ctx));
             }
@@ -123,7 +177,12 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             print_action_plan(&outcome);
 
             let strategy = ExecutionStrategy::from_env();
+            info!(execution_strategy = ?strategy, "executing action plan");
             let report = execute_action_plan(strategy, &ctx, &outcome.action_plan).await?;
+            debug!(
+                executed_actions = report.executed.len(),
+                "action execution completed"
+            );
             print_execution_report(&report);
             maybe_notify_slack(
                 strategy,
@@ -137,14 +196,16 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             .await?;
 
             if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
+                warn!("failing command because blocking findings or fail-pipeline action remain");
                 anyhow::bail!("merge request policy requirements were not satisfied");
             }
         }
         ExecutionMode::Explain => {
+            info!("rendering explain output");
             println!("Decision explanation:");
             print_outcome(&outcome);
             print_action_plan(&outcome);
-            let summary_comment = render_summary_comment(&outcome);
+            let summary_comment = render_summary_comment(&outcome, &ctx, &selector);
             println!("Structured summary comment preview:");
             println!("---");
             println!("{}", summary_comment);
@@ -280,6 +341,7 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     Ok(())
 }
 
+#[instrument(skip_all, fields(strategy = ?strategy, action_count = plan.actions.len()))]
 async fn execute_action_plan(
     strategy: ExecutionStrategy,
     ctx: &crate::context::model::CiContext,
@@ -287,6 +349,7 @@ async fn execute_action_plan(
 ) -> Result<ExecutionReport> {
     match strategy {
         ExecutionStrategy::DryRun => {
+            debug!("using dry-run executor");
             let executor = DryRunExecutor;
             executor.execute(plan).await
         }
@@ -297,6 +360,11 @@ async fn execute_action_plan(
 
             let config = GitLabConfig::from_env()?;
             let client = GitLabClient::new(config);
+            debug!(
+                project_id = %ctx.project_id(),
+                merge_request_iid = %mr_iid,
+                "using GitLab executor"
+            );
 
             let executor = crate::actions::executor::gitlab::GitLabExecutor {
                 client: &client,
@@ -308,18 +376,35 @@ async fn execute_action_plan(
         }
     }
 }
+
+#[instrument(
+    skip_all,
+    fields(
+        project_id = %ctx.project_id(),
+        merge_request_iid = ctx.merge_request_iid().unwrap_or("none")
+    )
+)]
 async fn maybe_fetch_snapshot(
     ctx: &crate::context::model::CiContext,
 ) -> Result<Option<MergeRequestSnapshot>> {
     let Some(mr_iid) = ctx.merge_request_iid() else {
+        debug!("merge request IID missing; skipping snapshot fetch");
         return Ok(None);
     };
 
     let config = GitLabConfig::from_env()?;
     let client = GitLabClient::new(config);
+    info!("fetching merge request snapshot from GitLab");
     let snapshot = client
         .get_merge_request_snapshot(ctx.project_id(), mr_iid)
         .await?;
+    info!(
+        changed_files = snapshot.changed_file_count(),
+        existing_reviewers = snapshot.details.reviewer_usernames.len(),
+        draft = snapshot.details.is_draft,
+        state = snapshot.details.state.as_str(),
+        "merge request snapshot fetched"
+    );
 
     Ok(Some(snapshot))
 }
@@ -449,10 +534,18 @@ async fn maybe_notify_slack(
     let Some(assigned_reviewers) =
         reviewers_assigned_for_notification(strategy, outcome, report, slack_config)
     else {
+        debug!(
+            execution_strategy = ?strategy,
+            slack_enabled = slack_config.enabled,
+            webhook_configured = slack_config.webhook_url.is_some(),
+            channel_configured = slack_config.channel.is_some(),
+            "slack notification skipped"
+        );
         return Ok(());
     };
 
     let Some(snapshot) = snapshot else {
+        warn!("reviewers were assigned but snapshot is unavailable; skipping Slack notification");
         return Ok(());
     };
 
@@ -465,6 +558,11 @@ async fn maybe_notify_slack(
     );
 
     let notifier = SlackNotifier::new(slack_config.clone());
+    info!(
+        reviewer_count = assigned_reviewers.len(),
+        merge_request_url = %snapshot.details.web_url,
+        "sending Slack review request"
+    );
     notifier.send_review_request(&message).await
 }
 

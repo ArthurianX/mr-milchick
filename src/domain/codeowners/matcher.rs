@@ -245,7 +245,7 @@ mod tests {
                     pattern: "/packages/".to_string(),
                     owners: vec![
                         OwnerRef::User("frontend-maintainers".to_string()),
-                        OwnerRef::User("bogdan.crisu".to_string()),
+                        OwnerRef::User("anon04".to_string()),
                     ],
                     line_number: 1,
                     section_id: Some("libraries".to_string()),
@@ -253,7 +253,7 @@ mod tests {
                 CodeownersRule {
                     pattern: "/packages/proxy/".to_string(),
                     owners: vec![
-                        OwnerRef::User("daniel.andrei".to_string()),
+                        OwnerRef::User("anon03".to_string()),
                         OwnerRef::User("andrei.achim".to_string()),
                     ],
                     line_number: 2,
@@ -277,7 +277,7 @@ mod tests {
 
         assert_eq!(
             owners,
-            vec!["daniel.andrei".to_string(), "andrei.achim".to_string()]
+            vec!["anon03".to_string(), "andrei.achim".to_string()]
         );
     }
 
@@ -287,7 +287,7 @@ mod tests {
 
         let owners = match_owners(&codeowners, "packages/button.ts");
 
-        assert_eq!(owners, vec!["bogdan.crisu".to_string()]);
+        assert_eq!(owners, vec!["anon04".to_string()]);
     }
 
     #[test]
@@ -307,7 +307,7 @@ mod tests {
 
         assert_eq!(
             owners,
-            vec!["daniel.andrei".to_string(), "andrei.achim".to_string()]
+            vec!["anon03".to_string(), "andrei.achim".to_string()]
         );
     }
 
@@ -327,7 +327,7 @@ mod tests {
                 state: MergeRequestState::Opened,
                 is_draft: false,
                 web_url: "https://example.test".to_string(),
-                author_username: "arthur.kovacs".to_string(),
+                author_username: "anon01".to_string(),
                 reviewer_usernames: vec![],
             },
             changed_files: vec![
@@ -352,7 +352,7 @@ mod tests {
 
         assert_eq!(
             owners,
-            vec!["daniel.andrei".to_string(), "andrei.achim".to_string()]
+            vec!["anon03".to_string(), "andrei.achim".to_string()]
         );
     }
 
@@ -372,7 +372,7 @@ mod tests {
                 state: MergeRequestState::Opened,
                 is_draft: false,
                 web_url: "https://example.test".to_string(),
-                author_username: "arthur.kovacs".to_string(),
+                author_username: "anon01".to_string(),
                 reviewer_usernames: vec![],
             },
             changed_files: vec![

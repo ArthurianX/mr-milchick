@@ -80,7 +80,7 @@ I mean ... four if we're being honest:
 ```
 mr-milchick version
 
-OUTPUT > mr-milchick 0.1.0 (2076d86 2026-03-16)
+OUTPUT > mr-milchick 0.3.0 (2076d86 2026-03-18)
 ```
 
 
@@ -122,10 +122,34 @@ Prints the binary version, git SHA and build date.
 
 ```
 mr-milchick version
-→ mr-milchick 0.1.0 (3f2c8ab 2026-03-16)
+→ mr-milchick 0.3.0 (3f2c8ab 2026-03-18)
 ```
 
 Useful for confirming which build is active in a pipeline without triggering any evaluation logic.
+
+---
+
+## Testing
+
+Run the full test suite with:
+
+```bash
+cargo test
+```
+
+Run only the CLI integration harness with:
+
+```bash
+cargo test --test cli_integration
+```
+
+The integration test binary in `tests/cli_integration.rs` launches the compiled `mr-milchick` executable and talks to a stateful mock GitLab HTTP server, so it exercises:
+
+- mode-specific CLI output
+- GitLab snapshot fetches and mutations
+- idempotency across repeated `refine` runs
+
+Because that harness binds a local TCP port for the mock server, it should be run in an environment that allows local socket listeners.
 
 ---
 
@@ -178,6 +202,7 @@ MR_MILCHICK_MAX_REVIEWERS=2
 ```
 
 Reviewers are supplied by the pipeline as JSON, not by a bundled repo config file.
+Mr. Milchick's runtime configuration is CI env-driven: reviewer routing, CODEOWNERS toggles, and related execution settings are all loaded from environment variables at invocation time.
 
 Each reviewer object can declare:
 

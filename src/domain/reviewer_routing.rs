@@ -126,12 +126,6 @@ pub struct ReviewerRecommendation {
     pub reasons: Vec<String>,
 }
 
-impl ReviewerRecommendation {
-    pub fn is_empty(&self) -> bool {
-        self.reviewers.is_empty()
-    }
-}
-
 pub fn recommend_reviewers(
     summary: &MergeRequestAreaSummary,
     config: &ReviewerRoutingConfig,
@@ -453,12 +447,12 @@ mod tests {
 
         let config = ReviewerRoutingConfig::example();
         let excluded = vec![];
-        let codeowners = vec!["daniel.andrei".to_string()];
+        let codeowners = vec!["anon03".to_string()];
 
         let recommendation =
             recommend_reviewers_with_codeowners(&summary, &config, &excluded, &codeowners);
 
-        assert_eq!(recommendation.reviewers[0], "daniel.andrei");
+        assert_eq!(recommendation.reviewers[0], "anon03");
     }
 
     #[test]
@@ -467,8 +461,8 @@ mod tests {
         summary.add(CodeArea::Frontend);
 
         let config = ReviewerRoutingConfig::example();
-        let excluded = vec!["daniel.andrei".to_string()];
-        let codeowners = vec!["daniel.andrei".to_string(), "andrei.achim".to_string()];
+        let excluded = vec!["anon03".to_string()];
+        let codeowners = vec!["anon03".to_string(), "andrei.achim".to_string()];
 
         let recommendation =
             recommend_reviewers_with_codeowners(&summary, &config, &excluded, &codeowners);

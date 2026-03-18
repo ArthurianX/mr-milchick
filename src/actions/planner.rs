@@ -7,7 +7,17 @@ use crate::domain::reviewer_routing::{
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::MergeRequestSnapshot;
 use crate::rules::model::{RuleFinding, RuleOutcome};
+use tracing::{debug, info, instrument};
 
+#[instrument(
+    skip_all,
+    fields(
+        merge_request_iid = snapshot.details.iid,
+        changed_files = snapshot.changed_file_count(),
+        draft = snapshot.details.is_draft,
+        existing_reviewers = snapshot.details.reviewer_usernames.len()
+    )
+)]
 pub fn enrich_with_reviewer_assignment(
     mut outcome: RuleOutcome,
     snapshot: &MergeRequestSnapshot,
@@ -18,9 +28,22 @@ pub fn enrich_with_reviewer_assignment(
     let excluded_reviewers = vec![snapshot.details.author_username.clone()];
     let mut recommendation =
         recommend_reviewers(&area_summary, routing_config, &excluded_reviewers);
+    debug!(
+        significant_areas = area_summary.significant_areas().len(),
+        recommendation_count = recommendation.reviewers.len(),
+        reasons = recommendation.reasons.len(),
+        "base reviewer recommendation computed"
+    );
 
     if let Some(file) = &codeowners_ctx.file {
         let codeowners_plan = plan_codeowners_assignments(file, snapshot);
+        debug!(
+            matched_sections = codeowners_plan.matched_sections.len(),
+            assigned_reviewers = codeowners_plan.assigned_reviewers.len(),
+            uncovered_sections = codeowners_plan.uncovered_sections.len(),
+            reasons = codeowners_plan.reasons.len(),
+            "CODEOWNERS assignment plan computed"
+        );
 
         if !codeowners_plan.matched_sections.is_empty() {
             recommendation = prepend_mandatory_reviewers(
@@ -40,6 +63,10 @@ pub fn enrich_with_reviewer_assignment(
                         .collect::<Vec<_>>()
                         .join(", ")
                 )));
+                info!(
+                    uncovered_sections = codeowners_plan.uncovered_sections.len(),
+                    "CODEOWNERS coverage gaps detected"
+                );
             }
         }
     }
@@ -50,10 +77,15 @@ pub fn enrich_with_reviewer_assignment(
                 "Reviewer assignment is deferred because the merge request is draft.",
             ));
         }
+        info!(
+            deferred_reviewer_count = recommendation.reviewers.len(),
+            "reviewer assignment deferred for draft merge request"
+        );
 
         return outcome;
     }
 
+    let recommended_reviewers = recommendation.reviewers.len();
     let missing_reviewers: Vec<String> = recommendation
         .reviewers
         .into_iter()
@@ -65,6 +97,11 @@ pub fn enrich_with_reviewer_assignment(
                 .any(|existing| existing == reviewer)
         })
         .collect();
+    debug!(
+        recommended_reviewers,
+        missing_reviewers = missing_reviewers.len(),
+        "filtered already-assigned reviewers from recommendation"
+    );
 
     if missing_reviewers.is_empty() {
         if !snapshot.details.reviewer_usernames.is_empty() {
@@ -72,6 +109,7 @@ pub fn enrich_with_reviewer_assignment(
                 "All recommended reviewers are already assigned.",
             ));
         }
+        info!("no reviewer assignment action needed");
 
         return outcome;
     }
@@ -79,6 +117,10 @@ pub fn enrich_with_reviewer_assignment(
     outcome.action_plan.push(Action::AssignReviewers {
         reviewers: missing_reviewers,
     });
+    info!(
+        action_count = outcome.action_plan.actions.len(),
+        "planned reviewer assignment action"
+    );
 
     outcome
 }
@@ -251,7 +293,7 @@ mod tests {
             file: Some(
                 crate::domain::codeowners::parser::parse_codeowners_str(
                     r#"
-[Frontend][1] @daniel.andrei
+[Frontend][1] @anon03
 /apps/frontend/
 "#,
                 )
@@ -267,10 +309,7 @@ mod tests {
             Action::AssignReviewers { reviewers } => {
                 assert_eq!(
                     reviewers,
-                    &vec![
-                        "principal-reviewer".to_string(),
-                        "daniel.andrei".to_string()
-                    ]
+                    &vec!["principal-reviewer".to_string(), "anon03".to_string()]
                 );
             }
             _ => panic!("expected AssignReviewers action"),
