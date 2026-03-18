@@ -46,7 +46,7 @@ pub fn render_summary_comment(
         let text = match action {
             Action::PostComment { .. } => continue,
             Action::AssignReviewers { reviewers, .. } => {
-                format!("Assign reviewers: {}", reviewers.join(", "))
+                format!("Assign reviewers: {}", format_reviewers(reviewers))
             }
             Action::FailPipeline { reason } => format!("Fail pipeline: {}", reason),
         };
@@ -75,6 +75,14 @@ pub fn render_summary_comment(
     lines.push(format!("_{}_", selector.select(closing_category, ctx)));
 
     lines.join("\n")
+}
+
+fn format_reviewers(reviewers: &[String]) -> String {
+    reviewers
+        .iter()
+        .map(|reviewer| format!("@{}", reviewer))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -111,6 +119,10 @@ mod tests {
             findings: vec![RuleFinding::blocking("Missing label.")],
             action_plan: ActionPlan::new(),
         };
+        outcome.action_plan.push(Action::AssignReviewers {
+            reviewers: vec!["principal-reviewer".to_string(), "bob".to_string()],
+            existing_reviewers: vec![],
+        });
         outcome.action_plan.push(Action::FailPipeline {
             reason: "Missing label.".to_string(),
         });
@@ -122,6 +134,7 @@ mod tests {
         assert!(comment.contains(MR_MILCHICK_MARKER));
         assert!(comment.contains("## Mr. Milchick Review Summary"));
         assert!(comment.contains("**Blocking**: Missing label."));
+        assert!(comment.contains("Assign reviewers: @principal-reviewer, @bob"));
         assert!(comment.contains("Fail pipeline: Missing label."));
         assert!(comment.contains("Mr. Milchick"));
         assert!(comment.contains("_"));
