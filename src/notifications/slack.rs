@@ -71,7 +71,7 @@ impl SlackNotifier {
 }
 
 pub fn render_review_request_summary(title: &str, web_url: &str) -> String {
-    format!("Reviews Needed: {} {}", title, web_url)
+    format!(":gitlab: Reviews Needed :noted2: : {} {} > :thread:", title, web_url)
 }
 
 pub fn render_review_request_thread(
@@ -105,7 +105,7 @@ mod tests {
 
         assert_eq!(
             message,
-            "Reviews Needed: Improve branch policy https://gitlab.example.com/group/project/-/merge_requests/1"
+            ":gitlab: Reviews Needed :noted2: : Improve branch policy https://gitlab.example.com/group/project/-/merge_requests/1 > :thread:"
         );
     }
 

@@ -697,7 +697,7 @@ fn refine_mode_posts_compact_slack_message_and_thread_payload() {
     assert_eq!(
         payload["mr_milchick_says"],
         json!(
-            "Reviews Needed: Frontend adjustments https://gitlab.example.com/group/project/-/merge_requests/3995"
+            ":gitlab: Reviews Needed :noted2: : Frontend adjustments https://gitlab.example.com/group/project/-/merge_requests/3995 > :thread:"
         )
     );
 
