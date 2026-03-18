@@ -20,7 +20,9 @@ use crate::domain::reviewer_routing::{
 use crate::domain::snapshot_analysis::summarize_areas;
 use crate::gitlab::api::{GitLabConfig, MergeRequestSnapshot};
 use crate::gitlab::client::GitLabClient;
-use crate::notifications::slack::{SlackNotifier, render_review_request_message};
+use crate::notifications::slack::{
+    SlackNotifier, render_review_request_summary, render_review_request_thread,
+};
 use crate::rules::engine::evaluate_rules;
 use crate::rules::model::RuleOutcome;
 use crate::tone::{ToneCategory, ToneSelector};
@@ -550,7 +552,8 @@ async fn maybe_notify_slack(
     };
 
     let tone_line = selector.select(ToneCategory::ReviewRequest, ctx);
-    let message = render_review_request_message(
+    let summary = render_review_request_summary(&snapshot.details.title, &snapshot.details.web_url);
+    let thread = render_review_request_thread(
         tone_line,
         &snapshot.details.title,
         &snapshot.details.web_url,
@@ -563,7 +566,7 @@ async fn maybe_notify_slack(
         merge_request_url = %snapshot.details.web_url,
         "sending Slack review request"
     );
-    notifier.send_review_request(&message).await
+    notifier.send_review_request(&summary, &thread).await
 }
 
 fn reviewers_assigned_for_notification(

@@ -94,6 +94,10 @@ impl MockGitLabServer {
         format!("http://{}/api/v4", self.address)
     }
 
+    fn slack_webhook_url(&self) -> String {
+        format!("http://{}/slack/workflow", self.address)
+    }
+
     fn request_count(&self, method: &str, path: &str) -> usize {
         self.state
             .lock()
@@ -292,6 +296,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
     let notes_path = format!("{mr_path}/notes");
     let changes_path = format!("{mr_path}/changes");
+    let slack_workflow_path = "/slack/workflow";
 
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == mr_path => HttpResponse {
@@ -411,6 +416,10 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: json!({"id": note_id}).to_string(),
             }
         }
+        ("POST", path) if path == slack_workflow_path => HttpResponse {
+            status_code: 200,
+            body: "{}".to_string(),
+        },
         _ => HttpResponse {
             status_code: 404,
             body: json!({"error": "unmatched route", "path": request.path}).to_string(),
@@ -661,4 +670,44 @@ fn refine_mode_merges_existing_reviewers_instead_of_replacing_them() {
             .expect("reviewer assignment body should parse"),
         json!({"reviewer_ids": [1004, 1001, 1002]})
     );
+}
+
+#[test]
+fn refine_mode_posts_compact_slack_message_and_thread_payload() {
+    let server = MockGitLabServer::start();
+    let mut envs = base_env(&server);
+    envs.retain(|(key, _)| *key != "MR_MILCHICK_SLACK_ENABLED");
+    envs.push(("MR_MILCHICK_SLACK_WEBHOOK_URL", server.slack_webhook_url()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+
+    let output = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bodies = server.request_bodies("POST", "/slack/workflow");
+    assert_eq!(bodies.len(), 1);
+
+    let payload: Value =
+        serde_json::from_str(&bodies[0]).expect("Slack workflow payload should parse");
+    assert_eq!(payload["mr_milchick_talks_to"], json!("C0ALY38CW3X"));
+    assert_eq!(
+        payload["mr_milchick_says"],
+        json!(
+            "Reviews Needed: Frontend adjustments https://gitlab.example.com/group/project/-/merge_requests/3995"
+        )
+    );
+
+    let thread_message = payload["mr_milchick_says_thread"]
+        .as_str()
+        .expect("thread message should be a string");
+    assert!(thread_message.contains("Review requested for:"));
+    assert!(thread_message.contains("Frontend adjustments"));
+    assert!(
+        thread_message.contains("https://gitlab.example.com/group/project/-/merge_requests/3995")
+    );
+    assert!(thread_message.contains("Assigned reviewers: principal-reviewer, bob."));
 }

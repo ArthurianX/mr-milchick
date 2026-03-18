@@ -14,6 +14,7 @@ pub struct SlackNotifier {
 struct SlackWorkflowPayload<'a> {
     mr_milchick_talks_to: &'a str,
     mr_milchick_says: &'a str,
+    mr_milchick_says_thread: &'a str,
 }
 
 impl SlackNotifier {
@@ -28,7 +29,7 @@ impl SlackNotifier {
         self.config.enabled && self.config.webhook_url.is_some() && self.config.channel.is_some()
     }
 
-    pub async fn send_review_request(&self, message: &str) -> Result<()> {
+    pub async fn send_review_request(&self, summary: &str, thread: &str) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -44,15 +45,20 @@ impl SlackNotifier {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("missing Slack channel"))?;
 
-        if message.trim().is_empty() {
-            bail!("Slack review request message must not be empty");
+        if summary.trim().is_empty() {
+            bail!("Slack review request summary must not be empty");
+        }
+
+        if thread.trim().is_empty() {
+            bail!("Slack review request thread message must not be empty");
         }
 
         self.http
             .post(webhook_url)
             .json(&SlackWorkflowPayload {
                 mr_milchick_talks_to: channel,
-                mr_milchick_says: message,
+                mr_milchick_says: summary,
+                mr_milchick_says_thread: thread,
             })
             .send()
             .await
@@ -64,7 +70,11 @@ impl SlackNotifier {
     }
 }
 
-pub fn render_review_request_message(
+pub fn render_review_request_summary(title: &str, web_url: &str) -> String {
+    format!("Reviews Needed: {} {}", title, web_url)
+}
+
+pub fn render_review_request_thread(
     tone_line: &str,
     title: &str,
     web_url: &str,
@@ -87,8 +97,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renders_review_request_message_with_reviewers() {
-        let message = render_review_request_message(
+    fn renders_review_request_summary_line() {
+        let message = render_review_request_summary(
+            "Improve branch policy",
+            "https://gitlab.example.com/group/project/-/merge_requests/1",
+        );
+
+        assert_eq!(
+            message,
+            "Reviews Needed: Improve branch policy https://gitlab.example.com/group/project/-/merge_requests/1"
+        );
+    }
+
+    #[test]
+    fn renders_review_request_thread_with_reviewers() {
+        let message = render_review_request_thread(
             "The department has a request.",
             "Improve branch policy",
             "https://gitlab.example.com/group/project/-/merge_requests/1",
