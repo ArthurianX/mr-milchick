@@ -129,6 +129,30 @@ Useful for confirming which build is active in a pipeline without triggering any
 
 ---
 
+## Testing
+
+Run the full test suite with:
+
+```bash
+cargo test
+```
+
+Run only the CLI integration harness with:
+
+```bash
+cargo test --test cli_integration
+```
+
+The integration test binary in `tests/cli_integration.rs` launches the compiled `mr-milchick` executable and talks to a stateful mock GitLab HTTP server, so it exercises:
+
+- mode-specific CLI output
+- GitLab snapshot fetches and mutations
+- idempotency across repeated `refine` runs
+
+Because that harness binds a local TCP port for the mock server, it should be run in an environment that allows local socket listeners.
+
+---
+
 ## Execution Flags
 
 Mr. Milchick behavior is controlled through runtime flags and environment context.
