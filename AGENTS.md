@@ -52,7 +52,7 @@ Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (d
 ## Key Conventions
 
 - **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `context/model.rs`. Always wrap raw strings in domain types.
-- **Runtime config from environment variables**: `config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`.
+- **Runtime config from environment variables**: `config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`; optional Slack notifications come from `MR_MILCHICK_SLACK_WEBHOOK_URL`, `MR_MILCHICK_SLACK_CHANNEL`, and `MR_MILCHICK_SLACK_ENABLED`.
 - **GitLab DTO separation**: `gitlab/dto.rs` holds serde-deserialized API responses; `gitlab/api.rs` holds domain models. The client in `gitlab/client.rs` maps DTOs → domain types.
 - **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
 - **Async via tokio**: `#[tokio::main]` in `main.rs`. The `ActionExecutor` trait uses `#[async_trait]`. Only the GitLab client layer and execution are async.
@@ -81,6 +81,10 @@ Tone is deterministic, not random. Messages are selected by hashing MR identity 
 
 `executor/gitlab.rs` checks existing MR notes before posting — it skips duplicate comments and updates existing ones matched by `MR_MILCHICK_MARKER` (`<!-- mr-milchick:summary -->`). This marker is defined in `comment/render.rs`.
 
+## Slack Notifications
+
+Slack review notifications are optional and only fire during real `refine` execution when reviewers were actually assigned and the pipeline is not being failed. The workflow payload is split into a compact top-level channel message (`mr_milchick_says`) and a fuller threaded message (`mr_milchick_says_thread`).
+
 ## Environment Variables
 
 | Variable | Required | Purpose |
@@ -98,3 +102,6 @@ Tone is deterministic, not random. Messages are selected by hashing MR identity 
 | `MR_MILCHICK_DRY_RUN` | No | `true`/`1`/`yes` to force `refine` into dry-run execution |
 | `MR_MILCHICK_CODEOWNERS_ENABLED` | No | `true` by default; set to `false` to disable CODEOWNERS routing |
 | `MR_MILCHICK_CODEOWNERS_PATH` | No | Overrides CODEOWNERS auto-discovery path |
+| `MR_MILCHICK_SLACK_WEBHOOK_URL` | No | Slack workflow webhook URL for review notifications |
+| `MR_MILCHICK_SLACK_CHANNEL` | No | Slack channel ID passed to the workflow payload |
+| `MR_MILCHICK_SLACK_ENABLED` | No | `true` by default; set to `false` to disable Slack notifications even when webhook/channel are present |

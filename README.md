@@ -102,6 +102,7 @@ May:
 
 - assign reviewers
 - post summary comments
+- send Slack review notifications when configured
 - enforce blocking policies
 - fail pipeline when required
 
@@ -216,6 +217,32 @@ Mandatory reviewers are additive:
 - they are selected before area-based or fallback routing
 - they are also prepended to CODEOWNERS-driven assignment plans
 - they do not consume the `MR_MILCHICK_MAX_REVIEWERS` cap used for area routing
+
+### Slack Review Notifications
+
+```bash
+MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/...
+MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
+MR_MILCHICK_SLACK_ENABLED=true
+```
+
+When Slack is configured, `refine` posts a review notification only when:
+
+- execution is real, not dry-run
+- the merge request is not being blocked or failed
+- reviewers were actually assigned during that run
+
+The Slack workflow payload is split into:
+
+- `mr_milchick_says`: a compact channel line intended to keep noise low
+- `mr_milchick_says_thread`: the fuller review context posted into the thread by the Slack workflow
+
+Current message shape:
+
+- channel line: `:gitlab: :noted2: Reviews Needed : <mr-url> > :thread:`
+- thread body: tone line, MR title, MR URL, and assigned reviewers
+
+Reviewer names in the Slack thread are prefixed with `@` so they can resolve to Slack mentions when GitLab and Slack usernames match.
 
 ---
 

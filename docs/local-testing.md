@@ -98,3 +98,5 @@ Expected:
 - `MR_MILCHICK_REVIEWERS` accepts a JSON array of reviewer capability objects, for example `{"username":"alice","areas":["frontend","packages"]}`, `{"username":"milchick-duty","fallback":true}`, or `{"username":"principal-reviewer","mandatory":true}`.
 - Reviewers marked with `mandatory: true` are always included when eligible and do not consume the normal area-routing reviewer cap.
 - `MR_MILCHICK_CODEOWNERS_ENABLED` defaults to `true`. Set it to `false` to disable ownership-based routing completely.
+- Slack notifications are optional and only run during real `refine` execution. To test them locally, set `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`, and leave `MR_MILCHICK_SLACK_ENABLED` unset or set it to `true`.
+- The Slack workflow payload uses `mr_milchick_says` for the compact top-level message and `mr_milchick_says_thread` for the longer threaded follow-up.
