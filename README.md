@@ -80,7 +80,7 @@ I mean ... four if we're being honest:
 ```
 mr-milchick version
 
-OUTPUT > mr-milchick 0.3.1 (2076d86 2026-03-18)
+OUTPUT > mr-milchick 0.4.0 (2076d86 2026-03-23)
 ```
 
 
@@ -123,7 +123,7 @@ Prints the binary version, git SHA and build date.
 
 ```
 mr-milchick version
-→ mr-milchick 0.3.1 (3f2c8ab 2026-03-18)
+→ mr-milchick 0.4.0 (3f2c8ab 2026-03-23)
 ```
 
 Useful for confirming which build is active in a pipeline without triggering any evaluation logic.
@@ -239,8 +239,8 @@ Mr. Milchick uses the Slack Web API and posts:
 
 Current message shape:
 
-- channel line: `:gitlab: :noted2: Reviews Needed: <mr-title-link>`
-- thread body: tone line, MR title link, and assigned reviewers
+- channel line: `:gitlab: Reviews Needed for <MR-link|MR #iid>, by author :pepe-review:`
+- thread body: bold tone line, MR title link, and `_Assign reviewers_` followed by bold reviewer mentions
 
 Reviewer names in the Slack thread are rendered as `@username` based on the GitLab reviewer usernames chosen during routing.
 
