@@ -43,6 +43,7 @@ impl ReviewerRoutingConfig {
         }
     }
 
+    #[cfg(test)]
     pub fn example() -> Self {
         let raw = crate::config::model::ReviewerConfig {
             definitions: vec![
@@ -243,6 +244,7 @@ pub fn prepend_mandatory_reviewers(
     ReviewerRecommendation { reviewers, reasons }
 }
 
+#[cfg(test)]
 pub fn recommend_reviewers_with_codeowners(
     summary: &MergeRequestAreaSummary,
     config: &ReviewerRoutingConfig,

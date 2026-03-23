@@ -14,8 +14,10 @@ const MAX_REVIEWERS_ENV: &str = "MR_MILCHICK_MAX_REVIEWERS";
 const CODEOWNERS_ENABLED_ENV: &str = "MR_MILCHICK_CODEOWNERS_ENABLED";
 const CODEOWNERS_PATH_ENV: &str = "MR_MILCHICK_CODEOWNERS_PATH";
 const SLACK_ENABLED_ENV: &str = "MR_MILCHICK_SLACK_ENABLED";
-const SLACK_WEBHOOK_URL_ENV: &str = "MR_MILCHICK_SLACK_WEBHOOK_URL";
+const SLACK_BASE_URL_ENV: &str = "MR_MILCHICK_SLACK_BASE_URL";
+const SLACK_BOT_TOKEN_ENV: &str = "MR_MILCHICK_SLACK_BOT_TOKEN";
 const SLACK_CHANNEL_ENV: &str = "MR_MILCHICK_SLACK_CHANNEL";
+const DEFAULT_SLACK_BASE_URL: &str = "https://slack.com/api";
 const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
     "CODEOWNERS",
     ".github/CODEOWNERS",
@@ -97,7 +99,13 @@ fn load_slack_config() -> Result<SlackConfig> {
         _ => true,
     };
 
-    let webhook_url = std::env::var(SLACK_WEBHOOK_URL_ENV)
+    let base_url = std::env::var(SLACK_BASE_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_SLACK_BASE_URL.to_string());
+
+    let bot_token = std::env::var(SLACK_BOT_TOKEN_ENV)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -109,7 +117,8 @@ fn load_slack_config() -> Result<SlackConfig> {
 
     Ok(SlackConfig {
         enabled,
-        webhook_url,
+        base_url,
+        bot_token,
         channel,
     })
 }
@@ -247,7 +256,8 @@ mod tests {
         let config = load_slack_config().expect("slack config should load");
 
         assert!(config.enabled);
-        assert_eq!(config.webhook_url, None);
+        assert_eq!(config.base_url, DEFAULT_SLACK_BASE_URL);
+        assert_eq!(config.bot_token, None);
         assert_eq!(config.channel, None);
     }
 

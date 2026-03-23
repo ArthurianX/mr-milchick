@@ -539,7 +539,7 @@ async fn maybe_notify_slack(
         debug!(
             execution_strategy = ?strategy,
             slack_enabled = slack_config.enabled,
-            webhook_configured = slack_config.webhook_url.is_some(),
+            bot_token_configured = slack_config.bot_token.is_some(),
             channel_configured = slack_config.channel.is_some(),
             "slack notification skipped"
         );
@@ -552,15 +552,19 @@ async fn maybe_notify_slack(
     };
 
     let tone_line = selector.select(ToneCategory::ReviewRequest, ctx);
+    let notifier = SlackNotifier::new(slack_config.clone());
+    let reviewer_mentions = assigned_reviewers
+        .iter()
+        .map(|reviewer| format!("@{}", reviewer))
+        .collect::<Vec<_>>();
     let summary = render_review_request_summary(&snapshot.details.title, &snapshot.details.web_url);
     let thread = render_review_request_thread(
         tone_line,
         &snapshot.details.title,
         &snapshot.details.web_url,
-        &assigned_reviewers,
+        &reviewer_mentions,
     );
 
-    let notifier = SlackNotifier::new(slack_config.clone());
     info!(
         reviewer_count = assigned_reviewers.len(),
         merge_request_url = %snapshot.details.web_url,
@@ -580,7 +584,7 @@ fn reviewers_assigned_for_notification(
     }
 
     if !slack_config.enabled
-        || slack_config.webhook_url.is_none()
+        || slack_config.bot_token.is_none()
         || slack_config.channel.is_none()
         || outcome.action_plan.has_fail_pipeline()
         || outcome.has_blocking_findings()
@@ -693,7 +697,8 @@ mod tests {
             &report,
             &SlackConfig {
                 enabled: true,
-                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: Some("xoxb-test".to_string()),
                 channel: Some("C123".to_string()),
             },
         );
@@ -719,7 +724,8 @@ mod tests {
             &report,
             &SlackConfig {
                 enabled: true,
-                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: Some("xoxb-test".to_string()),
                 channel: Some("C123".to_string()),
             },
         );
@@ -743,7 +749,8 @@ mod tests {
             &report,
             &SlackConfig {
                 enabled: true,
-                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: Some("xoxb-test".to_string()),
                 channel: Some("C123".to_string()),
             },
         );
@@ -766,7 +773,8 @@ mod tests {
             &report,
             &SlackConfig {
                 enabled: true,
-                webhook_url: Some("https://hooks.slack.com/triggers/example".to_string()),
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: Some("xoxb-test".to_string()),
                 channel: Some("C123".to_string()),
             },
         );

@@ -221,7 +221,7 @@ Mandatory reviewers are additive:
 ### Slack Review Notifications
 
 ```bash
-MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/...
+MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-...
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
 MR_MILCHICK_SLACK_ENABLED=true
 ```
@@ -232,17 +232,24 @@ When Slack is configured, `refine` posts a review notification only when:
 - the merge request is not being blocked or failed
 - reviewers were actually assigned during that run
 
-The Slack workflow payload is split into:
+Mr. Milchick uses the Slack Web API and posts:
 
-- `mr_milchick_says`: a compact channel line intended to keep noise low
-- `mr_milchick_says_thread`: the fuller review context posted into the thread by the Slack workflow
+- one compact top-level channel message
+- one threaded reply with fuller review context
 
 Current message shape:
 
-- channel line: `:gitlab: :noted2: Reviews Needed : <mr-url> > :thread:`
-- thread body: tone line, MR title, MR URL, and assigned reviewers
+- channel line: `:gitlab: :noted2: Reviews Needed: <mr-title-link>`
+- thread body: tone line, MR title link, and assigned reviewers
 
-Reviewer names in the Slack thread are prefixed with `@` so they can resolve to Slack mentions when GitLab and Slack usernames match.
+Reviewer names in the Slack thread are rendered as `@username` based on the GitLab reviewer usernames chosen during routing.
+
+Slack app setup notes:
+
+- the bot token must have `chat:write`
+- the app must be a member of the target channel, or have `chat:write.public` for public channels
+
+For local testing or CLI integration tests, `MR_MILCHICK_SLACK_BASE_URL` can override the default Slack API base URL (`https://slack.com/api`).
 
 ---
 

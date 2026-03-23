@@ -7,6 +7,7 @@ pub struct CodeownersContext {
 }
 
 impl CodeownersContext {
+    #[cfg(test)]
     pub fn empty() -> Self {
         Self {
             enabled: false,
