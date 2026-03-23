@@ -557,7 +557,11 @@ async fn maybe_notify_slack(
         .iter()
         .map(|reviewer| format!("@{}", reviewer))
         .collect::<Vec<_>>();
-    let summary = render_review_request_summary(&snapshot.details.title, &snapshot.details.web_url);
+    let summary = render_review_request_summary(
+        snapshot.details.iid,
+        &snapshot.details.web_url,
+        &snapshot.details.author_username,
+    );
     let thread = render_review_request_thread(
         tone_line,
         &snapshot.details.title,

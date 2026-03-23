@@ -714,7 +714,7 @@ fn refine_mode_posts_compact_slack_message_and_thread_payload() {
     assert_eq!(
         payload["text"],
         json!(
-            ":gitlab: :noted2: Reviews Needed: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>"
+            ":gitlab: Reviews Needed for <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>, by @arthur :pepe-review:"
         )
     );
     assert!(payload["thread_ts"].is_null());
@@ -727,6 +727,7 @@ fn refine_mode_posts_compact_slack_message_and_thread_payload() {
     let thread_message = thread_payload["text"]
         .as_str()
         .expect("thread message should be a string");
+    assert!(thread_message.starts_with('*'));
     assert!(thread_message.contains("Review requested for: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>"));
-    assert!(thread_message.contains("Assigned reviewers: @principal-reviewer, @bob."));
+    assert!(thread_message.contains("_Assign reviewers_ *@principal-reviewer* *@bob*"));
 }

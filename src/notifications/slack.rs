@@ -119,8 +119,11 @@ impl SlackNotifier {
     }
 }
 
-pub fn render_review_request_summary(title: &str, web_url: &str) -> String {
-    format!(":gitlab: :noted2: Reviews Needed: <{}|{}>", web_url, title)
+pub fn render_review_request_summary(iid: u64, web_url: &str, author_username: &str) -> String {
+    format!(
+        ":gitlab: Reviews Needed for <{}|MR #{}>, by @{} :pepe-review:",
+        web_url, iid, author_username
+    )
 }
 
 pub fn render_review_request_thread(
@@ -130,15 +133,17 @@ pub fn render_review_request_thread(
     reviewers: &[String],
 ) -> String {
     let reviewers_text = if reviewers.is_empty() {
-        "Assigned reviewers are already in position.".to_string()
+        "_Assign reviewers_ already covered.".to_string()
     } else {
-        format!("Assigned reviewers: {}.", reviewers.join(", "))
+        let formatted_reviewers = reviewers
+            .iter()
+            .map(|reviewer| format!("*{}*", reviewer))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("_Assign reviewers_ {}", formatted_reviewers)
     };
 
-    format!(
-        "{}\n\nReview requested for: <{}|{}>\n\n{}",
-        tone_line, web_url, title, reviewers_text
-    )
+    format!("*{}*\nReview requested for: <{}|{}>\n{}", tone_line, web_url, title, reviewers_text)
 }
 
 #[cfg(test)]
@@ -148,13 +153,14 @@ mod tests {
     #[test]
     fn renders_review_request_summary_line() {
         let message = render_review_request_summary(
-            "Improve branch policy",
+            4048,
             "https://gitlab.example.com/group/project/-/merge_requests/1",
+            "arthur",
         );
 
         assert_eq!(
             message,
-            ":gitlab: :noted2: Reviews Needed: <https://gitlab.example.com/group/project/-/merge_requests/1|Improve branch policy>"
+            ":gitlab: Reviews Needed for <https://gitlab.example.com/group/project/-/merge_requests/1|MR #4048>, by @arthur :pepe-review:"
         );
     }
 
@@ -167,9 +173,9 @@ mod tests {
             &["@alice".to_string(), "@bob".to_string()],
         );
 
-        assert!(message.contains("The department has a request."));
+        assert!(message.contains("*The department has a request.*"));
         assert!(message.contains("Review requested for: <https://gitlab.example.com/group/project/-/merge_requests/1|Improve branch policy>"));
-        assert!(message.contains("Assigned reviewers: @alice, @bob."));
+        assert!(message.contains("_Assign reviewers_ *@alice* *@bob*"));
     }
 
     #[test]
@@ -187,12 +193,13 @@ mod tests {
     #[test]
     fn summary_prefers_mrkdwn_link() {
         let message = render_review_request_summary(
-            "Frontend adjustments",
+            3995,
             "https://gitlab.example.com/group/project/-/merge_requests/3995",
+            "alice",
         );
 
         assert!(message.contains(
-            "<https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>"
+            "<https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>"
         ));
     }
 }
