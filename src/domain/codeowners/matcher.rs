@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
+
+#[cfg(test)]
+use std::collections::HashSet;
 
 use crate::domain::codeowners::model::{
     CodeownersFile, CodeownersRule, MatchedSectionRequirement, OwnerRef,
@@ -15,6 +18,7 @@ pub struct MatchedCodeownersRule {
     pub path: String,
 }
 
+#[cfg(test)]
 pub fn collect_usernames_for_snapshot(
     codeowners: &CodeownersFile,
     snapshot: &MergeRequestSnapshot,

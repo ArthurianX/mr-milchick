@@ -30,6 +30,7 @@ pub struct CodeownersConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackConfig {
     pub enabled: bool,
-    pub webhook_url: Option<String>,
+    pub base_url: String,
+    pub bot_token: Option<String>,
     pub channel: Option<String>,
 }

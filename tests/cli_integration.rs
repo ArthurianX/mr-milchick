@@ -32,6 +32,7 @@ struct ServerState {
     notes: Vec<MockNote>,
     request_log: Vec<RequestRecord>,
     next_note_id: u64,
+    next_slack_ts: u64,
 }
 
 struct MockGitLabServer {
@@ -63,6 +64,7 @@ impl MockGitLabServer {
             notes: Vec::new(),
             request_log: Vec::new(),
             next_note_id: 1,
+            next_slack_ts: 1,
         }));
 
         let handle = {
@@ -94,8 +96,8 @@ impl MockGitLabServer {
         format!("http://{}/api/v4", self.address)
     }
 
-    fn slack_webhook_url(&self) -> String {
-        format!("http://{}/slack/workflow", self.address)
+    fn slack_api_base_url(&self) -> String {
+        format!("http://{}/slack/api", self.address)
     }
 
     fn request_count(&self, method: &str, path: &str) -> usize {
@@ -296,7 +298,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
     let notes_path = format!("{mr_path}/notes");
     let changes_path = format!("{mr_path}/changes");
-    let slack_workflow_path = "/slack/workflow";
+    let slack_post_message_path = "/slack/api/chat.postMessage";
 
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == mr_path => HttpResponse {
@@ -416,10 +418,23 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: json!({"id": note_id}).to_string(),
             }
         }
-        ("POST", path) if path == slack_workflow_path => HttpResponse {
-            status_code: 200,
-            body: "{}".to_string(),
-        },
+        ("POST", path) if path == slack_post_message_path => {
+            let ts = format!("1700000000.{:06}", state.next_slack_ts);
+            state.next_slack_ts += 1;
+
+            HttpResponse {
+                status_code: 200,
+                body: json!({
+                    "ok": true,
+                    "channel": "C0ALY38CW3X",
+                    "ts": ts,
+                    "message": {
+                        "text": "posted"
+                    }
+                })
+                .to_string(),
+            }
+        }
         _ => HttpResponse {
             status_code: 404,
             body: json!({"error": "unmatched route", "path": request.path}).to_string(),
@@ -678,7 +693,8 @@ fn refine_mode_posts_compact_slack_message_and_thread_payload() {
     let server = MockGitLabServer::start();
     let mut envs = base_env(&server);
     envs.retain(|(key, _)| *key != "MR_MILCHICK_SLACK_ENABLED");
-    envs.push(("MR_MILCHICK_SLACK_WEBHOOK_URL", server.slack_webhook_url()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
     envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
 
     let output = run_cli("refine", &borrow_env(&envs));
@@ -689,26 +705,29 @@ fn refine_mode_posts_compact_slack_message_and_thread_payload() {
         String::from_utf8_lossy(&output.stdout)
     );
 
-    let bodies = server.request_bodies("POST", "/slack/workflow");
-    assert_eq!(bodies.len(), 1);
+    let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(bodies.len(), 2);
 
     let payload: Value =
-        serde_json::from_str(&bodies[0]).expect("Slack workflow payload should parse");
-    assert_eq!(payload["mr_milchick_talks_to"], json!("C0ALY38CW3X"));
+        serde_json::from_str(&bodies[0]).expect("top-level Slack payload should parse");
+    assert_eq!(payload["channel"], json!("C0ALY38CW3X"));
     assert_eq!(
-        payload["mr_milchick_says"],
+        payload["text"],
         json!(
-            ":gitlab: :noted2: Reviews Needed : https://gitlab.example.com/group/project/-/merge_requests/3995 > :thread:"
+            ":gitlab: Reviews Needed for <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>, by @arthur :pepe-review:"
         )
     );
+    assert!(payload["thread_ts"].is_null());
 
-    let thread_message = payload["mr_milchick_says_thread"]
+    let thread_payload: Value =
+        serde_json::from_str(&bodies[1]).expect("thread Slack payload should parse");
+    assert_eq!(thread_payload["channel"], json!("C0ALY38CW3X"));
+    assert_eq!(thread_payload["thread_ts"], json!("1700000000.000001"));
+
+    let thread_message = thread_payload["text"]
         .as_str()
         .expect("thread message should be a string");
-    assert!(thread_message.contains("Review requested for:"));
-    assert!(thread_message.contains("Frontend adjustments"));
-    assert!(
-        thread_message.contains("https://gitlab.example.com/group/project/-/merge_requests/3995")
-    );
-    assert!(thread_message.contains("Assigned reviewers: @principal-reviewer, @bob."));
+    assert!(thread_message.starts_with('*'));
+    assert!(thread_message.contains("Review requested for: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>"));
+    assert!(thread_message.contains("_Assign reviewers_ *@principal-reviewer* *@bob*"));
 }

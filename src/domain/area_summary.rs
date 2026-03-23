@@ -25,6 +25,7 @@ impl MergeRequestAreaSummary {
             .map(|(area, _)| *area)
     }
 
+    #[cfg(test)]
     pub fn total_files(&self) -> usize {
         self.counts.values().sum()
     }

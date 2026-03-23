@@ -7,6 +7,20 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [0.4.0] — 2026-03-23
+
+This release tightens the Slack review-request experience and aligns the binary versioning/docs with the new Slack app messaging shape.
+
+### Changed
+
+- Slack review notifications now use a more compact top-level channel message that links directly to `MR #iid` and names the MR author.
+- The threaded Slack follow-up now renders as a strict three-line mrkdwn message with a bold opener and emphasized reviewer assignment line.
+- README examples and Slack documentation now reflect the Slack app-oriented notification format.
+
+### Added
+
+- Release metadata for the Slack messaging refresh in the changelog and crate version.
+
 ## [0.3.1] — 2026-03-18
 
 This release corrects reviewer assignment behavior in active monorepos and hardens the CLI integration harness.

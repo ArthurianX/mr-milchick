@@ -80,7 +80,7 @@ I mean ... four if we're being honest:
 ```
 mr-milchick version
 
-OUTPUT > mr-milchick 0.3.1 (2076d86 2026-03-18)
+OUTPUT > mr-milchick 0.4.0 (2076d86 2026-03-23)
 ```
 
 
@@ -102,6 +102,7 @@ May:
 
 - assign reviewers
 - post summary comments
+- send Slack review notifications when configured
 - enforce blocking policies
 - fail pipeline when required
 
@@ -122,7 +123,7 @@ Prints the binary version, git SHA and build date.
 
 ```
 mr-milchick version
-→ mr-milchick 0.3.1 (3f2c8ab 2026-03-18)
+→ mr-milchick 0.4.0 (3f2c8ab 2026-03-23)
 ```
 
 Useful for confirming which build is active in a pipeline without triggering any evaluation logic.
@@ -216,6 +217,39 @@ Mandatory reviewers are additive:
 - they are selected before area-based or fallback routing
 - they are also prepended to CODEOWNERS-driven assignment plans
 - they do not consume the `MR_MILCHICK_MAX_REVIEWERS` cap used for area routing
+
+### Slack Review Notifications
+
+```bash
+MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-...
+MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
+MR_MILCHICK_SLACK_ENABLED=true
+```
+
+When Slack is configured, `refine` posts a review notification only when:
+
+- execution is real, not dry-run
+- the merge request is not being blocked or failed
+- reviewers were actually assigned during that run
+
+Mr. Milchick uses the Slack Web API and posts:
+
+- one compact top-level channel message
+- one threaded reply with fuller review context
+
+Current message shape:
+
+- channel line: `:gitlab: Reviews Needed for <MR-link|MR #iid>, by author :pepe-review:`
+- thread body: bold tone line, MR title link, and `_Assign reviewers_` followed by bold reviewer mentions
+
+Reviewer names in the Slack thread are rendered as `@username` based on the GitLab reviewer usernames chosen during routing.
+
+Slack app setup notes:
+
+- the bot token must have `chat:write`
+- the app must be a member of the target channel, or have `chat:write.public` for public channels
+
+For local testing or CLI integration tests, `MR_MILCHICK_SLACK_BASE_URL` can override the default Slack API base URL (`https://slack.com/api`).
 
 ---
 
