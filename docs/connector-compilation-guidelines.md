@@ -98,6 +98,29 @@ Use one of these approaches:
 
 Separate binaries are usually easier to reason about in regulated environments because the compiled capability set is obvious from the build job.
 
+## Target Environment Matters
+
+Build the binary for the environment where it will actually run.
+
+This matters just as much as connector selection. A binary compiled for a local macOS workstation is not an appropriate release artifact if the real runtime environment is a Linux x86_64 GitLab runner.
+
+For release artifacts, prefer an explicit target triple rather than relying on the builder host defaults.
+
+Example:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build -p mr-milchick --release --target x86_64-unknown-linux-musl
+```
+
+Why `x86_64-unknown-linux-musl` is a good release target:
+
+- it matches common Linux x86_64 deployment environments
+- it produces a more portable static binary than a host-default glibc build in many CI setups
+- it makes the intended runtime platform explicit in the build job
+
+This is the same approach used in the release pipeline in [`/.gitlab-ci.yml`](/Users/arthur.kovacs/Work/mr-milchick/.gitlab-ci.yml).
+
 ## Verification
 
 Use the version command to confirm what a binary contains:

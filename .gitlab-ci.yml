@@ -1,4 +1,10 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
+
 stages:
+  - verify
   - test
   - build
   - release
@@ -8,6 +14,8 @@ default:
 
 variables:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  GIT_DEPTH: "0"
 
 cache:
   key: "${CI_PROJECT_NAME}"
@@ -15,40 +23,60 @@ cache:
     - target/
     - .cargo/
 
+verify_release_tag:
+  stage: verify
+  image: alpine/git:2.47.2
+  script:
+    - git fetch origin master
+    - git branch -r --contains "$CI_COMMIT_SHA" | grep -Eq 'origin/master$'
+
 test:
   stage: test
+  needs: ["verify_release_tag"]
   script:
-    - cargo test --all --locked
+    - cargo test --workspace --locked
 
 build_release_binary:
   stage: build
-  image: rust:1.86
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "master"'
-      when: always
-    - when: never
+  needs: ["test"]
   before_script:
     - rustup target add x86_64-unknown-linux-musl
-    - apt-get update && apt-get install -y musl-tools pkg-config
+    - apt-get update
+    - apt-get install -y musl-tools pkg-config
   script:
-    - cargo build --release --locked --target x86_64-unknown-linux-musl
+    - cargo build -p mr-milchick --release --locked --target x86_64-unknown-linux-musl
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/mr-milchick
+    - cp mr-milchick.toml dist/mr-milchick.toml
     - chmod +x dist/mr-milchick
   artifacts:
+    name: "mr-milchick-${CI_COMMIT_TAG}"
     paths:
       - dist/mr-milchick
-    expire_in: 30 days
+      - dist/mr-milchick.toml
+    expire_in: 90 days
 
 release_binary:
   stage: release
-  rules:
-    - if: '$CI_COMMIT_TAG'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  needs:
+    - job: build_release_binary
+      artifacts: true
   script:
-    - echo "Release artifact prepared"
+    - echo "Creating GitLab release for ${CI_COMMIT_TAG}"
   artifacts:
-    name: "mr-milchick-release-${CI_COMMIT_SHORT_SHA}"
+    name: "mr-milchick-${CI_COMMIT_TAG}"
     paths:
       - dist/mr-milchick
+      - dist/mr-milchick.toml
     expire_in: 90 days
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "mr-milchick $CI_COMMIT_TAG"
+    description: "Release $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: "mr-milchick (linux x86_64 musl)"
+          url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/raw/dist/mr-milchick"
+        - name: "mr-milchick.toml"
+          url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/raw/dist/mr-milchick.toml"

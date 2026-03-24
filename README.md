@@ -168,6 +168,8 @@ Additional operational docs:
 - [`docs/connector-compilation-guidelines.md`](docs/connector-compilation-guidelines.md)
 - [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md)
 
+Release artifacts should be built for the environment where they will actually run. In CI we currently target Linux x86_64 with musl, as shown in [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md) and [`.gitlab-ci.yml`](.gitlab-ci.yml).
+
 ---
 
 ## Execution Flags
