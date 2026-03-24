@@ -27,8 +27,8 @@ verify_release_tag:
   stage: verify
   image: alpine/git:2.47.2
   script:
-    - git fetch origin master
-    - git branch -r --contains "$CI_COMMIT_SHA" | grep -Eq 'origin/master$'
+    - git fetch origin master:refs/remotes/origin/master
+    - git merge-base --is-ancestor "$CI_COMMIT_SHA" origin/master
 
 test:
   stage: test
