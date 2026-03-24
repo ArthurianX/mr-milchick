@@ -1,14 +1,24 @@
 # Local Testing
 
-Start with the unit test suite:
+Start with the automated test suite:
 
 ```bash
 cargo test
 ```
 
-Then run one or more local smoke tests by setting the GitLab CI environment variables manually.
+Then run local smoke tests by setting the same environment variables the CI job would provide.
 
-## Observe: epic to `develop` without label
+## Base Notes
+
+- `observe` and `explain` do not execute review actions.
+- `refine` is the only command affected by `MR_MILCHICK_DRY_RUN`.
+- In merge request mode, even `observe` and `explain` still load the merge request snapshot from GitLab, so you may need `GITLAB_TOKEN`.
+- Reviewer configuration is always read from `MR_MILCHICK_REVIEWERS`.
+- `MR_MILCHICK_CODEOWNERS_ENABLED` defaults to `true`.
+
+For the full variable reference, see [config-reference.md](config-reference.md). For a CI-first setup guide, see [ci-quickstart.md](ci-quickstart.md).
+
+## Observe A Blocking Epic Branch
 
 ```bash
 MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
@@ -19,36 +29,17 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="" \
+GITLAB_TOKEN=your-gitlab-token \
 cargo run -p mr-milchick -- observe
 ```
 
-Expected:
+Expected result:
 
-- observation tone
-- blocking finding printed
+- observation output
+- a blocking finding about the missing `0. run-tests` label
+- no external mutation
 
-## Refine: epic to `develop` without label
-
-```bash
-MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
-MR_MILCHICK_CODEOWNERS_PATH=CODEOWNERS \
-CI_PROJECT_ID=412 \
-CI_MERGE_REQUEST_IID=1 \
-CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
-CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
-CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
-cargo run -p mr-milchick -- refine
-```
-
-Expected:
-
-- blocking tone
-- blocking finding
-- structured Mr Milchick summary comment planned
-- process exits with error
-
-## Observe: epic to `develop` with label
+## Observe A Passing Epic Branch
 
 ```bash
 MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
@@ -59,17 +50,38 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
+GITLAB_TOKEN=your-gitlab-token \
 cargo run -p mr-milchick -- observe
 ```
 
-Expected:
+Expected result:
 
-- info finding
-- no blocking
-- no failure
-- structured Mr Milchick summary comment planned
+- an informational finding confirming the required label
+- no blocking failure
+- planned follow-up actions printed for `refine`
 
-## Refine: successful reviewer assignment with Slack notification
+## Refine A Blocking Merge Request
+
+```bash
+MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
+MR_MILCHICK_CODEOWNERS_PATH=CODEOWNERS \
+CI_PROJECT_ID=412 \
+CI_MERGE_REQUEST_IID=1 \
+CI_PIPELINE_SOURCE=merge_request_event \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
+CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
+CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
+GITLAB_TOKEN=your-gitlab-token \
+cargo run -p mr-milchick -- refine
+```
+
+Expected result:
+
+- blocking findings printed
+- summary comment action planned
+- command exits with an error because the merge request still violates policy
+
+## Refine With Slack App Delivery
 
 ```bash
 MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
@@ -80,22 +92,21 @@ MR_MILCHICK_SLACK_USER_MAP='{"principal-reviewer":"U01234567","alice":"U07654321
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=1 \
 CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 GITLAB_TOKEN=your-gitlab-token \
 cargo run -p mr-milchick -- refine
 ```
 
-Expected:
+Expected result:
 
-- refinement tone
-- reviewer assignment executed
-- structured Mr Milchick summary comment posted or updated
-- one compact Slack channel message posted
-- one threaded Slack reply posted with MR details and Slack `<@U...>` reviewer mentions when mappings are configured
+- reviewers assigned in GitLab
+- summary comment created or updated
+- one compact Slack message plus one threaded Slack reply
+- Slack user IDs used for mapped reviewers
 
-Webhook variant:
+## Refine With Slack Workflow Delivery
 
 ```bash
 MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
@@ -105,20 +116,20 @@ MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=1 \
 CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 GITLAB_TOKEN=your-gitlab-token \
 cargo run -p mr-milchick -- refine
 ```
 
-The webhook variant expects a Slack Workflow input webhook that defines these variables:
+Expected result:
 
-- `mr_milchick_talks_to`
-- `mr_milchick_says`
-- `mr_milchick_says_thread`
+- reviewers assigned in GitLab
+- summary comment created or updated
+- one Slack workflow trigger sent with `mr_milchick_talks_to`, `mr_milchick_says`, and `mr_milchick_says_thread`
 
-## Explain: real MR from the monorepo
+## Explain Routing And CODEOWNERS
 
 ```bash
 MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
@@ -126,29 +137,22 @@ MR_MILCHICK_CODEOWNERS_PATH=CODEOWNERS \
 CI_PROJECT_ID=1 \
 CI_MERGE_REQUEST_IID=1 \
 CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
+GITLAB_TOKEN=your-gitlab-token \
 cargo run -p mr-milchick -- explain
 ```
 
-Expected:
+Expected result:
 
-- decision explanation
-- structured summary comment preview
-- changed files listed
-- CODEOWNERS matches listed
-- no GitLab mutation because `explain` does not execute the action plan
+- findings and planned actions
+- summary comment preview
+- changed file count and merge request details
+- CODEOWNERS matches and routing reasons
 
-## Notes
+## Helpful Extras
 
-- `observe` and `explain` do not execute the action plan, so `MR_MILCHICK_DRY_RUN` is only relevant for `refine`.
-- In merge request mode, `observe` and `explain` still fetch the MR snapshot from GitLab, so you may still need `GITLAB_TOKEN`.
-- `MR_MILCHICK_REVIEWERS` accepts a JSON array of reviewer capability objects, for example `{"username":"alice","areas":["frontend","packages"]}`, `{"username":"milchick-duty","fallback":true}`, or `{"username":"principal-reviewer","mandatory":true}`.
-- Reviewers marked with `mandatory: true` are always included when eligible and do not consume the normal area-routing reviewer cap.
-- `MR_MILCHICK_CODEOWNERS_ENABLED` defaults to `true`. Set it to `false` to disable ownership-based routing completely.
-- Slack notifications are optional and only run during real `refine` execution. To test them locally against a real Slack app, set `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`. To test the workflow sink, set `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`.
-- Slack app posting uses the Web API: one compact top-level message plus one threaded reply with the fuller review context.
-- Slack workflow webhook posting is intended for lower-permission workspace setups. Milchick sends one workflow trigger with the three `mr_milchick_*` variables above, and the workflow itself is responsible for posting the lightweight parent message and the fuller threaded reply.
-- `MR_MILCHICK_SLACK_WEBHOOK_URL` must point at a Slack Workflow input webhook, not a generic Slack incoming webhook.
-- `MR_MILCHICK_SLACK_BASE_URL` is available as an override for local mocks and integration testing; production defaults to `https://slack.com/api`.
+- Use `cargo run -p mr-milchick -- version` to confirm the current build surface before a smoke test.
+- Set `MR_MILCHICK_DRY_RUN=true` with `refine` if you want an execution-shaped report without live GitLab or Slack writes.
+- `MR_MILCHICK_SLACK_BASE_URL` is available for local mocks and connector tests; the production default is `https://slack.com/api`.

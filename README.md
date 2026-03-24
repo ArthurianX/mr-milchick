@@ -1,476 +1,105 @@
-![milchick.jpg](milchick.jpg)
+<div align="center">
+  <img src="assets/milchick.png" alt="Mr Milchick Logo" >
 
-# Mr. Milchick
+# 👨🏾‍💼Mr Milchick
 
-A pleasantly unsettling steward for GitLab merge requests.
+**A pleasantly unsettling steward for merge requests.**
 
-Mr. Milchick observes.
-Mr. Milchick refines.
-Mr. Milchick ensures structural harmony.
+<br />
+<sub>Translations may lag behind the English README.</sub>
 
-This project is a Rust-based CLI tool designed to run inside GitLab CI pipelines and enforce merge request governance through calm, structured, policy‑driven automation.
+[Documentation](docs/README.md) | [Examples](docs/ci-quickstart.md) | [Contributing](CONTRIBUTING.md)
 
-It is not a bot.  
-It is not a service.  
-It is not a platform.  
+<br />
+<strong>Like this project?</strong> <a href="https://github.com/ArthurianX/mr-milchick">Star me on GitHub</a>
 
-It is a binary that cares.
+</div>
 
 ---
+
+## Overview
+
+Mr Milchick is a Rust CLI for GitLab merge request pipelines. It runs as a single CI job, reads the merge request context, evaluates review policy, plans reviewer and summary actions, and can sync the result back to GitLab with optional Slack notifications. It is a binary (that cares), not a bot and not a long-running service.
 
 ## Purpose
 
-Mr. Milchick exists to:
+The tool exists to keep review governance where the decision already happens: inside CI. It turns reviewer routing, CODEOWNERS coverage, and blocking policy into deterministic pipeline behavior that stays visible in code review and easy to audit later.
 
-- enforce merge request workflow policies
-- assign reviewers deterministically
-- integrate CODEOWNERS intelligence into routing
-- validate labels, branches and MR topology
-- reduce coordination overhead in engineering teams
-- provide explainable governance decisions
+## How It Works
 
-This tool is intended for environments where:
+`observe` runs the planning flow without mutating anything. `refine` executes the same plan for real, including reviewer assignment, summary comment sync, optional Slack delivery, and pipeline failure when blocking policy remains unresolved. `explain` adds deeper routing and CODEOWNERS detail for debugging, while `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
 
-- GitLab Apps or external bots are restricted
-- pipeline‑native automation is preferred
-- workflow enforcement must be auditable
-- governance logic must live in version control
+Today the implemented surface is intentionally small: GitLab is the only review connector, and Slack app plus Slack workflow are the only notification sinks.
 
----
+## Quickstart
 
-## Philosophy
+The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment and notifications.
 
-Mr. Milchick operates under these principles:
+```yaml
+stages:
+  - build
+  - review
 
-### Determinism over improvisation
-The same merge request must produce the same outcome.
+variables:
+  MR_MILCHICK_REVIEWERS: >-
+    [{"username":"milchick-duty","fallback":true},
+     {"username":"principal-reviewer","mandatory":true},
+     {"username":"alice","areas":["frontend","packages"]},
+     {"username":"carol","areas":["backend"]}]
 
-### Policy as code
-Workflow governance evolves through normal code review.
+build:milchick:
+  stage: build
+  image: rust:1.87
+  before_script:
+    - rustup target add x86_64-unknown-linux-musl
+    - apt-get update && apt-get install -y musl-tools pkg-config
+  script:
+    - cargo build -p mr-milchick --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
+    - mkdir -p dist
+    - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
+  artifacts:
+    paths:
+      - dist/mr-milchick
 
-### Calm enforcement
-Strict automation does not need to be hostile.  
-Politeness increases compliance.
-
-### Structured tone
-Human acceptance of automation is emotional.  
-Tone is part of system design.
-
-### Minimal infrastructure
-No servers.  
-No daemons.  
-No persistent runtime.  
-
-Only CI.  
-Only execution.
-
----
-
-## Command Model
-
-Mr. Milchick supports three operational modes:
-
-```
-mr-milchick observe
-mr-milchick refine
-mr-milchick explain
+milchick:review:
+  stage: review
+  image: debian:bookworm-slim
+  needs: ["build:milchick"]
+  script:
+    - ./dist/mr-milchick version
+    - ./dist/mr-milchick observe
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-I mean ... four if we're being honest: 
-```
-mr-milchick version
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. For Slack workflow delivery, also provide `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`. For Slack app delivery, provide `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP` if you want GitLab usernames rewritten to Slack user IDs. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
-OUTPUT > mr-milchick 1.1.0 (2076d86 2026-03-23)
-```
+You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
 
+## Docs
 
-### observe
+The main documentation hub is [docs/README.md](docs/README.md). From there you can jump straight to:
 
-Policy evaluation dry‑run.
+- [CI quickstart](docs/ci-quickstart.md)
+- [Configuration reference](docs/config-reference.md)
+- [Reviewer routing and CODEOWNERS](docs/reviewer-routing.md)
+- [Connectors and compiled capabilities](docs/connectors-and-capabilities.md)
+- [Architecture](docs/architecture.md)
+- [Tone and messages](docs/tone-and-messages.md)
+- [Local testing](docs/local-testing.md)
 
-- reads CI context
-- builds MR snapshot
-- evaluates rule engine
-- produces action plan
-- does NOT mutate GitLab
+## Direction
 
-### refine
-
-Executes the planned governance actions.
-
-May:
-
-- assign reviewers
-- post summary comments
-- send Slack review notifications when configured
-- enforce blocking policies
-- fail pipeline when required
-
-### explain
-
-Produces deep reasoning output.
-
-Used for:
-
-- debugging policy behavior
-- understanding reviewer routing
-- validating ownership logic
-- inspecting rule outcomes
-
-### version
-
-Prints the binary version, git SHA and build date.
-
-```
-mr-milchick version
-→ mr-milchick 1.1.0 (3f2c8ab 2026-03-23)
-```
-
-Useful for confirming which build is active in a pipeline without triggering any evaluation logic.
-
----
-
-## Testing
-
-Run the full test suite with:
-
-```bash
-cargo test
-```
-
-Run the thin app-level CLI smoke harness with:
-
-```bash
-cargo test -p mr-milchick --test cli_integration
-```
-
-Run connector-owned integration tests with:
-
-```bash
-cargo test -p milchick-connectors
-```
-
-The CLI integration test binary in `apps/mr-milchick/tests/cli_integration.rs` launches the compiled `mr-milchick` executable and talks to a stateful mock GitLab HTTP server, so it exercises:
-
-- mode-specific CLI output
-- workspace/runtime wiring
-- one end-to-end refine path through the compiled connectors
-
-Connector-specific HTTP behavior, idempotency, and Slack sink payload assertions now live with the connector crate rather than the app crate.
-
-Because that harness binds a local TCP port for the mock server, it should be run in an environment that allows local socket listeners.
-
-Additional operational docs:
-
-- [`docs/config-reference.md`](docs/config-reference.md)
-- [`docs/local-testing.md`](docs/local-testing.md)
-- [`docs/reviewer-routing.md`](docs/reviewer-routing.md)
-- [`docs/connector-compilation-guidelines.md`](docs/connector-compilation-guidelines.md)
-- [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md)
-
-Release artifacts should be built for the environment where they will actually run. In CI we currently target Linux x86_64 with musl, as shown in [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md) and [`.gitlab-ci.yml`](.gitlab-ci.yml).
-
----
-
-## Execution Flags
-
-Mr. Milchick behavior is controlled through runtime flags and environment context.
-
-### Dry‑Run Mode
-
-```
-MR_MILCHICK_DRY_RUN=true
-```
-
-Forces `refine` into non‑mutating mode.
-
-Used for:
-
-- safe rollout
-- CI experimentation
-- policy validation
-
-### CODEOWNERS Integration
-
-```
-MR_MILCHICK_CODEOWNERS_ENABLED=true
-MR_MILCHICK_CODEOWNERS_PATH=.gitlab/CODEOWNERS
-```
-
-Enables:
-
-- ownership‑aware reviewer routing
-- per‑file ownership aggregation
-- hybrid routing (ownership + reviewer capability env)
-
-If not provided:
-
-- CODEOWNERS defaults to enabled and Mr. Milchick looks for `CODEOWNERS`, `.github/CODEOWNERS`, `.gitlab/CODEOWNERS`, then `.CODEOWNERS`
-
-### Reviewer Routing Configuration
-
-```
-MR_MILCHICK_REVIEWERS='[
-  {"username":"milchick-duty","fallback":true},
-  {"username":"principal-reviewer","mandatory":true},
-  {"username":"alice","areas":["frontend","packages"]},
-  {"username":"carol","areas":["backend"]},
-  {"username":"grace","areas":["devops"]}
-]'
-MR_MILCHICK_MAX_REVIEWERS=2
-```
-
-Reviewers are supplied by the pipeline as JSON, not by a bundled repo config file.
-Mr. Milchick's runtime configuration is CI env-driven: reviewer routing, CODEOWNERS toggles, and related execution settings are all loaded from environment variables at invocation time.
-
-Each reviewer object can declare:
-
-- `username`: GitLab username
-- `areas`: list of review capabilities such as `frontend`, `backend`, `packages`, `devops`, `documentation`, `tests`
-- `fallback`: optional boolean that makes the reviewer eligible when no area match can be selected
-- `mandatory`: optional boolean that always includes the reviewer when they are eligible, even when area routing or CODEOWNERS would otherwise choose someone else
-
-Mandatory reviewers are additive:
-
-- they are selected before area-based or fallback routing
-- they are also prepended to CODEOWNERS-driven assignment plans
-- they do not consume the `MR_MILCHICK_MAX_REVIEWERS` cap used for area routing
-
-### Slack Review Notifications
-
-```bash
-MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-...
-MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
-MR_MILCHICK_SLACK_ENABLED=true
-```
-
-Or, for the webhook sink:
-
-```bash
-MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/...
-MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
-MR_MILCHICK_SLACK_ENABLED=true
-```
-
-When Slack is configured, `refine` posts a review notification only when:
-
-- execution is real, not dry-run
-- the merge request is not being blocked or failed
-- reviewers were actually assigned during that run
-
-Mr. Milchick supports two Slack sink variants, both centered on a light parent message plus a fuller follow-up:
-
-Current message shape:
-
-- channel line: `:gitlab: Reviews Needed for <MR-link|MR #iid>, by author :pepe-review:`
-- thread body: bold tone line, MR title link, and `_Assign reviewers_` followed by bold reviewer mentions
-
-The Slack app sink uses Slack's Web API and keeps the second message threaded directly from Milchick.
-
-The Slack workflow sink is intended for Slack Workflow input webhooks, not Slack apps or generic incoming webhooks. It sends one workflow trigger payload with three workflow variables:
-
-- `mr_milchick_talks_to`
-- `mr_milchick_says`
-- `mr_milchick_says_thread`
-
-That lets the Slack workflow itself post a light top-level message and a fuller thread reply inside the workspace, while Milchick only needs access to the workflow trigger URL. The workflow sink also downgrades the detailed message to simple plain text without Slack markdown formatting.
-
-Reviewer names in the Slack thread are rendered as `@username` based on the GitLab reviewer usernames chosen during routing.
-
-Slack app setup notes:
-
-- the bot token must have `chat:write`
-- the app must be a member of the target channel, or have `chat:write.public` for public channels
-
-For local testing or CLI integration tests, `MR_MILCHICK_SLACK_BASE_URL` can override the default Slack API base URL (`https://slack.com/api`).
-
-Slack workflow webhook notes:
-
-- this variant is designed for lower-permission environments where creating a Slack app may require admin approval
-- the webhook URL must be a Slack Workflow input webhook URL
-- the workflow must accept the three `mr_milchick_*` variables above
-- the workflow is responsible for posting the lightweight parent message and the fuller threaded follow-up
-
----
-
-## Tone System
-
-Mr. Milchick communicates using structured tonal categories:
-
-- Observation
-- Refinement Opportunity
-- Blocking Experience
-- Pleasant Resolution
-- Praise (future)
-
-Tone is:
-
-- deterministic per merge request
-- architecture‑level, not cosmetic
-- designed for institutional acceptance
-
-Tone is not humor.  
-Tone is operational ergonomics.
-
----
-
-## Connector Architecture
-
-```
-Review Connector
-  -> ReviewSnapshot
-  -> Rule Engine
-  -> Decision Model
-  -> Action Plan
-  -> Execute Review Actions via same Review Connector
-  -> Fan out Notifications via Notification Sinks
-```
-
-Mr. Milchick binaries are built from:
-
-- exactly 1 review connector
-- zero or more notification sinks
-
-That means:
-
-- review reads and writes always go through the same connector
-- sinks never influence core planning logic
-- the planner emits neutral intents, not platform API payloads
-
-Current first-party connectors:
-
-- review connector: GitLab
-- notification sinks:
-  - Slack app
-  - Slack webhook
-
-Workspace layout:
-
-```text
-apps/
-  mr-milchick/
-
-crates/
-  milchick-core/
-  milchick-runtime/
-  milchick-connectors/
-```
-
-Responsibilities:
-
-### `apps/mr-milchick`
-
-- CLI parsing
-- flavor loading
-- runtime bootstrap
-- capability reporting
-
-### `crates/milchick-core`
-
-- platform-neutral domain types
-- rules
-- reviewer planning
-- CODEOWNERS analysis
-- rendered message model
-
-### `crates/milchick-runtime`
-
-- connector traits
-- execution wiring
-- capability model
-- dry-run vs real execution behavior
-
-### `crates/milchick-connectors`
-
-- GitLab review connector
-- Slack app sink
-- Slack workflow sink
-- connector integration tests
-
----
-
-## Why Rust
-
-Mr. Milchick is written in Rust because:
-
-- static binaries simplify CI distribution
-- strong typing reduces governance risk
-- async model suits API‑bound execution
-- ownership model enforces architectural clarity
-- long‑term maintainability is required
-
-This is not a scripting utility.  
-This is governance infrastructure.
-
----
-
-## Current Capabilities
-
-As of current development phase:
-
-- strongly typed CI context model
-- GitLab MR snapshot ingestion
-- rule engine with severity classification
-- deterministic reviewer routing
-- hybrid CODEOWNERS + env routing
-- action planning layer
-- dry‑run execution strategy
-- structured summary comment rendering
-- explain mode parity with refine logic
-
----
-
-## Example Local Execution
-
-```
-CI_PROJECT_ID=123
-CI_MERGE_REQUEST_IID=456
-CI_PIPELINE_SOURCE=merge_request_event
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example
-CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop
-CI_MERGE_REQUEST_LABELS="backend,needs-review"
-
-cargo run -- observe
-```
-
-Mr. Milchick will begin observation.
-
----
-
-## Long‑Term Direction
-
-Planned system evolution includes:
-
-- merge request risk scoring engine
-- reviewer load balancing
-- policy DSL for organizational governance
-- workflow analytics layer
-- adaptive tone intensity
-- merge readiness intelligence
-- team topology awareness
-
-The objective is not automation.
-
-The objective is engineering civilization.
-
----
+The project is moving toward stronger connector boundaries, clearer capability reporting, and deeper governance behavior without adding service infrastructure. Future connector names may already exist as reserved Cargo features, but the supported runtime surface should always be read from the current docs and the `version` command output.
 
 ## Contributing
 
-Contributions must preserve:
+Contributions should preserve determinism, clear architectural boundaries, and calm operational output. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and coding expectations.
 
-- deterministic system behavior
-- clear architectural boundaries
-- policy clarity over cleverness
-- calm operational tone
+## Security
 
-Unstructured enthusiasm will be gently redirected.
+See [SECURITY.md](SECURITY.md) for reporting guidance and operational expectations.
 
----
+## License
 
-## Disclaimer
-
-Mr. Milchick is fictional.  
-The governance he enforces is not.
-
-Proceed deliberately.
+Released under the MIT license. See [LICENSE](LICENSE).
