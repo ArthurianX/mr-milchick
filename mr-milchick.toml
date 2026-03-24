@@ -1,0 +1,6 @@
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-workflow"
+enabled = true

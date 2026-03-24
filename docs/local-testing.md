@@ -19,7 +19,7 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="" \
-cargo run -- observe
+cargo run -p mr-milchick -- observe
 ```
 
 Expected:
@@ -38,7 +38,7 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
-cargo run -- refine
+cargo run -p mr-milchick -- refine
 ```
 
 Expected:
@@ -59,7 +59,7 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
-cargo run -- observe
+cargo run -p mr-milchick -- observe
 ```
 
 Expected:
@@ -83,7 +83,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -- refine
+cargo run -p mr-milchick -- refine
 ```
 
 Expected:
@@ -93,6 +93,29 @@ Expected:
 - structured Mr Milchick summary comment posted or updated
 - one compact Slack channel message posted
 - one threaded Slack reply posted with MR details and `@username` reviewer references
+
+Webhook variant:
+
+```bash
+MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"alice","areas":["frontend"]},{"username":"carol","areas":["backend"]}]' \
+MR_MILCHICK_CODEOWNERS_ENABLED=false \
+MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... \
+MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
+CI_PROJECT_ID=412 \
+CI_MERGE_REQUEST_IID=1 \
+CI_PIPELINE_SOURCE=merge_request_event \
+CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
+CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
+CI_MERGE_REQUEST_LABELS="0. run-tests" \
+GITLAB_TOKEN=your-gitlab-token \
+cargo run -p mr-milchick -- refine
+```
+
+The webhook variant expects a Slack Workflow input webhook that defines these variables:
+
+- `mr_milchick_talks_to`
+- `mr_milchick_says`
+- `mr_milchick_says_thread`
 
 ## Explain: real MR from the monorepo
 
@@ -105,7 +128,7 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/ERD-000000/test-mr-milchick-2 \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
-cargo run -- explain
+cargo run -p mr-milchick -- explain
 ```
 
 Expected:
@@ -123,6 +146,8 @@ Expected:
 - `MR_MILCHICK_REVIEWERS` accepts a JSON array of reviewer capability objects, for example `{"username":"alice","areas":["frontend","packages"]}`, `{"username":"milchick-duty","fallback":true}`, or `{"username":"principal-reviewer","mandatory":true}`.
 - Reviewers marked with `mandatory: true` are always included when eligible and do not consume the normal area-routing reviewer cap.
 - `MR_MILCHICK_CODEOWNERS_ENABLED` defaults to `true`. Set it to `false` to disable ownership-based routing completely.
-- Slack notifications are optional and only run during real `refine` execution. To test them locally against a real Slack app, set `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`, and leave `MR_MILCHICK_SLACK_ENABLED` unset or set it to `true`.
-- Slack posting uses the Web API: one compact top-level message plus one threaded reply with the fuller review context.
+- Slack notifications are optional and only run during real `refine` execution. To test them locally against a real Slack app, set `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`. To test the workflow sink, set `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`.
+- Slack app posting uses the Web API: one compact top-level message plus one threaded reply with the fuller review context.
+- Slack workflow webhook posting is intended for lower-permission workspace setups. Milchick sends one workflow trigger with the three `mr_milchick_*` variables above, and the workflow itself is responsible for posting the lightweight parent message and the fuller threaded reply.
+- `MR_MILCHICK_SLACK_WEBHOOK_URL` must point at a Slack Workflow input webhook, not a generic Slack incoming webhook.
 - `MR_MILCHICK_SLACK_BASE_URL` is available as an override for local mocks and integration testing; production defaults to `https://slack.com/api`.

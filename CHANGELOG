@@ -7,6 +7,54 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [1.0.0] — 2026-03-23
+
+This release is the connector architecture reset.
+
+Mr. Milchick is now organized as a workspace with a thin app crate, a platform-neutral core, a runtime wiring layer, and connector-owned integrations. It is the first release where the codebase reflects the intended long-term capability model: exactly one compiled review connector plus zero or more notification sinks.
+
+### Added
+
+- Cargo workspace layout with:
+  - `apps/mr-milchick`
+  - `crates/milchick-core`
+  - `crates/milchick-runtime`
+  - `crates/milchick-connectors`
+- Neutral review domain model:
+  - `ReviewSnapshot`
+  - `ReviewAction`
+  - `RenderedMessage`
+  - `NotificationMessage`
+- Runtime traits and wiring for:
+  - `ReviewConnector`
+  - `NotificationSink`
+  - capability-aware execution flow
+- GitLab review connector implementation behind the new connector boundary
+- Slack sink split into:
+  - `slack-app`
+  - `slack-workflow`
+- Connector-owned integration tests for GitLab and both Slack sink variants
+- `mr-milchick.toml` flavor file for compiled review/sink intent
+
+### Changed
+
+- Core planning and analysis now operate on platform-neutral types instead of GitLab-specific snapshot structs.
+- Summary generation now produces a neutral rendered message model before connector-specific formatting.
+- CLI integration coverage was reduced to thin app-level smoke tests; connector behavior now lives in connector crate tests.
+- Slack workflow notifications now use `MR_MILCHICK_SLACK_WEBHOOK_URL` and render a simplified plain-text thread body.
+- Documentation now reflects the workspace layout, connector model, and sink split.
+
+### Removed
+
+- Legacy root single-crate source layout in favor of the workspace structure.
+
+### Breaking Changes
+
+- The published crate/binary version moves from `0.x` to `1.0.0`.
+- Slack notification configuration is now connector-specific:
+  - Slack app sink uses `MR_MILCHICK_SLACK_BOT_TOKEN`
+  - Slack workflow sink uses `MR_MILCHICK_SLACK_WEBHOOK_URL`
+
 ## [0.4.0] — 2026-03-23
 
 This release tightens the Slack review-request experience and aligns the binary versioning/docs with the new Slack app messaging shape.

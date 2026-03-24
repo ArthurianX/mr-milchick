@@ -52,7 +52,7 @@ Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (d
 ## Key Conventions
 
 - **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `context/model.rs`. Always wrap raw strings in domain types.
-- **Runtime config from environment variables**: `config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`; optional Slack notifications come from `MR_MILCHICK_SLACK_BOT_TOKEN`, `MR_MILCHICK_SLACK_CHANNEL`, `MR_MILCHICK_SLACK_ENABLED`, and optionally `MR_MILCHICK_SLACK_BASE_URL` for testing.
+- **Runtime config from environment variables**: `config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`; optional Slack notifications come from `MR_MILCHICK_SLACK_BOT_TOKEN` for the Slack app sink, `MR_MILCHICK_SLACK_WEBHOOK_URL` for the Slack Workflow webhook sink, `MR_MILCHICK_SLACK_CHANNEL`, `MR_MILCHICK_SLACK_ENABLED`, and optionally `MR_MILCHICK_SLACK_BASE_URL` for testing.
 - **GitLab DTO separation**: `gitlab/dto.rs` holds serde-deserialized API responses; `gitlab/api.rs` holds domain models. The client in `gitlab/client.rs` maps DTOs → domain types.
 - **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
 - **Async via tokio**: `#[tokio::main]` in `main.rs`. The `ActionExecutor` trait uses `#[async_trait]`. Only the GitLab client layer and execution are async.
@@ -83,7 +83,7 @@ Tone is deterministic, not random. Messages are selected by hashing MR identity 
 
 ## Slack Notifications
 
-Slack review notifications are optional and only fire during real `refine` execution when reviewers were actually assigned and the pipeline is not being failed. Mr. Milchick uses the Slack Web API (`chat.postMessage`) to create a compact top-level channel message and then a fuller threaded reply. Reviewer references in Slack currently use the GitLab usernames rendered as `@username`.
+Slack review notifications are optional and only fire during real `refine` execution when reviewers were actually assigned and the pipeline is not being failed. Mr. Milchick supports both a Slack app sink and a Slack Workflow webhook sink. The workflow webhook variant is designed for lower-permission setups where a Slack app would require admin approval; Milchick sends one workflow trigger payload with `mr_milchick_talks_to`, `mr_milchick_says`, and `mr_milchick_says_thread`, and the workflow itself is responsible for posting the light parent message and threaded follow-up.
 
 ## Environment Variables
 
@@ -102,7 +102,8 @@ Slack review notifications are optional and only fire during real `refine` execu
 | `MR_MILCHICK_DRY_RUN` | No | `true`/`1`/`yes` to force `refine` into dry-run execution |
 | `MR_MILCHICK_CODEOWNERS_ENABLED` | No | `true` by default; set to `false` to disable CODEOWNERS routing |
 | `MR_MILCHICK_CODEOWNERS_PATH` | No | Overrides CODEOWNERS auto-discovery path |
-| `MR_MILCHICK_SLACK_BOT_TOKEN` | No | Slack bot OAuth token used for `chat.postMessage` |
-| `MR_MILCHICK_SLACK_CHANNEL` | No | Slack channel ID passed to the workflow payload |
+| `MR_MILCHICK_SLACK_BOT_TOKEN` | No | Slack bot OAuth token used by the Slack app sink |
+| `MR_MILCHICK_SLACK_WEBHOOK_URL` | No | Slack Workflow webhook URL used by the Slack workflow sink |
+| `MR_MILCHICK_SLACK_CHANNEL` | No | Slack channel ID used by Slack sinks and passed to the workflow payload when using the webhook sink |
 | `MR_MILCHICK_SLACK_ENABLED` | No | `true` by default; set to `false` to disable Slack notifications even when webhook/channel are present |
 | `MR_MILCHICK_SLACK_BASE_URL` | No | Overrides the Slack API base URL; intended for tests and local mocks |
