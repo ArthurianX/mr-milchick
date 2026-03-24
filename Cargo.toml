@@ -1,17 +1,25 @@
-[package]
-name = "mr-milchick"
-version = "0.4.0"
+[workspace]
+members = [
+    "apps/mr-milchick",
+    "crates/milchick-core",
+    "crates/milchick-runtime",
+    "crates/milchick-connectors",
+]
+resolver = "2"
+
+[workspace.package]
 edition = "2024"
 
-[dependencies]
-async-trait = "0.1.89"
+[workspace.dependencies]
 anyhow = "1"
-thiserror = "2"
+async-trait = "0.1.89"
 clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+futures = "0.3.32"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-futures = "0.3.32"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

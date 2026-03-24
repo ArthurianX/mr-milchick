@@ -80,7 +80,7 @@ I mean ... four if we're being honest:
 ```
 mr-milchick version
 
-OUTPUT > mr-milchick 0.4.0 (2076d86 2026-03-23)
+OUTPUT > mr-milchick 1.0.0 (2076d86 2026-03-23)
 ```
 
 
@@ -123,7 +123,7 @@ Prints the binary version, git SHA and build date.
 
 ```
 mr-milchick version
-→ mr-milchick 0.4.0 (3f2c8ab 2026-03-23)
+→ mr-milchick 1.0.0 (3f2c8ab 2026-03-23)
 ```
 
 Useful for confirming which build is active in a pipeline without triggering any evaluation logic.
@@ -138,19 +138,37 @@ Run the full test suite with:
 cargo test
 ```
 
-Run only the CLI integration harness with:
+Run the thin app-level CLI smoke harness with:
 
 ```bash
-cargo test --test cli_integration
+cargo test -p mr-milchick --test cli_integration
 ```
 
-The integration test binary in `tests/cli_integration.rs` launches the compiled `mr-milchick` executable and talks to a stateful mock GitLab HTTP server, so it exercises:
+Run connector-owned integration tests with:
+
+```bash
+cargo test -p milchick-connectors
+```
+
+The CLI integration test binary in `apps/mr-milchick/tests/cli_integration.rs` launches the compiled `mr-milchick` executable and talks to a stateful mock GitLab HTTP server, so it exercises:
 
 - mode-specific CLI output
-- GitLab snapshot fetches and mutations
-- idempotency across repeated `refine` runs
+- workspace/runtime wiring
+- one end-to-end refine path through the compiled connectors
+
+Connector-specific HTTP behavior, idempotency, and Slack sink payload assertions now live with the connector crate rather than the app crate.
 
 Because that harness binds a local TCP port for the mock server, it should be run in an environment that allows local socket listeners.
+
+Additional operational docs:
+
+- [`docs/config-reference.md`](docs/config-reference.md)
+- [`docs/local-testing.md`](docs/local-testing.md)
+- [`docs/reviewer-routing.md`](docs/reviewer-routing.md)
+- [`docs/connector-compilation-guidelines.md`](docs/connector-compilation-guidelines.md)
+- [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md)
+
+Release artifacts should be built for the environment where they will actually run. In CI we currently target Linux x86_64 with musl, as shown in [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md) and [`.gitlab-ci.yml`](.gitlab-ci.yml).
 
 ---
 
@@ -226,21 +244,36 @@ MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
 MR_MILCHICK_SLACK_ENABLED=true
 ```
 
+Or, for the webhook sink:
+
+```bash
+MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/...
+MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
+MR_MILCHICK_SLACK_ENABLED=true
+```
+
 When Slack is configured, `refine` posts a review notification only when:
 
 - execution is real, not dry-run
 - the merge request is not being blocked or failed
 - reviewers were actually assigned during that run
 
-Mr. Milchick uses the Slack Web API and posts:
-
-- one compact top-level channel message
-- one threaded reply with fuller review context
+Mr. Milchick supports two Slack sink variants, both centered on a light parent message plus a fuller follow-up:
 
 Current message shape:
 
 - channel line: `:gitlab: Reviews Needed for <MR-link|MR #iid>, by author :pepe-review:`
 - thread body: bold tone line, MR title link, and `_Assign reviewers_` followed by bold reviewer mentions
+
+The Slack app sink uses Slack's Web API and keeps the second message threaded directly from Milchick.
+
+The Slack workflow sink is intended for Slack Workflow input webhooks, not Slack apps or generic incoming webhooks. It sends one workflow trigger payload with three workflow variables:
+
+- `mr_milchick_talks_to`
+- `mr_milchick_says`
+- `mr_milchick_says_thread`
+
+That lets the Slack workflow itself post a light top-level message and a fuller thread reply inside the workspace, while Milchick only needs access to the workflow trigger URL. The workflow sink also downgrades the detailed message to simple plain text without Slack markdown formatting.
 
 Reviewer names in the Slack thread are rendered as `@username` based on the GitLab reviewer usernames chosen during routing.
 
@@ -250,6 +283,13 @@ Slack app setup notes:
 - the app must be a member of the target channel, or have `chat:write.public` for public channels
 
 For local testing or CLI integration tests, `MR_MILCHICK_SLACK_BASE_URL` can override the default Slack API base URL (`https://slack.com/api`).
+
+Slack workflow webhook notes:
+
+- this variant is designed for lower-permission environments where creating a Slack app may require admin approval
+- the webhook URL must be a Slack Workflow input webhook URL
+- the workflow must accept the three `mr_milchick_*` variables above
+- the workflow is responsible for posting the lightweight parent message and the fuller threaded follow-up
 
 ---
 
@@ -274,51 +314,78 @@ Tone is operational ergonomics.
 
 ---
 
-## Architecture Overview
+## Connector Architecture
 
 ```
-CI Context
-↓
-GitLab Snapshot Intelligence
-↓
-Rule Engine
-↓
-Ownership Intelligence
-↓
-Reviewer Routing
-↓
-Action Planner
-↓
-Execution Strategy
-↓
-Structured Output
+Review Connector
+  -> ReviewSnapshot
+  -> Rule Engine
+  -> Decision Model
+  -> Action Plan
+  -> Execute Review Actions via same Review Connector
+  -> Fan out Notifications via Notification Sinks
 ```
 
-Key architectural domains:
+Mr. Milchick binaries are built from:
 
-### context/
-CI parsing, normalization, execution mode inference.
+- exactly 1 review connector
+- zero or more notification sinks
 
-### gitlab/
-Snapshot client, DTO mapping, mutation API layer.
+That means:
 
-### rules/
-Pure governance logic. No side effects.
+- review reads and writes always go through the same connector
+- sinks never influence core planning logic
+- the planner emits neutral intents, not platform API payloads
 
-### codeowners/
-Ownership parsing and matching engine.
+Current first-party connectors:
 
-### routing/
-Reviewer selection logic (topology + ownership).
+- review connector: GitLab
+- notification sinks:
+  - Slack app
+  - Slack webhook
 
-### actions/
-Action planning and execution abstraction.
+Workspace layout:
 
-### tone/
-Deterministic narrative rendering.
+```text
+apps/
+  mr-milchick/
 
-### output/
-Human‑readable CI reporting and MR comments.
+crates/
+  milchick-core/
+  milchick-runtime/
+  milchick-connectors/
+```
+
+Responsibilities:
+
+### `apps/mr-milchick`
+
+- CLI parsing
+- flavor loading
+- runtime bootstrap
+- capability reporting
+
+### `crates/milchick-core`
+
+- platform-neutral domain types
+- rules
+- reviewer planning
+- CODEOWNERS analysis
+- rendered message model
+
+### `crates/milchick-runtime`
+
+- connector traits
+- execution wiring
+- capability model
+- dry-run vs real execution behavior
+
+### `crates/milchick-connectors`
+
+- GitLab review connector
+- Slack app sink
+- Slack workflow sink
+- connector integration tests
 
 ---
 
