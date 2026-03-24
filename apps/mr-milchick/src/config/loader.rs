@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
@@ -18,6 +18,7 @@ const SLACK_BASE_URL_ENV: &str = "MR_MILCHICK_SLACK_BASE_URL";
 const SLACK_BOT_TOKEN_ENV: &str = "MR_MILCHICK_SLACK_BOT_TOKEN";
 const SLACK_WEBHOOK_URL_ENV: &str = "MR_MILCHICK_SLACK_WEBHOOK_URL";
 const SLACK_CHANNEL_ENV: &str = "MR_MILCHICK_SLACK_CHANNEL";
+const SLACK_USER_MAP_ENV: &str = "MR_MILCHICK_SLACK_USER_MAP";
 const DEFAULT_SLACK_BASE_URL: &str = "https://slack.com/api";
 const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
     "CODEOWNERS",
@@ -141,13 +142,23 @@ fn load_slack_config() -> Result<SlackConfig> {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
+    let user_map = load_slack_user_map()?;
+
     Ok(SlackConfig {
         enabled,
         base_url,
         bot_token,
         webhook_url,
         channel,
+        user_map,
     })
+}
+
+fn load_slack_user_map() -> Result<BTreeMap<String, String>> {
+    match std::env::var(SLACK_USER_MAP_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => parse_slack_user_map(&raw),
+        _ => Ok(BTreeMap::new()),
+    }
 }
 
 fn parse_reviewer_definitions(raw: &str) -> Result<Vec<ReviewerDefinition>> {
@@ -212,6 +223,36 @@ fn parse_max_reviewers() -> Result<usize> {
         }
         _ => Ok(DEFAULT_MAX_REVIEWERS),
     }
+}
+
+fn parse_slack_user_map(raw: &str) -> Result<BTreeMap<String, String>> {
+    let parsed: BTreeMap<String, String> = serde_json::from_str(raw).with_context(|| {
+        format!(
+            "failed to parse '{}' as JSON Slack user mapping",
+            SLACK_USER_MAP_ENV
+        )
+    })?;
+
+    let mut sanitized = BTreeMap::new();
+
+    for (gitlab_username, slack_user_id) in parsed {
+        let gitlab_username = gitlab_username.trim();
+        if gitlab_username.is_empty() {
+            bail!(
+                "'{}' contains an empty GitLab username key",
+                SLACK_USER_MAP_ENV
+            );
+        }
+
+        let slack_user_id = slack_user_id.trim();
+        if slack_user_id.is_empty() {
+            continue;
+        }
+
+        sanitized.insert(gitlab_username.to_string(), slack_user_id.to_string());
+    }
+
+    Ok(sanitized)
 }
 
 fn parse_bool_flag(name: &str, raw: &str) -> Result<bool> {
@@ -287,10 +328,31 @@ mod tests {
         assert_eq!(config.bot_token, None);
         assert_eq!(config.webhook_url, None);
         assert_eq!(config.channel, None);
+        assert!(config.user_map.is_empty());
     }
 
     #[test]
     fn supports_explicit_slack_disable_flag() {
         assert!(!parse_bool_flag(SLACK_ENABLED_ENV, "false").unwrap());
+    }
+
+    #[test]
+    fn parses_slack_user_map_from_json() {
+        let raw = r#"{"alice":"U01234567","bob":"U07654321"}"#;
+
+        let user_map = parse_slack_user_map(raw).expect("Slack user map should parse");
+
+        assert_eq!(user_map.get("alice"), Some(&"U01234567".to_string()));
+        assert_eq!(user_map.get("bob"), Some(&"U07654321".to_string()));
+    }
+
+    #[test]
+    fn ignores_blank_slack_user_map_values() {
+        let raw = r#"{"alice":"  ","bob":"U07654321"}"#;
+
+        let user_map = parse_slack_user_map(raw).expect("Slack user map should parse");
+
+        assert!(!user_map.contains_key("alice"));
+        assert_eq!(user_map.get("bob"), Some(&"U07654321".to_string()));
     }
 }

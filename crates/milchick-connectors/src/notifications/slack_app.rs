@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use milchick_core::model::{
     MessageSection, NotificationAudience, NotificationDeliveryReport, NotificationMessage,
@@ -15,6 +16,7 @@ pub struct SlackAppConfig {
     pub base_url: String,
     pub bot_token: Option<String>,
     pub channel: Option<String>,
+    pub user_map: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +86,8 @@ impl NotificationSink for SlackAppSink {
             NotificationAudience::User(user) | NotificationAudience::Group(user) => user.as_str(),
         };
 
-        let text = render_slack_app_message(notification);
+        let subject = replace_gitlab_mentions(&notification.subject, &self.config.user_map);
+        let text = render_slack_app_message(notification, &self.config.user_map);
         let root_ts = post_message(
             &self.http,
             &format!(
@@ -93,7 +96,7 @@ impl NotificationSink for SlackAppSink {
             ),
             Some(bot_token),
             channel,
-            &notification.subject,
+            &subject,
             None,
         )
         .await
@@ -170,24 +173,31 @@ async fn post_message(
     Ok(payload.ts.or(payload.channel))
 }
 
-pub fn render_slack_app_message(notification: &NotificationMessage) -> String {
+pub fn render_slack_app_message(
+    notification: &NotificationMessage,
+    user_map: &BTreeMap<String, String>,
+) -> String {
     let mut lines = Vec::new();
 
     if let Some(title) = &notification.body.title {
-        lines.push(format!("*{}*", title));
+        lines.push(format!("*{}*", replace_gitlab_mentions(title, user_map)));
     }
 
     for section in &notification.body.sections {
         match section {
-            MessageSection::Paragraph(text) => lines.push(text.clone()),
+            MessageSection::Paragraph(text) => lines.push(replace_gitlab_mentions(text, user_map)),
             MessageSection::BulletList(items) => {
                 for item in items {
-                    lines.push(format!("• {}", item));
+                    lines.push(format!("• {}", replace_gitlab_mentions(item, user_map)));
                 }
             }
             MessageSection::KeyValueList(items) => {
                 for (key, value) in items {
-                    lines.push(format!("*{}*: {}", key, value));
+                    lines.push(format!(
+                        "*{}*: {}",
+                        replace_gitlab_mentions(key, user_map),
+                        replace_gitlab_mentions(value, user_map)
+                    ));
                 }
             }
             MessageSection::CodeBlock { content, .. } => {
@@ -197,10 +207,70 @@ pub fn render_slack_app_message(notification: &NotificationMessage) -> String {
     }
 
     if let Some(footer) = &notification.body.footer {
-        lines.push(format!("_{}_", footer));
+        lines.push(format!("_{}_", replace_gitlab_mentions(footer, user_map)));
     }
 
     lines.join("\n")
+}
+
+fn replace_gitlab_mentions(text: &str, user_map: &BTreeMap<String, String>) -> String {
+    let mut rendered = String::with_capacity(text.len());
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        if chars[index] != '@' {
+            rendered.push(chars[index]);
+            index += 1;
+            continue;
+        }
+
+        let mention_start = index + 1;
+        let mut mention_end = mention_start;
+        while mention_end < chars.len() && is_gitlab_mention_char(chars[mention_end]) {
+            mention_end += 1;
+        }
+
+        if mention_end == mention_start {
+            rendered.push('@');
+            index += 1;
+            continue;
+        }
+
+        let username = chars[mention_start..mention_end].iter().collect::<String>();
+        if let Some(slack_user_id) = normalize_slack_user_id(user_map.get(&username)) {
+            rendered.push_str("<@");
+            rendered.push_str(slack_user_id);
+            rendered.push('>');
+        } else {
+            rendered.push('@');
+            rendered.push_str(&username);
+        }
+
+        index = mention_end;
+    }
+
+    rendered
+}
+
+fn normalize_slack_user_id(slack_user_id: Option<&String>) -> Option<&str> {
+    let slack_user_id = slack_user_id?.trim();
+    let slack_user_id = slack_user_id
+        .strip_prefix("<@")
+        .and_then(|value| value.strip_suffix('>'))
+        .unwrap_or(slack_user_id);
+
+    is_valid_slack_user_id(slack_user_id).then_some(slack_user_id)
+}
+
+fn is_valid_slack_user_id(slack_user_id: &str) -> bool {
+    let mut chars = slack_user_id.chars();
+    matches!(chars.next(), Some('U' | 'W'))
+        && chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
+}
+
+fn is_gitlab_mention_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
 }
 
 #[cfg(test)]
@@ -221,10 +291,30 @@ mod tests {
             severity: NotificationSeverity::Info,
         };
 
-        let rendered = render_slack_app_message(&message);
+        let rendered = render_slack_app_message(&message, &BTreeMap::new());
         assert!(rendered.contains("*MR #12*"));
         assert!(rendered.contains("MR #12"));
         assert!(rendered.contains("• @alice"));
         assert!(rendered.contains("_Kind regards._"));
+    }
+
+    #[test]
+    fn rewrites_known_gitlab_mentions_to_slack_user_mentions() {
+        let mut user_map = BTreeMap::new();
+        user_map.insert("alice".to_string(), "U01234567".to_string());
+
+        let rendered = replace_gitlab_mentions("Assign @alice and @bob", &user_map);
+
+        assert_eq!(rendered, "Assign <@U01234567> and @bob");
+    }
+
+    #[test]
+    fn ignores_invalid_slack_user_ids() {
+        let mut user_map = BTreeMap::new();
+        user_map.insert("alice".to_string(), "not-a-slack-id".to_string());
+
+        let rendered = replace_gitlab_mentions("Assign @alice", &user_map);
+
+        assert_eq!(rendered, "Assign @alice");
     }
 }

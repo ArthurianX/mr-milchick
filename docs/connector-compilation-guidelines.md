@@ -119,7 +119,7 @@ Why `x86_64-unknown-linux-musl` is a good release target:
 - it produces a more portable static binary than a host-default glibc build in many CI setups
 - it makes the intended runtime platform explicit in the build job
 
-This is the same approach used in the release pipeline in [`/.gitlab-ci.yml`](/Users/arthur.kovacs/Work/mr-milchick/.gitlab-ci.yml).
+This is the same approach used in the release pipeline in [`/.gitlab-ci.yml`](.gitlab-ci.yml).
 
 ## Verification
 

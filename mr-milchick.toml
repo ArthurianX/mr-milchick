@@ -12,3 +12,8 @@ enabled = false
 [[notifications]]
 kind = "slack-app"
 enabled = true
+
+#[slack_app.user_map]
+# egineer.girl1 = ""
+# egineer.guy1 = ""
+

@@ -13,10 +13,11 @@ These sources do not currently overlap much.
 
 Environment variables control reviewer routing, CODEOWNERS behavior, Slack credentials, dry-run mode, CI context, and GitLab access.
 
-The TOML file currently controls only:
+The TOML file currently controls:
 
 - `review_platform.kind`
 - `[[notifications]]`
+- `[slack_app.user_map]`
 
 `MR_MILCHICK_FLAVOR_PATH` can be used to point the app at a different flavor TOML file.
 
@@ -35,6 +36,10 @@ enabled = true
 [[notifications]]
 kind = "slack-app"
 enabled = false
+
+[slack_app.user_map]
+engineer.lady1 = "U01234567"
+engineer.guy1 = "U07654321"
 ```
 
 Notes:
@@ -105,9 +110,12 @@ This forces `refine` into non-mutating mode.
 MR_MILCHICK_SLACK_ENABLED=true
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
 MR_MILCHICK_SLACK_BASE_URL=https://slack.com/api
+MR_MILCHICK_SLACK_USER_MAP='{"engineer.lady1":"U01234567","engineer.guy1":"U07654321"}'
 ```
 
 `MR_MILCHICK_SLACK_BASE_URL` is mainly useful for tests and local mocks.
+
+`MR_MILCHICK_SLACK_USER_MAP` is a JSON object keyed by GitLab username. Values should be Slack user IDs like `U01234567`. When present, the Slack app sink rewrites `@gitlab.username` mentions into Slack `<@U01234567>` mentions so users get pinged in Slack. Empty values are ignored, and the environment variable takes precedence over `[slack_app.user_map]` in TOML.
 
 ### Secret Environment Variables
 

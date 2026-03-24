@@ -7,6 +7,22 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [1.1.0] — 2026-03-24
+
+This release makes Slack app review notifications capable of pinging the right people directly.
+
+### Added
+
+- Slack app user mapping via `MR_MILCHICK_SLACK_USER_MAP`, using a JSON object keyed by GitLab username.
+- Optional `[slack_app.user_map]` configuration in `mr-milchick.toml`.
+- Repository TOML scaffolding for every username currently present in the checked-in `CODEOWNERS` file.
+
+### Changed
+
+- Slack app notifications now rewrite mapped GitLab-style mentions like `@principal.engineer` into Slack user mentions like `<@U01234567>` in both the compact channel message and the threaded follow-up.
+- When both config sources are present, the environment-provided Slack user map takes precedence over the TOML mapping.
+- Documentation and local testing examples now describe Slack user-ID based mentions instead of plain `@username` references.
+
 ## [1.0.0] — 2026-03-23
 
 This release is the connector architecture reset.

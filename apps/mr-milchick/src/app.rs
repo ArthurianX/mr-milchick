@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::BTreeMap;
 use tracing::warn;
 
 use milchick_connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown};
@@ -173,6 +174,7 @@ fn build_runtime_wiring(
             base_url: app_config.runtime.slack.base_url.clone(),
             bot_token: app_config.runtime.slack.bot_token.clone(),
             channel: app_config.runtime.slack.channel.clone(),
+            user_map: resolve_slack_app_user_map(&app_config.runtime, flavor),
         });
         if slack.is_enabled() {
             sinks.push(Box::new(slack));
@@ -230,6 +232,35 @@ fn notification_enabled_by_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> 
                 .any(|notification| notification.kind == kind && notification.enabled)
         })
         .unwrap_or(true)
+}
+
+fn resolve_slack_app_user_map(
+    runtime: &RuntimeConfig,
+    flavor: Option<&FlavorConfig>,
+) -> BTreeMap<String, String> {
+    if !runtime.slack.user_map.is_empty() {
+        return runtime.slack.user_map.clone();
+    }
+
+    flavor
+        .and_then(|config| config.slack_app.as_ref())
+        .map(|config| {
+            config
+                .user_map
+                .iter()
+                .filter_map(|(gitlab_username, slack_user_id)| {
+                    let gitlab_username = gitlab_username.trim();
+                    let slack_user_id = slack_user_id.trim();
+
+                    if gitlab_username.is_empty() || slack_user_id.is_empty() {
+                        return None;
+                    }
+
+                    Some((gitlab_username.to_string(), slack_user_id.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn print_compiled_capabilities() {
@@ -518,6 +549,9 @@ fn print_codeowners_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::model::{
+        CodeownersConfig, FlavorReviewPlatform, FlavorSlackAppConfig, SlackConfig,
+    };
     use milchick_core::actions::model::ActionPlan;
     use milchick_core::rules::model::{FindingSeverity, RuleFinding};
 
@@ -542,5 +576,79 @@ mod tests {
 
         assert!(text.contains("UpsertSummary"));
         assert!(text.to_lowercase().contains("summary"));
+    }
+
+    #[test]
+    fn slack_app_user_map_prefers_runtime_env_mapping() {
+        let runtime = RuntimeConfig {
+            reviewers: milchick_core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::from([("alice".to_string(), "UENV12345".to_string())]),
+            },
+        };
+        let flavor = FlavorConfig {
+            review_platform: FlavorReviewPlatform {
+                kind: "gitlab".to_string(),
+            },
+            notifications: Vec::new(),
+            slack_app: Some(FlavorSlackAppConfig {
+                user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
+            }),
+        };
+
+        let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
+
+        assert_eq!(resolved.get("alice"), Some(&"UENV12345".to_string()));
+    }
+
+    #[test]
+    fn slack_app_user_map_falls_back_to_flavor_mapping() {
+        let runtime = RuntimeConfig {
+            reviewers: milchick_core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+        };
+        let flavor = FlavorConfig {
+            review_platform: FlavorReviewPlatform {
+                kind: "gitlab".to_string(),
+            },
+            notifications: Vec::new(),
+            slack_app: Some(FlavorSlackAppConfig {
+                user_map: BTreeMap::from([
+                    ("alice".to_string(), "UTOML1234".to_string()),
+                    ("bob".to_string(), "".to_string()),
+                ]),
+            }),
+        };
+
+        let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
+
+        assert_eq!(resolved.get("alice"), Some(&"UTOML1234".to_string()));
+        assert!(!resolved.contains_key("bob"));
     }
 }

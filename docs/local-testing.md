@@ -76,6 +76,7 @@ MR_MILCHICK_REVIEWERS='[{"username":"milchick-duty","fallback":true},{"username"
 MR_MILCHICK_CODEOWNERS_ENABLED=false \
 MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
+MR_MILCHICK_SLACK_USER_MAP='{"principal-reviewer":"U01234567","alice":"U07654321"}' \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=1 \
 CI_PIPELINE_SOURCE=merge_request_event \
@@ -92,7 +93,7 @@ Expected:
 - reviewer assignment executed
 - structured Mr Milchick summary comment posted or updated
 - one compact Slack channel message posted
-- one threaded Slack reply posted with MR details and `@username` reviewer references
+- one threaded Slack reply posted with MR details and Slack `<@U...>` reviewer mentions when mappings are configured
 
 Webhook variant:
 
