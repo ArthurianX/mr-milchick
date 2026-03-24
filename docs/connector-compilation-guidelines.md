@@ -22,7 +22,7 @@ Notification sinks are optional fanout only. They never change planning logic.
 
 ## Feature Model
 
-The app crate exposes connector features through [`apps/mr-milchick/Cargo.toml`](/Users/arthur.kovacs/Work/mr-milchick/apps/mr-milchick/Cargo.toml).
+The app crate exposes connector features through [`apps/mr-milchick/Cargo.toml`](apps/mr-milchick/Cargo.toml).
 
 Default build:
 
@@ -67,7 +67,7 @@ cargo build -p mr-milchick --no-default-features --features "gitlab slack-app sl
 - the flavor file must not request a sink that is not compiled in
 - the flavor file review platform must match the compiled review connector
 
-The app validates these invariants during startup in [`apps/mr-milchick/src/app.rs`](/Users/arthur.kovacs/Work/mr-milchick/apps/mr-milchick/src/app.rs).
+The app validates these invariants during startup in [`apps/mr-milchick/src/app.rs`](apps/mr-milchick/src/app.rs).
 
 ## Flavor Alignment
 

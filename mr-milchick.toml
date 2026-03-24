@@ -1,6 +1,14 @@
+# Flavor manifest loaded at runtime.
+# This file is intentionally minimal and only contains settings
+# that the application actually reads from TOML today.
+
 [review_platform]
 kind = "gitlab"
 
 [[notifications]]
 kind = "slack-workflow"
+enabled = false
+
+[[notifications]]
+kind = "slack-app"
 enabled = true

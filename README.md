@@ -162,9 +162,11 @@ Because that harness binds a local TCP port for the mock server, it should be ru
 
 Additional operational docs:
 
-- [`docs/local-testing.md`](/Users/arthur.kovacs/Work/mr-milchick/docs/local-testing.md)
-- [`docs/connector-compilation-guidelines.md`](/Users/arthur.kovacs/Work/mr-milchick/docs/connector-compilation-guidelines.md)
-- [`docs/build-pipeline-examples.md`](/Users/arthur.kovacs/Work/mr-milchick/docs/build-pipeline-examples.md)
+- [`docs/config-reference.md`](docs/config-reference.md)
+- [`docs/local-testing.md`](docs/local-testing.md)
+- [`docs/reviewer-routing.md`](docs/reviewer-routing.md)
+- [`docs/connector-compilation-guidelines.md`](docs/connector-compilation-guidelines.md)
+- [`docs/build-pipeline-examples.md`](docs/build-pipeline-examples.md)
 
 ---
 
