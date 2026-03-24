@@ -355,4 +355,32 @@ mod tests {
         assert!(!user_map.contains_key("alice"));
         assert_eq!(user_map.get("bob"), Some(&"U07654321".to_string()));
     }
+
+    #[test]
+    fn parses_flavor_config_with_quoted_slack_user_map_keys() {
+        let raw = r#"
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[slack_app.user_map]
+"engineer.guy1" = "U028DDKDJ4E"
+"engineer.guy2" = "U01234567"
+"#;
+
+        let flavor = toml::from_str::<FlavorConfig>(raw).expect("flavor config should parse");
+        let slack_app = flavor.slack_app.expect("slack app config should exist");
+
+        assert_eq!(
+            slack_app.user_map.get("engineer.guy1"),
+            Some(&"U028DDKDJ4E".to_string())
+        );
+        assert_eq!(
+            slack_app.user_map.get("engineer.guy2"),
+            Some(&"U01234567".to_string())
+        );
+    }
 }

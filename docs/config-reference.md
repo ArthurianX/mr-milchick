@@ -38,8 +38,8 @@ kind = "slack-app"
 enabled = false
 
 [slack_app.user_map]
-engineer.lady1 = "U01234567"
-engineer.guy1 = "U07654321"
+"engineer.lady1" = "U01234567"
+"engineer.guy1" = "U07654321"
 ```
 
 Notes:
@@ -116,6 +116,8 @@ MR_MILCHICK_SLACK_USER_MAP='{"engineer.lady1":"U01234567","engineer.guy1":"U0765
 `MR_MILCHICK_SLACK_BASE_URL` is mainly useful for tests and local mocks.
 
 `MR_MILCHICK_SLACK_USER_MAP` is a JSON object keyed by GitLab username. Values should be Slack user IDs like `U01234567`. When present, the Slack app sink rewrites `@gitlab.username` mentions into Slack `<@U01234567>` mentions so users get pinged in Slack. Empty values are ignored, and the environment variable takes precedence over `[slack_app.user_map]` in TOML.
+
+For TOML, quote usernames that contain dots, for example `"engineer.lady1" = "U01234567"`.
 
 ### Secret Environment Variables
 
