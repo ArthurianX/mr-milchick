@@ -3,9 +3,7 @@
 #[path = "support/mock_server.rs"]
 mod mock_server;
 
-use milchick_connectors::notifications::slack_workflow::{
-    SlackWorkflowConfig, SlackWorkflowSink,
-};
+use milchick_connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
 use milchick_core::model::{
     MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity,
     RenderedMessage,
@@ -43,10 +41,7 @@ async fn sends_workflow_messages_with_simple_formatting_and_threading() {
 
     let report = sink.send(&notification).await.expect("send should succeed");
     assert!(report.delivered);
-    assert_eq!(
-        report.detail.as_deref(),
-        Some("sent via Slack workflow")
-    );
+    assert_eq!(report.detail.as_deref(), Some("sent via Slack workflow"));
 
     let bodies = server.request_bodies("POST", "/slack/api/webhook/test");
     assert_eq!(bodies.len(), 1);

@@ -381,5 +381,4 @@ mod tests {
 
         assert_eq!(recommendation.reviewers.len(), 3);
     }
-
 }

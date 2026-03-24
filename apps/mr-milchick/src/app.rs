@@ -5,9 +5,7 @@ use milchick_connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown}
 #[cfg(feature = "slack-app")]
 use milchick_connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
-use milchick_connectors::notifications::slack_workflow::{
-    SlackWorkflowConfig, SlackWorkflowSink,
-};
+use milchick_connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
 use milchick_core::actions::planner::enrich_with_reviewer_assignment;
 use milchick_core::comment::render::build_summary_message;
 use milchick_core::domain::codeowners::context::CodeownersContext;
