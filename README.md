@@ -32,6 +32,10 @@ The tool exists to keep review governance where the decision already happens: in
 
 ## How It Works
 
+<div align="center">
+  <img src="assets/flow.gif" alt="Mr Milchick Flow" >
+</div>
+
 `observe` runs the planning flow without mutating anything. `refine` executes the same plan for real, including reviewer assignment, summary comment sync, optional Slack delivery, and pipeline failure when blocking policy remains unresolved. `explain` adds deeper routing and CODEOWNERS detail for debugging, while `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
 
 Today the implemented surface is intentionally small: GitLab is the only review connector, and Slack app plus Slack workflow are the only notification sinks.
