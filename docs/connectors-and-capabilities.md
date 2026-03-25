@@ -21,12 +21,12 @@ The app exposes these feature flags:
 ```toml
 [features]
 default = ["gitlab", "slack-app", "slack-workflow"]
-gitlab = ["milchick-connectors/gitlab"]
-github = ["milchick-connectors/github"]
-slack-app = ["milchick-connectors/slack-app"]
-slack-workflow = ["milchick-connectors/slack-workflow"]
-teams = ["milchick-connectors/teams"]
-discord = ["milchick-connectors/discord"]
+gitlab = []
+github = []
+slack-app = []
+slack-workflow = []
+teams = []
+discord = []
 ```
 
 Only `gitlab`, `slack-app`, and `slack-workflow` correspond to implemented code paths today.
@@ -36,38 +36,38 @@ Only `gitlab`, `slack-app`, and `slack-workflow` correspond to implemented code 
 Default build:
 
 ```bash
-cargo build -p mr-milchick --release
+cargo build --release
 ```
 
 GitLab only:
 
 ```bash
-cargo build -p mr-milchick --release --no-default-features --features gitlab
+cargo build --release --no-default-features --features gitlab
 ```
 
 GitLab plus Slack workflow:
 
 ```bash
-cargo build -p mr-milchick --release --no-default-features --features "gitlab slack-workflow"
+cargo build --release --no-default-features --features "gitlab slack-workflow"
 ```
 
 GitLab plus Slack app:
 
 ```bash
-cargo build -p mr-milchick --release --no-default-features --features "gitlab slack-app"
+cargo build --release --no-default-features --features "gitlab slack-app"
 ```
 
 GitLab plus both Slack sinks:
 
 ```bash
-cargo build -p mr-milchick --release --no-default-features --features "gitlab slack-app slack-workflow"
+cargo build --release --no-default-features --features "gitlab slack-app slack-workflow"
 ```
 
 For CI release artifacts, this repo builds Linux x86_64 with musl:
 
 ```bash
 rustup target add x86_64-unknown-linux-musl
-cargo build -p mr-milchick --release --target x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 ## Capability Rules
@@ -118,7 +118,7 @@ That is the fastest way to confirm the artifact you built matches the runtime en
 
 ## What Is Not Implemented Yet
 
-These names exist in the workspace, but they are not working runtime integrations today:
+These names exist as reserved feature flags in the single crate, but they are not working runtime integrations today:
 
 - GitHub review connector
 - Teams notification sink

@@ -1,4 +1,4 @@
-pub use milchick_core::model::{ReviewerConfig, ReviewerDefinition};
+pub use crate::core::model::{ReviewerConfig, ReviewerDefinition};
 use std::collections::BTreeMap;
 
 use serde::Deserialize;

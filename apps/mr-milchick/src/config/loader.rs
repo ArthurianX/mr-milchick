@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::config::model::{
     CodeownersConfig, FlavorConfig, ReviewerConfig, ReviewerDefinition, RuntimeConfig, SlackConfig,
 };
-use milchick_core::domain::code_area::CodeArea;
+use crate::core::domain::code_area::CodeArea;
 
 const DEFAULT_MAX_REVIEWERS: usize = 2;
 const REVIEWERS_ENV: &str = "MR_MILCHICK_REVIEWERS";

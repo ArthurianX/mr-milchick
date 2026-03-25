@@ -2,12 +2,14 @@
 
 Mr Milchick is a CLI application with a small runtime surface and explicit boundaries between planning, execution, and connectors.
 
-## Crate Layout
+## Module Layout
 
-- `apps/mr-milchick`: CLI, environment loading, flavor validation, runtime wiring, and command dispatch
-- `crates/milchick-core`: policy logic, reviewer routing, CODEOWNERS planning, summary rendering, and tone selection
-- `crates/milchick-runtime`: connector traits, execution strategy, and execution reporting
-- `crates/milchick-connectors`: GitLab connector and Slack notification sinks
+Mr Milchick is published as a single crate from the repository root. The internal architecture is preserved as module boundaries inside that crate:
+
+- `apps/mr-milchick/src/app.rs`: CLI orchestration, environment loading, flavor validation, runtime wiring, and command dispatch
+- `apps/mr-milchick/src/core`: policy logic, reviewer routing, CODEOWNERS planning, summary rendering, and tone selection
+- `apps/mr-milchick/src/runtime`: connector traits, execution strategy, and execution reporting
+- `apps/mr-milchick/src/connectors`: GitLab connector and Slack notification sinks
 
 ## Execution Flow
 

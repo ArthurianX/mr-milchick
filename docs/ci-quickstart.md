@@ -56,7 +56,7 @@ build:milchick:
     - rustup target add x86_64-unknown-linux-musl
     - apt-get update && apt-get install -y musl-tools pkg-config
   script:
-    - cargo build -p mr-milchick --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
+    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
   artifacts:

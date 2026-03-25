@@ -1,1 +1,1 @@
-pub use milchick_core::context::model::*;
+pub use crate::core::context::model::*;

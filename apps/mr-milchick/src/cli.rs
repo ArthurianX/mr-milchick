@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-use milchick_runtime::ExecutionMode;
+use crate::runtime::ExecutionMode;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_SHA: &str = env!("BUILD_GIT_SHA");

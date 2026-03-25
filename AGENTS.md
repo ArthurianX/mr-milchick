@@ -8,20 +8,22 @@ Three subcommands: `observe` (dry-run evaluation), `refine` (execute actions), `
 
 ## Architecture & Data Flow
 
-The pipeline through `src/app.rs` follows a strict linear flow:
+Mr. Milchick now publishes as a single crate from the repository root. The architecture still uses explicit internal layers under `apps/mr-milchick/src/`.
+
+The pipeline through `apps/mr-milchick/src/app.rs` follows a strict linear flow:
 
 ```
 CI env vars (context/raw.rs → context/builder.rs → context/model.rs)
-  → Rule engine (rules/engine.rs evaluates all rules, currently branch_policy.rs)
-  → GitLab snapshot fetch (gitlab/client.rs → gitlab/api.rs domain models)
-  → Domain analysis (domain/snapshot_analysis.rs → path_classifier.rs → area_summary.rs)
-  → Reviewer routing (domain/reviewer_routing.rs + domain/codeowners/)
-  → Action planning (actions/planner.rs enriches RuleOutcome with reviewer assignments)
-  → Comment rendering (comment/render.rs produces markdown with MR_MILCHICK_MARKER)
-  → Execution (actions/executor.rs trait, DryRunExecutor or executor/gitlab.rs)
+  → Rule engine (core/rules/engine.rs evaluates all rules, currently branch_policy.rs)
+  → GitLab snapshot fetch (connectors/gitlab/client.rs → connectors/gitlab/api.rs domain models)
+  → Domain analysis (core/domain/snapshot_analysis.rs → path_classifier.rs → area_summary.rs)
+  → Reviewer routing (core/domain/reviewer_routing.rs + core/domain/codeowners/)
+  → Action planning (core/actions/planner.rs enriches RuleOutcome with reviewer assignments)
+  → Comment rendering (core/comment/render.rs produces markdown with MR_MILCHICK_MARKER)
+  → Execution (runtime/executor.rs traits + connectors implementations)
 ```
 
-**Key design rule**: `rules/` is pure logic with no side effects. All mutations flow through `actions/` only.
+**Key design rule**: `core/rules/` is pure logic with no side effects. All mutations flow through `runtime/` and `connectors/` only.
 
 ## Build & Test
 
@@ -32,6 +34,7 @@ cargo run -- observe   # requires CI env vars (see below)
 ```
 
 Tests are co-located with source code (`#[cfg(test)] mod tests` blocks), not in a separate `/tests` directory. When adding a new module, add tests in the same file.
+Integration tests also live at the repository root in `/tests` for the packaged crate boundary.
 
 ## Local Smoke Testing
 
@@ -51,35 +54,35 @@ Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (d
 
 ## Key Conventions
 
-- **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `context/model.rs`. Always wrap raw strings in domain types.
-- **Runtime config from environment variables**: `config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`; optional Slack notifications come from `MR_MILCHICK_SLACK_BOT_TOKEN` for the Slack app sink, `MR_MILCHICK_SLACK_WEBHOOK_URL` for the Slack Workflow webhook sink, `MR_MILCHICK_SLACK_CHANNEL`, `MR_MILCHICK_SLACK_ENABLED`, and optionally `MR_MILCHICK_SLACK_BASE_URL` for testing.
-- **GitLab DTO separation**: `gitlab/dto.rs` holds serde-deserialized API responses; `gitlab/api.rs` holds domain models. The client in `gitlab/client.rs` maps DTOs → domain types.
-- **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
+- **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `apps/mr-milchick/src/context/model.rs`. Always wrap raw strings in domain types.
+- **Runtime config from environment variables**: `apps/mr-milchick/src/config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`; optional Slack notifications come from `MR_MILCHICK_SLACK_BOT_TOKEN` for the Slack app sink, `MR_MILCHICK_SLACK_WEBHOOK_URL` for the Slack Workflow webhook sink, `MR_MILCHICK_SLACK_CHANNEL`, `MR_MILCHICK_SLACK_ENABLED`, and optionally `MR_MILCHICK_SLACK_BASE_URL` for testing.
+- **GitLab DTO separation**: `apps/mr-milchick/src/connectors/gitlab/dto.rs` holds serde-deserialized API responses; `apps/mr-milchick/src/connectors/gitlab/api.rs` holds domain models. The client in `apps/mr-milchick/src/connectors/gitlab/client.rs` maps DTOs → domain types.
+- **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `apps/mr-milchick/src/error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
 - **Async via tokio**: `#[tokio::main]` in `main.rs`. The `ActionExecutor` trait uses `#[async_trait]`. Only the GitLab client layer and execution are async.
 
 ## Adding a New Rule
 
-1. Create `src/rules/your_rule.rs` with a function `pub fn evaluate_your_rule(ctx: &CiContext) -> RuleOutcome`
+1. Create `apps/mr-milchick/src/core/rules/your_rule.rs` with a function `pub fn evaluate_your_rule(ctx: &CiContext) -> RuleOutcome`
 2. Use `RuleFinding::info()`, `::warning()`, or `::blocking()` for findings
 3. Push `Action::FailPipeline { reason }` to `outcome.action_plan` if the rule should block
-4. Register it in `src/rules/engine.rs` by adding to the `outcomes` array
-5. Add `pub mod your_rule;` to `src/rules/mod.rs`
+4. Register it in `apps/mr-milchick/src/core/rules/engine.rs` by adding to the `outcomes` array
+5. Add `pub mod your_rule;` to `apps/mr-milchick/src/core/rules/mod.rs`
 
 ## Adding a New Code Area
 
-1. Add variant to `CodeArea` enum in `domain/code_area.rs` (with `as_str()`)
-2. Add path matching rules in `domain/path_classifier.rs` — order matters (first match wins)
-3. Ensure the new area is recognized by `CodeArea::from_config_key()` in `domain/code_area.rs` if it needs a config key alias
-4. Keep `ReviewerRoutingConfig::from_config()` in `domain/reviewer_routing.rs` compatible with the new area
+1. Add variant to `CodeArea` enum in `apps/mr-milchick/src/core/domain/code_area.rs` (with `as_str()`)
+2. Add path matching rules in `apps/mr-milchick/src/core/domain/path_classifier.rs` — order matters (first match wins)
+3. Ensure the new area is recognized by `CodeArea::from_config_key()` in `apps/mr-milchick/src/core/domain/code_area.rs` if it needs a config key alias
+4. Keep `ReviewerRoutingConfig::from_config()` in `apps/mr-milchick/src/core/domain/reviewer_routing.rs` compatible with the new area
 5. Update env-based examples and docs that demonstrate `MR_MILCHICK_REVIEWERS` payloads
 
 ## Tone System
 
-Tone is deterministic, not random. Messages are selected by hashing MR identity (`project_id:mr_iid:category`). The tone registry (`tone/registry.rs`) maps `ToneCategory` → static message arrays. When adding messages, append to existing arrays — insertion order affects determinism for existing MRs.
+Tone is deterministic, not random. Messages are selected by hashing MR identity (`project_id:mr_iid:category`). The tone registry (`apps/mr-milchick/src/core/tone/registry.rs`) maps `ToneCategory` → static message arrays. When adding messages, append to existing arrays — insertion order affects determinism for existing MRs.
 
 ## GitLab Executor Idempotency
 
-`executor/gitlab.rs` checks existing MR notes before posting — it skips duplicate comments and updates existing ones matched by `MR_MILCHICK_MARKER` (`<!-- mr-milchick:summary -->`). This marker is defined in `comment/render.rs`.
+The GitLab connector checks existing MR notes before posting — it skips duplicate comments and updates existing ones matched by `MR_MILCHICK_MARKER` (`<!-- mr-milchick:summary -->`). This marker is defined in `apps/mr-milchick/src/connectors/gitlab/mod.rs` and rendered from `apps/mr-milchick/src/core/comment/render.rs`.
 
 ## Slack Notifications
 

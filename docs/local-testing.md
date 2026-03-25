@@ -30,7 +30,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -p mr-milchick -- observe
+cargo run -- observe
 ```
 
 Expected result:
@@ -51,7 +51,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=epic/big-thing \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -p mr-milchick -- observe
+cargo run -- observe
 ```
 
 Expected result:
@@ -72,7 +72,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -p mr-milchick -- refine
+cargo run -- refine
 ```
 
 Expected result:
@@ -96,7 +96,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -p mr-milchick -- refine
+cargo run -- refine
 ```
 
 Expected result:
@@ -120,7 +120,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="0. run-tests" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -p mr-milchick -- refine
+cargo run -- refine
 ```
 
 Expected result:
@@ -141,7 +141,7 @@ CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="3. Ready to be merged" \
 GITLAB_TOKEN=your-gitlab-token \
-cargo run -p mr-milchick -- explain
+cargo run -- explain
 ```
 
 Expected result:
@@ -153,6 +153,6 @@ Expected result:
 
 ## Helpful Extras
 
-- Use `cargo run -p mr-milchick -- version` to confirm the current build surface before a smoke test.
+- Use `cargo run -- version` to confirm the current build surface before a smoke test.
 - Set `MR_MILCHICK_DRY_RUN=true` with `refine` if you want an execution-shaped report without live GitLab or Slack writes.
 - `MR_MILCHICK_SLACK_BASE_URL` is available for local mocks and connector tests; the production default is `https://slack.com/api`.

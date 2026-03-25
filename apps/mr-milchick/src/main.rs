@@ -1,12 +1,7 @@
-mod app;
-mod cli;
-mod config;
-mod context;
-mod error;
-
 use anyhow::Result;
 use clap::Parser;
-use cli::Cli;
+use mr_milchick::app;
+use mr_milchick::cli::Cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {

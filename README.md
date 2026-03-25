@@ -5,8 +5,13 @@
 
 **A pleasantly unsettling steward for merge requests.**
 
+
+[![Crates.io](https://img.shields.io/crates/v/mr-milchick.svg)](https://crates.io/crates/mr-milchick)
+[![Documentation](https://docs.rs/mr-milchick/badge.svg)](https://docs.rs/mr-milchick)
+[![License](https://img.shields.io/crates/l/mr-milchick.svg)](LICENSE)
+![Crates.io Downloads (recent)](https://img.shields.io/crates/dr/mr-milchick?label=Crates%20Downloads)
+
 <br />
-<sub>Translations may lag behind the English README.</sub>
 
 [Documentation](docs/README.md) | [Examples](docs/ci-quickstart.md) | [Contributing](CONTRIBUTING.md)
 
@@ -31,6 +36,13 @@ The tool exists to keep review governance where the decision already happens: in
 
 Today the implemented surface is intentionally small: GitLab is the only review connector, and Slack app plus Slack workflow are the only notification sinks.
 
+Internally, the repository now ships as a single crate with layered modules:
+
+- `apps/mr-milchick/src/core`: pure policy, routing, CODEOWNERS, rendering, and tone logic
+- `apps/mr-milchick/src/runtime`: execution traits, capability wiring, and reporting
+- `apps/mr-milchick/src/connectors`: GitLab and Slack integrations
+- `apps/mr-milchick/src/app.rs`: CLI orchestration and command flow
+
 ## Quickstart
 
 The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment and notifications.
@@ -54,7 +66,7 @@ build:milchick:
     - rustup target add x86_64-unknown-linux-musl
     - apt-get update && apt-get install -y musl-tools pkg-config
   script:
-    - cargo build -p mr-milchick --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
+    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
   artifacts:
@@ -75,6 +87,17 @@ milchick:review:
 To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. For Slack workflow delivery, also provide `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`. For Slack app delivery, provide `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP` if you want GitLab usernames rewritten to Slack user IDs. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
+
+## Publishing
+
+Mr Milchick now publishes as a single crates.io package. The root of the repository is the publishable crate, so the release flow is just:
+
+```bash
+cargo publish --dry-run
+cargo publish
+```
+
+There is no internal multi-crate publish ordering anymore.
 
 ## Docs
 

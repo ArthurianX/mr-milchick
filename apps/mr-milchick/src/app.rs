@@ -2,31 +2,31 @@ use anyhow::Result;
 use std::collections::BTreeMap;
 use tracing::warn;
 
-use milchick_connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown};
+use crate::connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown};
 #[cfg(feature = "slack-app")]
-use milchick_connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
+use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
-use milchick_connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
-use milchick_core::actions::planner::enrich_with_reviewer_assignment;
-use milchick_core::comment::render::build_summary_message;
-use milchick_core::domain::codeowners::context::CodeownersContext;
-use milchick_core::domain::codeowners::matcher::{
+use crate::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
+use crate::core::actions::planner::enrich_with_reviewer_assignment;
+use crate::core::comment::render::build_summary_message;
+use crate::core::domain::codeowners::context::CodeownersContext;
+use crate::core::domain::codeowners::matcher::{
     collect_matched_rules_for_snapshot, match_usernames,
 };
-use milchick_core::domain::codeowners::parser::parse_codeowners_file;
-use milchick_core::domain::codeowners::planner::plan_codeowners_assignments;
-use milchick_core::domain::reviewer_routing::{
+use crate::core::domain::codeowners::parser::parse_codeowners_file;
+use crate::core::domain::codeowners::planner::plan_codeowners_assignments;
+use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
-use milchick_core::domain::snapshot_analysis::summarize_areas;
-use milchick_core::model::{
+use crate::core::domain::snapshot_analysis::summarize_areas;
+use crate::core::model::{
     MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity, ReviewAction,
     ReviewActionKind, ReviewPlatformKind,
 };
-use milchick_core::rules::engine::evaluate_rules;
-use milchick_core::rules::model::RuleOutcome;
-use milchick_core::tone::{ToneCategory, ToneSelector};
-use milchick_runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
+use crate::core::rules::engine::evaluate_rules;
+use crate::core::rules::model::RuleOutcome;
+use crate::core::tone::{ToneCategory, ToneSelector};
+use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
 use crate::cli::Cli;
 use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_path};
@@ -156,7 +156,7 @@ fn build_runtime_wiring(
     validate_flavor(flavor)?;
 
     let gitlab = GitLabReviewConnector::new(
-        milchick_connectors::gitlab::api::GitLabConfig::from_env()?,
+        crate::connectors::gitlab::api::GitLabConfig::from_env()?,
         ctx.project_id(),
         ctx.merge_request_iid()
             .ok_or_else(|| anyhow::anyhow!("missing merge request IID"))?,
@@ -165,7 +165,7 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     );
 
-    let mut sinks: Vec<Box<dyn milchick_runtime::NotificationSink>> = Vec::new();
+    let mut sinks: Vec<Box<dyn crate::runtime::NotificationSink>> = Vec::new();
 
     #[cfg(feature = "slack-app")]
     if notification_enabled_by_flavor(flavor, "slack-app") {
@@ -331,7 +331,7 @@ fn describe_planned_action(action: &ReviewAction) -> String {
     }
 }
 
-fn print_execution_report(report: &milchick_runtime::ExecutionReport) {
+fn print_execution_report(report: &crate::runtime::ExecutionReport) {
     println!("Execution report:");
     for applied in &report.review_report.applied {
         match applied.action {
@@ -381,7 +381,7 @@ fn print_execution_report(report: &milchick_runtime::ExecutionReport) {
 fn build_notifications(
     strategy: ExecutionStrategy,
     outcome: &RuleOutcome,
-    snapshot: &milchick_core::model::ReviewSnapshot,
+    snapshot: &crate::core::model::ReviewSnapshot,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
 ) -> Vec<NotificationMessage> {
@@ -410,7 +410,7 @@ fn build_notifications(
         return Vec::new();
     };
 
-    let mut body = milchick_core::model::RenderedMessage::new(Some(
+    let mut body = crate::core::model::RenderedMessage::new(Some(
         selector
             .select(ToneCategory::ReviewRequest, ctx)
             .to_string(),
@@ -464,7 +464,7 @@ fn print_observe_action_plan(outcome: &RuleOutcome) {
     }
 }
 
-fn print_snapshot_details(snapshot: &milchick_core::model::ReviewSnapshot) {
+fn print_snapshot_details(snapshot: &crate::core::model::ReviewSnapshot) {
     println!("Merge request details:");
     println!("- [Title] {}", snapshot.title);
     println!("- [Draft] {}", snapshot.is_draft);
@@ -489,7 +489,7 @@ fn print_snapshot_details(snapshot: &milchick_core::model::ReviewSnapshot) {
 }
 
 fn print_codeowners_details(
-    snapshot: &milchick_core::model::ReviewSnapshot,
+    snapshot: &crate::core::model::ReviewSnapshot,
     app_config: &AppConfigContext,
 ) {
     let area_summary = summarize_areas(snapshot);
@@ -552,8 +552,8 @@ mod tests {
     use crate::config::model::{
         CodeownersConfig, FlavorReviewPlatform, FlavorSlackAppConfig, SlackConfig,
     };
-    use milchick_core::actions::model::ActionPlan;
-    use milchick_core::rules::model::{FindingSeverity, RuleFinding};
+    use crate::core::actions::model::ActionPlan;
+    use crate::core::rules::model::{FindingSeverity, RuleFinding};
 
     #[test]
     fn notification_building_skips_blocking_outcomes() {
@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn summary_action_is_described() {
         let text = describe_planned_action(&ReviewAction::UpsertSummary {
-            message: milchick_core::model::RenderedMessage::new(Some("Summary".to_string())),
+            message: crate::core::model::RenderedMessage::new(Some("Summary".to_string())),
         });
 
         assert!(text.contains("UpsertSummary"));
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn slack_app_user_map_prefers_runtime_env_mapping() {
         let runtime = RuntimeConfig {
-            reviewers: milchick_core::model::ReviewerConfig {
+            reviewers: crate::core::model::ReviewerConfig {
                 definitions: Vec::new(),
                 max_reviewers: 2,
             },
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn slack_app_user_map_falls_back_to_flavor_mapping() {
         let runtime = RuntimeConfig {
-            reviewers: milchick_core::model::ReviewerConfig {
+            reviewers: crate::core::model::ReviewerConfig {
                 definitions: Vec::new(),
                 max_reviewers: 2,
             },

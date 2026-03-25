@@ -1,16 +1,26 @@
-[workspace]
-members = [
-    "apps/mr-milchick",
-    "crates/milchick-core",
-    "crates/milchick-runtime",
-    "crates/milchick-connectors",
-]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "mr-milchick"
+version = "1.1.0"
 edition = "2024"
+license = "MIT"
+description = "CLI for merge request governance in GitLab CI pipelines"
+repository = "https://github.com/ArthurianX/mr-milchick"
+homepage = "https://github.com/ArthurianX/mr-milchick"
+documentation = "https://docs.rs/mr-milchick"
+rust-version = "1.85"
+readme = "README.md"
+keywords = ["gitlab", "cli", "review", "ci", "governance"]
+categories = ["command-line-utilities", "development-tools"]
+build = "apps/mr-milchick/build.rs"
 
-[workspace.dependencies]
+[lib]
+path = "apps/mr-milchick/src/lib.rs"
+
+[[bin]]
+name = "mr-milchick"
+path = "apps/mr-milchick/src/main.rs"
+
+[dependencies]
 anyhow = "1"
 async-trait = "0.1.89"
 clap = { version = "4", features = ["derive"] }
@@ -23,3 +33,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[features]
+default = ["gitlab", "slack-app", "slack-workflow"]
+gitlab = []
+github = []
+slack-app = []
+slack-workflow = []
+teams = []
+discord = []

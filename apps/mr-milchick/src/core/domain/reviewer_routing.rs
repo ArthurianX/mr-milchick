@@ -1,0 +1,384 @@
+use std::collections::{HashMap, HashSet};
+
+use crate::core::domain::area_summary::MergeRequestAreaSummary;
+use crate::core::domain::code_area::CodeArea;
+use crate::core::model::ReviewerConfig;
+#[cfg(test)]
+use crate::core::model::ReviewerDefinition;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewerRoutingConfig {
+    pub reviewers_by_area: HashMap<CodeArea, Vec<String>>,
+    pub fallback_reviewers: Vec<String>,
+    pub mandatory_reviewers: Vec<String>,
+    pub max_reviewers: usize,
+}
+
+impl ReviewerRoutingConfig {
+    pub fn from_config(config: &ReviewerConfig) -> Self {
+        let mut reviewers_by_area = HashMap::new();
+        let mut fallback_reviewers = Vec::new();
+        let mut mandatory_reviewers = Vec::new();
+
+        for definition in &config.definitions {
+            if definition.is_fallback {
+                fallback_reviewers.push(definition.username.clone());
+            }
+
+            if definition.is_mandatory {
+                mandatory_reviewers.push(definition.username.clone());
+            }
+
+            for area in &definition.areas {
+                reviewers_by_area
+                    .entry(*area)
+                    .or_insert_with(Vec::new)
+                    .push(definition.username.clone());
+            }
+        }
+
+        Self {
+            reviewers_by_area,
+            fallback_reviewers,
+            mandatory_reviewers,
+            max_reviewers: config.max_reviewers,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn example() -> Self {
+        let raw = ReviewerConfig {
+            definitions: vec![
+                ReviewerDefinition {
+                    username: "milchick-duty".to_string(),
+                    areas: vec![],
+                    is_fallback: true,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "principal-reviewer".to_string(),
+                    areas: vec![],
+                    is_fallback: false,
+                    is_mandatory: true,
+                },
+                ReviewerDefinition {
+                    username: "alice".to_string(),
+                    areas: vec![CodeArea::Frontend],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "bob".to_string(),
+                    areas: vec![CodeArea::Frontend],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "carol".to_string(),
+                    areas: vec![CodeArea::Backend],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "dave".to_string(),
+                    areas: vec![CodeArea::Backend],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "erin".to_string(),
+                    areas: vec![CodeArea::Shared],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "frank".to_string(),
+                    areas: vec![CodeArea::Shared],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "grace".to_string(),
+                    areas: vec![CodeArea::DevOps],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "heidi".to_string(),
+                    areas: vec![CodeArea::Documentation],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "ivan".to_string(),
+                    areas: vec![CodeArea::Tests],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+            ],
+            max_reviewers: 2,
+        };
+
+        Self::from_config(&raw)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewerRecommendation {
+    pub reviewers: Vec<String>,
+    pub reasons: Vec<String>,
+}
+
+pub fn recommend_reviewers(
+    summary: &MergeRequestAreaSummary,
+    config: &ReviewerRoutingConfig,
+    excluded_reviewers: &[String],
+) -> ReviewerRecommendation {
+    let mut reviewers = Vec::new();
+    let mut reasons = Vec::new();
+    let mut selected = HashSet::new();
+
+    add_mandatory_reviewers(
+        &config.mandatory_reviewers,
+        excluded_reviewers,
+        &mut selected,
+        &mut reviewers,
+        &mut reasons,
+    );
+    let mandatory_count = reviewers.len();
+
+    let significant_areas = summary.significant_areas();
+
+    if significant_areas.is_empty() {
+        if let Some(fallback) = first_non_excluded(&config.fallback_reviewers, excluded_reviewers) {
+            reviewers.push(fallback.clone());
+            reasons.push("No dominant area detected; fallback reviewer selected.".to_string());
+        } else {
+            reasons.push(
+                "No dominant area detected and no eligible fallback reviewer exists.".to_string(),
+            );
+        }
+
+        return ReviewerRecommendation { reviewers, reasons };
+    }
+
+    for area in significant_areas {
+        if reviewers.len().saturating_sub(mandatory_count) >= config.max_reviewers {
+            reasons.push(format!(
+                "Reviewer selection reached configured limit of {}.",
+                config.max_reviewers
+            ));
+            break;
+        }
+
+        if let Some(pool) = config.reviewers_by_area.get(&area) {
+            if let Some(candidate) =
+                first_non_excluded_and_unselected(pool, excluded_reviewers, &selected)
+            {
+                reviewers.push(candidate.clone());
+                selected.insert(candidate.clone());
+                reasons.push(format!(
+                    "Selected reviewer '{}' for area '{}'.",
+                    candidate,
+                    area.as_str()
+                ));
+            } else {
+                reasons.push(format!(
+                    "No eligible reviewer remained for area '{}'.",
+                    area.as_str()
+                ));
+            }
+        } else {
+            reasons.push(format!(
+                "No reviewer pool configured for area '{}'.",
+                area.as_str()
+            ));
+        }
+    }
+
+    if reviewers.is_empty() {
+        if let Some(fallback) = first_non_excluded_and_unselected(
+            &config.fallback_reviewers,
+            excluded_reviewers,
+            &selected,
+        ) {
+            reviewers.push(fallback.clone());
+            reasons.push(
+                "No area reviewer could be selected; fallback reviewer selected.".to_string(),
+            );
+        } else {
+            reasons.push(
+                "No eligible reviewer could be selected from configured areas or fallback pool."
+                    .to_string(),
+            );
+        }
+    }
+
+    ReviewerRecommendation { reviewers, reasons }
+}
+
+pub fn prepend_mandatory_reviewers(
+    config: &ReviewerRoutingConfig,
+    excluded_reviewers: &[String],
+    base_reviewers: &[String],
+    base_reasons: &[String],
+) -> ReviewerRecommendation {
+    let mut reviewers = Vec::new();
+    let mut reasons = Vec::new();
+    let mut selected = HashSet::new();
+
+    add_mandatory_reviewers(
+        &config.mandatory_reviewers,
+        excluded_reviewers,
+        &mut selected,
+        &mut reviewers,
+        &mut reasons,
+    );
+
+    for reviewer in base_reviewers {
+        if selected.insert(reviewer.clone()) {
+            reviewers.push(reviewer.clone());
+        }
+    }
+
+    reasons.extend(base_reasons.iter().cloned());
+
+    ReviewerRecommendation { reviewers, reasons }
+}
+
+fn first_non_excluded<'a>(pool: &'a [String], excluded: &[String]) -> Option<&'a String> {
+    pool.iter()
+        .find(|candidate| !excluded.iter().any(|excluded| excluded == *candidate))
+}
+
+fn first_non_excluded_and_unselected<'a>(
+    pool: &'a [String],
+    excluded: &[String],
+    selected: &HashSet<String>,
+) -> Option<&'a String> {
+    pool.iter().find(|candidate| {
+        !excluded.iter().any(|excluded| excluded == *candidate) && !selected.contains(*candidate)
+    })
+}
+
+fn add_mandatory_reviewers(
+    mandatory_reviewers: &[String],
+    excluded_reviewers: &[String],
+    selected: &mut HashSet<String>,
+    reviewers: &mut Vec<String>,
+    reasons: &mut Vec<String>,
+) {
+    for reviewer in mandatory_reviewers {
+        if excluded_reviewers
+            .iter()
+            .any(|excluded| excluded == reviewer)
+        {
+            reasons.push(format!(
+                "Skipped mandatory reviewer '{}' because they are excluded.",
+                reviewer
+            ));
+            continue;
+        }
+
+        if selected.insert(reviewer.clone()) {
+            reviewers.push(reviewer.clone());
+            reasons.push(format!(
+                "Selected reviewer '{}' from mandatory reviewer configuration.",
+                reviewer
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::domain::area_summary::MergeRequestAreaSummary;
+
+    #[test]
+    fn recommends_multiple_reviewers_for_highest_priority_areas() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+        summary.add(CodeArea::Frontend);
+        summary.add(CodeArea::Backend);
+        summary.add(CodeArea::Backend);
+        summary.add(CodeArea::Shared);
+
+        let config = ReviewerRoutingConfig::example();
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(recommendation.reviewers.len(), 3);
+        assert_eq!(recommendation.reviewers[0], "principal-reviewer");
+        assert_eq!(recommendation.reviewers[1], "carol");
+        assert_eq!(recommendation.reviewers[2], "alice");
+    }
+
+    #[test]
+    fn skips_excluded_reviewer_and_uses_next_candidate() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+
+        let config = ReviewerRoutingConfig::example();
+        let excluded = vec!["alice".to_string()];
+        let recommendation = recommend_reviewers(&summary, &config, &excluded);
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec!["principal-reviewer".to_string(), "bob".to_string()]
+        );
+    }
+
+    #[test]
+    fn deduplicates_selected_reviewers() {
+        let mut config = ReviewerRoutingConfig::example();
+        config
+            .reviewers_by_area
+            .insert(CodeArea::Frontend, vec!["alice".to_string()]);
+        config
+            .reviewers_by_area
+            .insert(CodeArea::Documentation, vec!["alice".to_string()]);
+        config.max_reviewers = 3;
+
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+        summary.add(CodeArea::Documentation);
+
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec!["principal-reviewer".to_string(), "alice".to_string()]
+        );
+    }
+
+    #[test]
+    fn falls_back_when_summary_is_empty() {
+        let summary = MergeRequestAreaSummary::new();
+
+        let config = ReviewerRoutingConfig::example();
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec![
+                "principal-reviewer".to_string(),
+                "milchick-duty".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn respects_max_reviewer_limit() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add(CodeArea::Frontend);
+        summary.add(CodeArea::Backend);
+        summary.add(CodeArea::Shared);
+
+        let mut config = ReviewerRoutingConfig::example();
+        config.max_reviewers = 2;
+
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(recommendation.reviewers.len(), 3);
+    }
+}
