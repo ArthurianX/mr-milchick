@@ -4,7 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::config::model::{
-    CodeownersConfig, FlavorConfig, ReviewerConfig, ReviewerDefinition, RuntimeConfig, SlackConfig,
+    CodeownersConfig, FlavorConfig, NotificationPolicy, ReviewerConfig, ReviewerDefinition,
+    RuntimeConfig, SlackConfig,
 };
 use crate::core::domain::code_area::CodeArea;
 
@@ -19,6 +20,7 @@ const SLACK_BOT_TOKEN_ENV: &str = "MR_MILCHICK_SLACK_BOT_TOKEN";
 const SLACK_WEBHOOK_URL_ENV: &str = "MR_MILCHICK_SLACK_WEBHOOK_URL";
 const SLACK_CHANNEL_ENV: &str = "MR_MILCHICK_SLACK_CHANNEL";
 const SLACK_USER_MAP_ENV: &str = "MR_MILCHICK_SLACK_USER_MAP";
+const NOTIFICATION_POLICY_ENV: &str = "MR_MILCHICK_NOTIFICATION_POLICY";
 const DEFAULT_SLACK_BASE_URL: &str = "https://slack.com/api";
 const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
     "CODEOWNERS",
@@ -44,6 +46,7 @@ pub fn load_config() -> Result<RuntimeConfig> {
         reviewers: load_reviewers_config()?,
         codeowners: load_codeowners_config()?,
         slack: load_slack_config()?,
+        notification_policy: load_notification_policy_override()?,
     })
 }
 
@@ -161,6 +164,16 @@ fn load_slack_user_map() -> Result<BTreeMap<String, String>> {
     }
 }
 
+fn load_notification_policy_override() -> Result<Option<NotificationPolicy>> {
+    match std::env::var(NOTIFICATION_POLICY_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => Ok(Some(parse_notification_policy(
+            NOTIFICATION_POLICY_ENV,
+            &raw,
+        )?)),
+        _ => Ok(None),
+    }
+}
+
 fn parse_reviewer_definitions(raw: &str) -> Result<Vec<ReviewerDefinition>> {
     let parsed: Vec<ReviewerDefinitionDto> = serde_json::from_str(raw).with_context(|| {
         format!(
@@ -263,6 +276,14 @@ fn parse_bool_flag(name: &str, raw: &str) -> Result<bool> {
     }
 }
 
+fn parse_notification_policy(name: &str, raw: &str) -> Result<NotificationPolicy> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "always" => Ok(NotificationPolicy::Always),
+        "on-applied-action" => Ok(NotificationPolicy::OnAppliedAction),
+        _ => bail!("'{}' must be either 'always' or 'on-applied-action'", name),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +353,26 @@ mod tests {
     }
 
     #[test]
+    fn notification_policy_defaults_to_no_override() {
+        let policy =
+            load_notification_policy_override().expect("notification policy override should load");
+
+        assert_eq!(policy, None);
+    }
+
+    #[test]
+    fn parses_notification_policy_values() {
+        assert_eq!(
+            parse_notification_policy(NOTIFICATION_POLICY_ENV, "always").unwrap(),
+            NotificationPolicy::Always
+        );
+        assert_eq!(
+            parse_notification_policy(NOTIFICATION_POLICY_ENV, "on-applied-action").unwrap(),
+            NotificationPolicy::OnAppliedAction
+        );
+    }
+
+    #[test]
     fn supports_explicit_slack_disable_flag() {
         assert!(!parse_bool_flag(SLACK_ENABLED_ENV, "false").unwrap());
     }
@@ -359,6 +400,8 @@ mod tests {
     #[test]
     fn parses_flavor_config_with_quoted_slack_user_map_keys() {
         let raw = r#"
+notification_policy = "on-applied-action"
+
 [review_platform]
 kind = "gitlab"
 
@@ -372,6 +415,10 @@ enabled = true
 "#;
 
         let flavor = toml::from_str::<FlavorConfig>(raw).expect("flavor config should parse");
+        assert_eq!(
+            flavor.notification_policy,
+            Some(NotificationPolicy::OnAppliedAction)
+        );
         let slack_app = flavor.slack_app.expect("slack app config should exist");
 
         assert_eq!(

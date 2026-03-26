@@ -1,9 +1,9 @@
-use anyhow::Result;
-use async_trait::async_trait;
 use crate::core::model::{
     NotificationDeliveryReport, NotificationMessage, ReviewAction, ReviewActionReport,
     ReviewPlatformKind,
 };
+use anyhow::Result;
+use async_trait::async_trait;
 use thiserror::Error;
 
 pub type ConnectorResult<T> = Result<T, ConnectorError>;

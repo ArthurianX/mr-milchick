@@ -3,11 +3,11 @@
 #[path = "support/mock_server.rs"]
 mod mock_server;
 
+use mock_server::{MERGE_REQUEST_IID, MockGitLabServer, PROJECT_ID};
 use mr_milchick::connectors::gitlab::api::GitLabConfig;
 use mr_milchick::connectors::gitlab::{GitLabReviewConnector, MR_MILCHICK_MARKER};
 use mr_milchick::core::model::{Actor, RenderedMessage, ReviewAction, ReviewActionKind};
 use mr_milchick::runtime::ReviewConnector;
-use mock_server::{MERGE_REQUEST_IID, MockGitLabServer, PROJECT_ID};
 use serde_json::{Value, json};
 
 fn connector(server: &MockGitLabServer) -> GitLabReviewConnector {

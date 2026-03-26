@@ -30,7 +30,7 @@ use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
 use crate::cli::Cli;
 use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_path};
-use crate::config::model::{FlavorConfig, RuntimeConfig};
+use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
 
 #[cfg(all(feature = "gitlab", feature = "github"))]
@@ -100,9 +100,9 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
     );
 
     let summary = build_summary_message(&outcome, &ctx, &selector);
-    outcome
-        .action_plan
-        .push(ReviewAction::UpsertSummary { message: summary });
+    outcome.action_plan.push(ReviewAction::UpsertSummary {
+        message: summary.clone(),
+    });
 
     match mode {
         ExecutionMode::Observe => {
@@ -131,9 +131,17 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             print_action_plan(&outcome, true);
 
             let strategy = ExecutionStrategy::from_env();
-            let notifications = build_notifications(strategy, &outcome, &snapshot, &selector, &ctx);
+            let notification_policy =
+                resolve_notification_policy(&app_config.runtime, flavor.as_ref());
+            let notifications =
+                build_notifications(strategy, &outcome, &snapshot, &summary, &selector, &ctx);
             let report = wiring
-                .execute(strategy, &outcome.action_plan.actions, &notifications)
+                .execute(
+                    strategy,
+                    notification_policy,
+                    &outcome.action_plan.actions,
+                    &notifications,
+                )
                 .await?;
 
             print_execution_report(&report);
@@ -232,6 +240,16 @@ fn notification_enabled_by_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> 
                 .any(|notification| notification.kind == kind && notification.enabled)
         })
         .unwrap_or(true)
+}
+
+fn resolve_notification_policy(
+    runtime: &RuntimeConfig,
+    flavor: Option<&FlavorConfig>,
+) -> NotificationPolicy {
+    runtime
+        .notification_policy
+        .or_else(|| flavor.and_then(|config| config.notification_policy))
+        .unwrap_or(NotificationPolicy::Always)
 }
 
 fn resolve_slack_app_user_map(
@@ -382,6 +400,7 @@ fn build_notifications(
     strategy: ExecutionStrategy,
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
+    summary: &crate::core::model::RenderedMessage,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
 ) -> Vec<NotificationMessage> {
@@ -392,38 +411,50 @@ fn build_notifications(
         return Vec::new();
     }
 
-    let Some(reviewers) = reviewers_for_notification(outcome, snapshot) else {
-        return Vec::new();
-    };
+    let reviewers = reviewers_for_notification(outcome, snapshot);
+    let mut body = summary.clone();
 
-    let mut body = crate::core::model::RenderedMessage::new(Some(
-        selector
-            .select(ToneCategory::ReviewRequest, ctx)
-            .to_string(),
-    ));
-    let mentions = reviewers
-        .iter()
-        .map(|reviewer| format!("*@{}*", reviewer))
-        .collect::<Vec<_>>()
-        .join(" ");
     if let Some(url) = &snapshot.review_ref.web_url {
-        body.sections.push(MessageSection::Paragraph(format!(
-            "Review requested for: <{}|{}>",
-            url, snapshot.title
-        )));
+        body.sections.insert(
+            0,
+            MessageSection::Paragraph(format!("Merge request: <{}|{}>", url, snapshot.title)),
+        );
+    } else {
+        body.sections.insert(
+            0,
+            MessageSection::Paragraph(format!("Merge request: {}", snapshot.title)),
+        );
     }
-    body.sections.push(MessageSection::Paragraph(format!(
-        "_Assign reviewers_ {}",
-        mentions
-    )));
 
-    vec![NotificationMessage {
-        subject: format!(
+    let subject = if let Some(reviewers) = reviewers {
+        let mentions = reviewers
+            .iter()
+            .map(|reviewer| format!("*@{}*", reviewer))
+            .collect::<Vec<_>>()
+            .join(" ");
+        body.sections.insert(
+            1,
+            MessageSection::Paragraph(format!("_Assign reviewers_ {}", mentions)),
+        );
+
+        format!(
             ":gitlab: Reviews Needed for <{}|MR #{}>, by @{} :pepe-review:",
             snapshot.review_ref.web_url.clone().unwrap_or_default(),
             snapshot.review_ref.review_id,
             snapshot.author.username
-        ),
+        )
+    } else {
+        body.title = Some(selector.select(ToneCategory::Observation, ctx).to_string());
+        format!(
+            ":gitlab: Mr. Milchick updated <{}|MR #{}>, by @{}",
+            snapshot.review_ref.web_url.clone().unwrap_or_default(),
+            snapshot.review_ref.review_id,
+            snapshot.author.username
+        )
+    };
+
+    vec![NotificationMessage {
+        subject,
         body,
         audience: NotificationAudience::Default,
         severity: NotificationSeverity::Info,
@@ -434,19 +465,20 @@ fn reviewers_for_notification(
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
 ) -> Option<Vec<String>> {
-    let assigned_reviewers = outcome
-        .action_plan
-        .actions
-        .iter()
-        .find_map(|action| match action {
-            ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
-                reviewers
-                    .iter()
-                    .map(|reviewer| reviewer.username.clone())
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        })?;
+    let assigned_reviewers =
+        outcome
+            .action_plan
+            .actions
+            .iter()
+            .find_map(|action| match action {
+                ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
+                    reviewers
+                        .iter()
+                        .map(|reviewer| reviewer.username.clone())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })?;
 
     let mut merged_reviewers = Vec::new();
     let mut seen = BTreeSet::new();
@@ -678,15 +710,48 @@ mod tests {
         let snapshot = sample_snapshot(vec!["principal-reviewer"]);
         let selector = ToneSelector::default();
         let ctx = sample_context();
+        let summary = build_summary_message(&outcome, &ctx, &selector);
 
-        let notifications =
-            build_notifications(ExecutionStrategy::Real, &outcome, &snapshot, &selector, &ctx);
+        let notifications = build_notifications(
+            ExecutionStrategy::Real,
+            &outcome,
+            &snapshot,
+            &summary,
+            &selector,
+            &ctx,
+        );
 
         assert_eq!(notifications.len(), 1);
         assert!(matches!(
             notifications[0].body.sections.get(1),
             Some(MessageSection::Paragraph(line))
                 if line.contains("_Assign reviewers_ *@principal-reviewer* *@bob*")
+        ));
+    }
+
+    #[test]
+    fn slack_notifications_include_summary_when_no_reviewers_are_added() {
+        let outcome = RuleOutcome::new();
+        let snapshot = sample_snapshot(Vec::new());
+        let selector = ToneSelector::default();
+        let ctx = sample_context();
+        let summary = build_summary_message(&outcome, &ctx, &selector);
+
+        let notifications = build_notifications(
+            ExecutionStrategy::Real,
+            &outcome,
+            &snapshot,
+            &summary,
+            &selector,
+            &ctx,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].subject.contains("Mr. Milchick updated"));
+        assert!(matches!(
+            notifications[0].body.sections.first(),
+            Some(MessageSection::Paragraph(line))
+                if line.contains("Merge request: <https://gitlab.example.com/group/project/-/merge_requests/456|Frontend adjustments>")
         ));
     }
 
@@ -709,11 +774,13 @@ mod tests {
                 channel: None,
                 user_map: BTreeMap::from([("alice".to_string(), "UENV12345".to_string())]),
             },
+            notification_policy: None,
         };
         let flavor = FlavorConfig {
             review_platform: FlavorReviewPlatform {
                 kind: "gitlab".to_string(),
             },
+            notification_policy: None,
             notifications: Vec::new(),
             slack_app: Some(FlavorSlackAppConfig {
                 user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
@@ -744,11 +811,13 @@ mod tests {
                 channel: None,
                 user_map: BTreeMap::new(),
             },
+            notification_policy: None,
         };
         let flavor = FlavorConfig {
             review_platform: FlavorReviewPlatform {
                 kind: "gitlab".to_string(),
             },
+            notification_policy: None,
             notifications: Vec::new(),
             slack_app: Some(FlavorSlackAppConfig {
                 user_map: BTreeMap::from([
@@ -762,5 +831,105 @@ mod tests {
 
         assert_eq!(resolved.get("alice"), Some(&"UTOML1234".to_string()));
         assert!(!resolved.contains_key("bob"));
+    }
+
+    #[test]
+    fn notification_policy_defaults_to_always() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: None,
+        };
+
+        assert_eq!(
+            resolve_notification_policy(&runtime, None),
+            NotificationPolicy::Always
+        );
+    }
+
+    #[test]
+    fn notification_policy_uses_flavor_when_runtime_has_no_override() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: None,
+        };
+        let flavor = FlavorConfig {
+            review_platform: FlavorReviewPlatform {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: Some(NotificationPolicy::OnAppliedAction),
+            notifications: Vec::new(),
+            slack_app: None,
+        };
+
+        assert_eq!(
+            resolve_notification_policy(&runtime, Some(&flavor)),
+            NotificationPolicy::OnAppliedAction
+        );
+    }
+
+    #[test]
+    fn notification_policy_prefers_runtime_override_over_flavor() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: Some(NotificationPolicy::Always),
+        };
+        let flavor = FlavorConfig {
+            review_platform: FlavorReviewPlatform {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: Some(NotificationPolicy::OnAppliedAction),
+            notifications: Vec::new(),
+            slack_app: None,
+        };
+
+        assert_eq!(
+            resolve_notification_policy(&runtime, Some(&flavor)),
+            NotificationPolicy::Always
+        );
     }
 }

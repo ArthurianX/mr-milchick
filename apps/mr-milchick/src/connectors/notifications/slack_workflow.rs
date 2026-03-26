@@ -138,14 +138,7 @@ async fn post_workflow_webhook_message(
 }
 
 pub fn render_slack_workflow_title(notification: &NotificationMessage) -> String {
-    if let Some(url) = extract_first_link(&notification.subject) {
-        return format!("Review Needed {}", url);
-    }
-
-    format!(
-        "Review Needed {}",
-        simplify_slack_formatting(&notification.subject)
-    )
+    simplify_slack_formatting(&notification.subject)
 }
 
 pub fn render_slack_workflow_message(notification: &NotificationMessage) -> String {
@@ -181,16 +174,6 @@ pub fn render_slack_workflow_message(notification: &NotificationMessage) -> Stri
     }
 
     lines.join("\n")
-}
-
-fn extract_first_link(text: &str) -> Option<String> {
-    let start = text.find('<')?;
-    let remainder = &text[start + 1..];
-    let end = remainder.find('>')?;
-    let inner = &remainder[..end];
-    let url = inner.split('|').next()?.trim();
-
-    (!url.is_empty()).then(|| url.to_string())
 }
 
 #[cfg(test)]
@@ -233,6 +216,26 @@ mod tests {
         };
 
         let rendered = render_slack_workflow_title(&message);
-        assert_eq!(rendered, "Review Needed https://example.test/mr/1");
+        assert_eq!(
+            rendered,
+            ":gitlab: Reviews Needed for MR #1 (https://example.test/mr/1), by @arthur :pepe-review:"
+        );
+    }
+
+    #[test]
+    fn renders_generic_workflow_title_without_review_needed_prefix() {
+        let message = NotificationMessage {
+            subject: ":gitlab: Mr. Milchick updated <https://example.test/mr/1|MR #1>, by @arthur"
+                .to_string(),
+            body: RenderedMessage::new(None),
+            audience: NotificationAudience::Default,
+            severity: NotificationSeverity::Info,
+        };
+
+        let rendered = render_slack_workflow_title(&message);
+        assert_eq!(
+            rendered,
+            ":gitlab: Mr. Milchick updated MR #1 (https://example.test/mr/1), by @arthur"
+        );
     }
 }

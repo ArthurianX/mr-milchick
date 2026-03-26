@@ -222,7 +222,9 @@ fn normalize_pattern(pattern: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::domain::codeowners::model::{CodeownersFile, CodeownersRule, CodeownersSection};
+    use crate::core::domain::codeowners::model::{
+        CodeownersFile, CodeownersRule, CodeownersSection,
+    };
     use crate::core::model::{
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewPlatformKind,
         ReviewRef, ReviewSnapshot,

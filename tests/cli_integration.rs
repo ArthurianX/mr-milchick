@@ -102,3 +102,98 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     );
     assert_eq!(server.note_bodies().len(), 1);
 }
+
+#[test]
+fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_unchanged() {
+    let server = MockGitLabServer::start();
+    let mut envs = base_env(&server);
+    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+
+    let first = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        first.status.success(),
+        "first refine failed: {}\n{}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&first.stdout)
+    );
+
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
+    assert!(first_stdout.contains("[Notification SlackApp] delivered=true sent"));
+
+    let second = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        second.status.success(),
+        "second refine failed: {}\n{}",
+        String::from_utf8_lossy(&second.stderr),
+        String::from_utf8_lossy(&second.stdout)
+    );
+
+    let second_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=true sent"));
+
+    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
+    let notes_path = format!("{mr_path}/notes");
+    assert_eq!(server.request_count("POST", &notes_path), 1);
+    assert_eq!(server.note_bodies().len(), 1);
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        4
+    );
+}
+
+#[test]
+fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unchanged() {
+    let server = MockGitLabServer::start();
+    let mut envs = base_env(&server);
+    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+    envs.push((
+        "MR_MILCHICK_NOTIFICATION_POLICY",
+        "on-applied-action".to_string(),
+    ));
+
+    let first = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        first.status.success(),
+        "first refine failed: {}\n{}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&first.stdout)
+    );
+
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
+    assert!(first_stdout.contains("[Notification SlackApp] delivered=true sent"));
+
+    let second = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        second.status.success(),
+        "second refine failed: {}\n{}",
+        String::from_utf8_lossy(&second.stderr),
+        String::from_utf8_lossy(&second.stdout)
+    );
+
+    let second_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
+    assert!(
+        second_stdout
+            .contains("[Notification SlackApp] delivered=false skipped because summary unchanged")
+    );
+
+    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
+    let notes_path = format!("{mr_path}/notes");
+    assert_eq!(server.request_count("POST", &notes_path), 1);
+    assert_eq!(server.note_bodies().len(), 1);
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        2
+    );
+}

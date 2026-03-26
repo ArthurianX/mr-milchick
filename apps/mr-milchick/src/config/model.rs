@@ -8,6 +8,7 @@ pub struct RuntimeConfig {
     pub reviewers: ReviewerConfig,
     pub codeowners: CodeownersConfig,
     pub slack: SlackConfig,
+    pub notification_policy: Option<NotificationPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,9 +27,18 @@ pub struct SlackConfig {
     pub user_map: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NotificationPolicy {
+    Always,
+    OnAppliedAction,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FlavorConfig {
     pub review_platform: FlavorReviewPlatform,
+    #[serde(default)]
+    pub notification_policy: Option<NotificationPolicy>,
     #[serde(default)]
     pub notifications: Vec<FlavorNotification>,
     #[serde(default)]

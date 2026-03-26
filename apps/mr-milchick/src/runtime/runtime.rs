@@ -1,7 +1,8 @@
-use anyhow::Result;
+use crate::config::model::NotificationPolicy;
 use crate::core::model::{
-    NotificationMessage, NotificationSinkKind, ReviewAction, ReviewPlatformKind,
+    NotificationMessage, NotificationSinkKind, ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
+use anyhow::Result;
 
 use crate::runtime::executor::{ExecutionReport, NotificationSink, ReviewConnector};
 
@@ -60,6 +61,7 @@ impl RuntimeWiring {
     pub async fn execute(
         &self,
         strategy: ExecutionStrategy,
+        notification_policy: NotificationPolicy,
         review_actions: &[ReviewAction],
         notifications: &[NotificationMessage],
     ) -> Result<ExecutionReport> {
@@ -72,10 +74,19 @@ impl RuntimeWiring {
         };
 
         let mut notification_reports = Vec::new();
+        let notification_skip_reason =
+            notification_skip_reason(notification_policy, strategy, &review_report);
 
         for sink in &self.notification_sinks {
             for notification in notifications {
-                let report = if strategy == ExecutionStrategy::DryRun {
+                let report = if let Some(reason) = &notification_skip_reason {
+                    crate::core::model::NotificationDeliveryReport {
+                        sink: sink.kind(),
+                        delivered: false,
+                        destination: None,
+                        detail: Some(reason.clone()),
+                    }
+                } else if strategy == ExecutionStrategy::DryRun {
                     crate::core::model::NotificationDeliveryReport {
                         sink: sink.kind(),
                         delivered: false,
@@ -117,4 +128,28 @@ fn dry_run_review_report(actions: &[ReviewAction]) -> crate::core::model::Review
     }
 
     report
+}
+
+fn notification_skip_reason(
+    notification_policy: NotificationPolicy,
+    strategy: ExecutionStrategy,
+    review_report: &crate::core::model::ReviewActionReport,
+) -> Option<String> {
+    if strategy == ExecutionStrategy::DryRun || notification_policy == NotificationPolicy::Always {
+        return None;
+    }
+
+    if review_report
+        .applied
+        .iter()
+        .any(|action| action.action == ReviewActionKind::UpsertSummary)
+    {
+        return None;
+    }
+
+    review_report
+        .skipped
+        .iter()
+        .find(|action| action.action == ReviewActionKind::UpsertSummary)
+        .map(|action| format!("skipped because {}", action.reason))
 }

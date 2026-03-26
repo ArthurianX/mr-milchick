@@ -3,13 +3,15 @@
 #[path = "support/mock_server.rs"]
 mod mock_server;
 
-use mr_milchick::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
+use mock_server::MockGitLabServer;
+use mr_milchick::connectors::notifications::slack_workflow::{
+    SlackWorkflowConfig, SlackWorkflowSink,
+};
 use mr_milchick::core::model::{
     MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity,
     RenderedMessage,
 };
 use mr_milchick::runtime::NotificationSink;
-use mock_server::MockGitLabServer;
 use serde_json::{Value, json};
 
 #[tokio::test]
@@ -50,7 +52,9 @@ async fn sends_workflow_messages_with_simple_formatting_and_threading() {
     assert_eq!(payload["mr_milchick_talks_to"], json!("C0ALY38CW3X"));
     assert_eq!(
         payload["mr_milchick_says"],
-        json!("Review Needed https://gitlab.example.com/group/project/-/merge_requests/3995")
+        json!(
+            ":gitlab: Reviews Needed for MR #3995 (https://gitlab.example.com/group/project/-/merge_requests/3995), by @arthur :pepe-review:"
+        )
     );
 
     let thread_message = payload["mr_milchick_says_thread"]

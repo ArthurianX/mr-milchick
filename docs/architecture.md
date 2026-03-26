@@ -46,7 +46,8 @@ The runtime wiring layer enforces a few important rules:
 - review reads and writes always go through the same compiled review connector
 - notification sinks never change the review plan
 - dry-run affects execution only, not planning
-- Slack notifications are only built when reviewer assignment is actually being performed and the pipeline is not already blocked
+- notifications are only considered during real `refine` execution when the pipeline is not already blocked
+- notification delivery is controlled by the resolved notification policy, not by individual connectors or sinks
 
 That keeps the core planner deterministic and makes the side effects easy to reason about in CI logs.
 

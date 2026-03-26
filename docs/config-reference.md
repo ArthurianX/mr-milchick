@@ -25,6 +25,8 @@ The important rule is that the flavor file cannot request a review platform or n
 The default runtime path is `mr-milchick.toml`. Override it with `MR_MILCHICK_FLAVOR_PATH` if needed.
 
 ```toml
+notification_policy = "on-applied-action"
+
 [review_platform]
 kind = "gitlab"
 
@@ -43,6 +45,7 @@ enabled = false
 
 Supported TOML fields today:
 
+- `notification_policy`
 - `review_platform.kind`
 - `[[notifications]].kind`
 - `[[notifications]].enabled`
@@ -50,6 +53,7 @@ Supported TOML fields today:
 
 Behavior notes:
 
+- `notification_policy` may be `always` or `on-applied-action`.
 - `review_platform.kind` must match the compiled review connector. Today that means `gitlab`.
 - `[[notifications]]` entries may use `slack-app` and `slack-workflow`.
 - If `enabled` is omitted for a notification entry, it defaults to `true`.
@@ -138,6 +142,7 @@ Auto-discovery checks these paths in order:
 | --- | --- | --- | --- |
 | `MR_MILCHICK_DRY_RUN` | No | `false` | If enabled, `refine` produces a dry-run execution report and skips external writes. |
 | `MR_MILCHICK_FLAVOR_PATH` | No | `mr-milchick.toml` | Alternative flavor file path. |
+| `MR_MILCHICK_NOTIFICATION_POLICY` | No | `always` | Accepts `always` or `on-applied-action`. Overrides the flavor file when set. |
 
 `observe` and `explain` are already non-mutating. `MR_MILCHICK_DRY_RUN` only affects `refine`.
 
@@ -168,7 +173,9 @@ If a mapping value is blank, it is ignored. In TOML, quote usernames that contai
 ## Notes
 
 - Slack notifications are optional and do not affect review planning.
-- Notifications only run during real `refine` execution and only when reviewer assignment is actually planned.
+- Notifications only run during real `refine` execution.
+- With `notification_policy = "always"`, enabled sinks receive notifications even if the summary comment is unchanged.
+- With `notification_policy = "on-applied-action"`, enabled sinks only receive notifications when the review connector actually applies the summary upsert.
 - GitLab is the only implemented review connector today.
 - Slack app and Slack workflow are the only implemented notification sinks today.
 

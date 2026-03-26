@@ -3,13 +3,13 @@
 #[path = "support/mock_server.rs"]
 mod mock_server;
 
+use mock_server::MockGitLabServer;
 use mr_milchick::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 use mr_milchick::core::model::{
     MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity,
     RenderedMessage,
 };
 use mr_milchick::runtime::NotificationSink;
-use mock_server::MockGitLabServer;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

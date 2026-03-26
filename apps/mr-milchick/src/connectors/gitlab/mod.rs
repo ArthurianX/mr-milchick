@@ -2,13 +2,13 @@ pub mod api;
 pub mod client;
 pub mod dto;
 
-use async_trait::async_trait;
 use crate::core::model::{
     Actor, AppliedReviewAction, ChangeType, ChangedFile, MessageSection, RenderedMessage,
     RepositoryRef, ReviewAction, ReviewActionKind, ReviewActionReport, ReviewMetadata,
     ReviewPlatformKind, ReviewRef, ReviewSnapshot, SkippedReviewAction,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, ReviewConnector};
+use async_trait::async_trait;
 
 use self::api::{GitLabConfig, GitLabSnapshotData};
 use self::client::GitLabClient;
