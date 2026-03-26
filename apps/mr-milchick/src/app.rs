@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 
 use crate::connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown};
@@ -392,21 +392,7 @@ fn build_notifications(
         return Vec::new();
     }
 
-    let assigned_reviewers = outcome
-        .action_plan
-        .actions
-        .iter()
-        .find_map(|action| match action {
-            ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
-                reviewers
-                    .iter()
-                    .map(|reviewer| reviewer.username.clone())
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        });
-
-    let Some(reviewers) = assigned_reviewers else {
+    let Some(reviewers) = reviewers_for_notification(outcome, snapshot) else {
         return Vec::new();
     };
 
@@ -442,6 +428,42 @@ fn build_notifications(
         audience: NotificationAudience::Default,
         severity: NotificationSeverity::Info,
     }]
+}
+
+fn reviewers_for_notification(
+    outcome: &RuleOutcome,
+    snapshot: &crate::core::model::ReviewSnapshot,
+) -> Option<Vec<String>> {
+    let assigned_reviewers = outcome
+        .action_plan
+        .actions
+        .iter()
+        .find_map(|action| match action {
+            ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
+                reviewers
+                    .iter()
+                    .map(|reviewer| reviewer.username.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })?;
+
+    let mut merged_reviewers = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for reviewer in snapshot.reviewer_usernames() {
+        if seen.insert(reviewer.clone()) {
+            merged_reviewers.push(reviewer);
+        }
+    }
+
+    for reviewer in assigned_reviewers {
+        if seen.insert(reviewer.clone()) {
+            merged_reviewers.push(reviewer);
+        }
+    }
+
+    Some(merged_reviewers)
 }
 
 fn print_observe_action_plan(outcome: &RuleOutcome) {
@@ -553,7 +575,73 @@ mod tests {
         CodeownersConfig, FlavorReviewPlatform, FlavorSlackAppConfig, SlackConfig,
     };
     use crate::core::actions::model::ActionPlan;
+    use crate::core::context::model::{
+        BranchInfo, BranchName, CiContext, MergeRequestIid, MergeRequestRef, PipelineInfo,
+        PipelineSource, ProjectId,
+    };
+    use crate::core::model::{
+        Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
+    };
     use crate::core::rules::model::{FindingSeverity, RuleFinding};
+
+    fn sample_context() -> CiContext {
+        CiContext {
+            project_id: ProjectId("123".to_string()),
+            merge_request: Some(MergeRequestRef {
+                iid: MergeRequestIid("456".to_string()),
+            }),
+            pipeline: PipelineInfo {
+                source: PipelineSource::MergeRequestEvent,
+            },
+            branches: BranchInfo {
+                source: BranchName("feat/test".to_string()),
+                target: BranchName("develop".to_string()),
+            },
+            labels: vec![],
+        }
+    }
+
+    fn sample_snapshot(existing_reviewers: Vec<&str>) -> ReviewSnapshot {
+        ReviewSnapshot {
+            review_ref: ReviewRef {
+                platform: ReviewPlatformKind::GitLab,
+                project_key: "123".to_string(),
+                review_id: "456".to_string(),
+                web_url: Some(
+                    "https://gitlab.example.com/group/project/-/merge_requests/456".to_string(),
+                ),
+            },
+            repository: RepositoryRef {
+                platform: ReviewPlatformKind::GitLab,
+                namespace: "group".to_string(),
+                name: "project".to_string(),
+                web_url: Some("https://gitlab.example.com/group/project".to_string()),
+            },
+            title: "Frontend adjustments".to_string(),
+            description: None,
+            author: Actor {
+                username: "arthur".to_string(),
+                display_name: None,
+            },
+            participants: existing_reviewers
+                .into_iter()
+                .map(|username| Actor {
+                    username: username.to_string(),
+                    display_name: None,
+                })
+                .collect(),
+            changed_files: vec![ChangedFile {
+                path: "apps/frontend/button.tsx".to_string(),
+                change_type: ChangeType::Modified,
+                additions: None,
+                deletions: None,
+            }],
+            labels: vec![],
+            is_draft: false,
+            default_branch: Some("develop".to_string()),
+            metadata: ReviewMetadata::default(),
+        }
+    }
 
     #[test]
     fn notification_building_skips_blocking_outcomes() {
@@ -576,6 +664,30 @@ mod tests {
 
         assert!(text.contains("UpsertSummary"));
         assert!(text.to_lowercase().contains("summary"));
+    }
+
+    #[test]
+    fn slack_notifications_include_existing_and_new_reviewers() {
+        let mut outcome = RuleOutcome::new();
+        outcome.action_plan.push(ReviewAction::AssignReviewers {
+            reviewers: vec![Actor {
+                username: "bob".to_string(),
+                display_name: None,
+            }],
+        });
+        let snapshot = sample_snapshot(vec!["principal-reviewer"]);
+        let selector = ToneSelector::default();
+        let ctx = sample_context();
+
+        let notifications =
+            build_notifications(ExecutionStrategy::Real, &outcome, &snapshot, &selector, &ctx);
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            notifications[0].body.sections.get(1),
+            Some(MessageSection::Paragraph(line))
+                if line.contains("_Assign reviewers_ *@principal-reviewer* *@bob*")
+        ));
     }
 
     #[test]
