@@ -108,7 +108,7 @@ Use the version command in CI logs:
 Current output shape:
 
 ```text
-mr-milchick 1.1.0 (<git-sha> <build-date>)
+mr-milchick 1.3.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - review platform: gitlab
 - notification sinks: slack-app, slack-workflow
