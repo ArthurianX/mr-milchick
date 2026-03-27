@@ -35,6 +35,8 @@ use crate::cli::Cli;
 use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_path};
 use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
+use crate::fixture::load_review_fixture;
+use crate::runtime::{ConnectorError, NotificationSink, ReviewConnector};
 
 #[cfg(all(feature = "gitlab", feature = "github"))]
 compile_error!("Exactly one review connector feature must be enabled.");
@@ -49,6 +51,9 @@ struct AppConfigContext {
     routing_config: ReviewerRoutingConfig,
     codeowners: CodeownersContext,
 }
+
+#[derive(Debug)]
+struct FixtureReviewConnector;
 
 fn load_app_config_context() -> Result<AppConfigContext> {
     let runtime = load_config()?;
@@ -66,6 +71,54 @@ fn load_app_config_context() -> Result<AppConfigContext> {
     })
 }
 
+#[async_trait::async_trait]
+impl ReviewConnector for FixtureReviewConnector {
+    fn kind(&self) -> ReviewPlatformKind {
+        ReviewPlatformKind::GitLab
+    }
+
+    async fn load_snapshot(
+        &self,
+    ) -> std::result::Result<crate::core::model::ReviewSnapshot, ConnectorError> {
+        Err(ConnectorError::Unsupported(
+            "fixture review connector cannot load live snapshots".to_string(),
+        ))
+    }
+
+    async fn apply_review_actions(
+        &self,
+        actions: &[ReviewAction],
+    ) -> std::result::Result<crate::core::model::ReviewActionReport, ConnectorError> {
+        let mut report = crate::core::model::ReviewActionReport::default();
+
+        for action in actions {
+            let detail = match action {
+                ReviewAction::AssignReviewers { reviewers } => Some(
+                    reviewers
+                        .iter()
+                        .map(|reviewer| reviewer.username.clone())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+                ReviewAction::UpsertSummary { .. } => Some("fixture".to_string()),
+                ReviewAction::AddLabels { labels } | ReviewAction::RemoveLabels { labels } => {
+                    Some(labels.join(", "))
+                }
+                ReviewAction::FailPipeline { reason } => Some(reason.clone()),
+            };
+
+            report
+                .applied
+                .push(crate::core::model::AppliedReviewAction {
+                    action: action.kind(),
+                    detail,
+                });
+        }
+
+        Ok(report)
+    }
+}
+
 pub async fn run(cli: Cli) -> Result<()> {
     if matches!(cli.command, crate::cli::Command::Version) {
         crate::cli::print_version();
@@ -73,35 +126,70 @@ pub async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    let mode: ExecutionMode = cli.command.into();
-    run_mode(mode).await
+    let mode = cli
+        .command
+        .execution_mode()
+        .expect("execution mode should exist for non-version commands");
+    run_mode(
+        mode,
+        cli.command.fixture_path(),
+        cli.command.send_notifications(),
+    )
+    .await
 }
 
-pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
-    let ctx = build_ci_context()?;
-    let selector = ToneSelector::default();
-    let app_config = load_app_config_context()?;
-
-    println!("{}", selector.select(ToneCategory::Observation, &ctx));
-    print_compiled_capabilities();
-
-    if !ctx.is_merge_request_pipeline() {
-        println!("This pipeline does not currently present merge request responsibilities.");
-        return Ok(());
+pub async fn run_mode(
+    mode: ExecutionMode,
+    fixture_path: Option<&str>,
+    send_notifications: bool,
+) -> Result<()> {
+    if send_notifications && fixture_path.is_none() {
+        anyhow::bail!("'--send-notifications' is only supported together with '--fixture'");
     }
 
+    let selector = ToneSelector::default();
+    let app_config = load_app_config_context()?;
     let flavor = load_flavor_config()?;
-    let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
     let template_catalog = resolve_template_catalog(flavor.as_ref());
+    let fixture_mode = fixture_path.is_some();
 
-    let mut outcome = evaluate_rules(&ctx);
-    let snapshot = wiring.review_connector.load_snapshot().await?;
-    outcome = enrich_with_reviewer_assignment(
-        outcome,
-        &snapshot,
-        &app_config.routing_config,
-        &app_config.codeowners,
-    );
+    let (ctx, snapshot, mut outcome);
+    if let Some(fixture_path) = fixture_path {
+        let fixture = load_review_fixture(fixture_path)?;
+        ctx = fixture.to_ci_context()?;
+        snapshot = fixture.to_review_snapshot()?;
+        outcome = fixture.to_rule_outcome()?;
+    } else {
+        ctx = build_ci_context()?;
+        println!("{}", selector.select(ToneCategory::Observation, &ctx));
+        print_compiled_capabilities();
+
+        if !ctx.is_merge_request_pipeline() {
+            println!("This pipeline does not currently present merge request responsibilities.");
+            return Ok(());
+        }
+
+        let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+        snapshot = wiring.review_connector.load_snapshot().await?;
+        outcome = enrich_with_reviewer_assignment(
+            evaluate_rules(&ctx),
+            &snapshot,
+            &app_config.routing_config,
+            &app_config.codeowners,
+        );
+    }
+
+    if fixture_mode {
+        println!("{}", selector.select(ToneCategory::Observation, &ctx));
+        print_compiled_capabilities();
+    }
+
+    let wiring = if fixture_mode {
+        build_fixture_runtime_wiring(&app_config, flavor.as_ref())?
+    } else {
+        build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?
+    };
+    let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
 
     let summary = render_gitlab_summary(
         &template_catalog,
@@ -115,6 +203,17 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
         ExecutionMode::Observe => {
             print_outcome(&outcome);
             print_observe_action_plan(&outcome);
+            if fixture_mode {
+                let notifications = build_notifications(
+                    &outcome,
+                    &snapshot,
+                    &template_catalog,
+                    &selector,
+                    &ctx,
+                    &preview_sink_kinds,
+                );
+                print_notification_previews(&notifications);
+            }
         }
         ExecutionMode::Explain => {
             print_outcome(&outcome);
@@ -131,24 +230,45 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             }
             println!("---");
             print_snapshot_details(&snapshot);
+            let notifications = build_notifications(
+                &outcome,
+                &snapshot,
+                &template_catalog,
+                &selector,
+                &ctx,
+                &preview_sink_kinds,
+            );
+            if fixture_mode {
+                print_notification_previews(&notifications);
+            }
             print_codeowners_details(&snapshot, &app_config);
         }
         ExecutionMode::Refine => {
             print_outcome(&outcome);
             print_action_plan(&outcome, true);
 
-            let strategy = ExecutionStrategy::from_env();
+            let strategy = if fixture_mode {
+                if send_notifications {
+                    ExecutionStrategy::Real
+                } else {
+                    ExecutionStrategy::DryRun
+                }
+            } else {
+                ExecutionStrategy::from_env()
+            };
             let notification_policy =
                 resolve_notification_policy(&app_config.runtime, flavor.as_ref());
             let notifications = build_notifications(
-                strategy,
                 &outcome,
                 &snapshot,
                 &template_catalog,
                 &selector,
                 &ctx,
-                &wiring.capabilities.notification_sinks,
+                &preview_sink_kinds,
             );
+            if fixture_mode {
+                print_notification_previews(&notifications);
+            }
             let report = wiring
                 .execute(
                     strategy,
@@ -169,7 +289,6 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
     Ok(())
 }
-
 fn build_runtime_wiring(
     ctx: &crate::context::model::CiContext,
     app_config: &AppConfigContext,
@@ -187,7 +306,28 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     );
 
-    let mut sinks: Vec<Box<dyn crate::runtime::NotificationSink>> = Vec::new();
+    Ok(RuntimeWiring::new(
+        Box::new(gitlab),
+        build_notification_sinks(app_config, flavor),
+    ))
+}
+
+fn build_fixture_runtime_wiring(
+    app_config: &AppConfigContext,
+    flavor: Option<&FlavorConfig>,
+) -> Result<RuntimeWiring> {
+    validate_flavor(flavor)?;
+    Ok(RuntimeWiring::new(
+        Box::new(FixtureReviewConnector),
+        build_notification_sinks(app_config, flavor),
+    ))
+}
+
+fn build_notification_sinks(
+    app_config: &AppConfigContext,
+    flavor: Option<&FlavorConfig>,
+) -> Vec<Box<dyn NotificationSink>> {
+    let mut sinks: Vec<Box<dyn NotificationSink>> = Vec::new();
 
     #[cfg(feature = "slack-app")]
     if notification_enabled_by_flavor(flavor, "slack-app") {
@@ -215,7 +355,23 @@ fn build_runtime_wiring(
         }
     }
 
-    Ok(RuntimeWiring::new(Box::new(gitlab), sinks))
+    sinks
+}
+
+fn configured_notification_sink_kinds(flavor: Option<&FlavorConfig>) -> Vec<NotificationSinkKind> {
+    let mut sinks = Vec::new();
+
+    #[cfg(feature = "slack-app")]
+    if notification_enabled_by_flavor(flavor, "slack-app") {
+        sinks.push(NotificationSinkKind::SlackApp);
+    }
+
+    #[cfg(feature = "slack-workflow")]
+    if notification_enabled_by_flavor(flavor, "slack-workflow") {
+        sinks.push(NotificationSinkKind::SlackWorkflow);
+    }
+
+    sinks
 }
 
 fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
@@ -410,8 +566,22 @@ fn print_execution_report(report: &crate::runtime::ExecutionReport) {
     }
 }
 
+fn print_notification_previews(notifications: &[NotificationMessage]) {
+    if notifications.is_empty() {
+        println!("No notification previews were produced.");
+        return;
+    }
+
+    println!("Notification previews:");
+    for notification in notifications {
+        println!("--- {:?} subject ---", notification.sink);
+        println!("{}", notification.subject);
+        println!("--- {:?} body ---", notification.sink);
+        println!("{}", notification.body);
+    }
+}
+
 fn build_notifications(
-    strategy: ExecutionStrategy,
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
     template_catalog: &crate::core::message_templates::TemplateCatalog,
@@ -419,10 +589,7 @@ fn build_notifications(
     ctx: &crate::context::model::CiContext,
     sink_kinds: &[NotificationSinkKind],
 ) -> Vec<NotificationMessage> {
-    if strategy != ExecutionStrategy::Real
-        || outcome.action_plan.has_fail_pipeline()
-        || outcome.has_blocking_findings()
-    {
+    if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
         return Vec::new();
     }
 
@@ -736,7 +903,6 @@ mod tests {
         let ctx = sample_context();
 
         let notifications = build_notifications(
-            ExecutionStrategy::Real,
             &outcome,
             &snapshot,
             &crate::core::message_templates::TemplateCatalog::default(),
@@ -761,7 +927,6 @@ mod tests {
         let ctx = sample_context();
 
         let notifications = build_notifications(
-            ExecutionStrategy::Real,
             &outcome,
             &snapshot,
             &crate::core::message_templates::TemplateCatalog::default(),

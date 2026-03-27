@@ -1,0 +1,25 @@
+project_id = "412"
+merge_request_iid = "4001"
+
+[merge_request]
+title = "Direct commit to develop"
+url = "https://gitlab.example.com/group/project/-/merge_requests/4001"
+author = "arthur"
+source_branch = "develop"
+target_branch = "develop"
+labels = []
+existing_reviewers = []
+is_draft = false
+default_branch = "develop"
+
+[[merge_request.changed_files]]
+path = "apps/frontend/button.tsx"
+change_type = "modified"
+
+[[findings]]
+severity = "blocking"
+message = "Feature branches must not target develop directly."
+
+[[actions]]
+kind = "fail-pipeline"
+reason = "Feature branches must not target develop directly."

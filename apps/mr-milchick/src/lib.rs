@@ -5,4 +5,5 @@ pub mod connectors;
 pub mod context;
 pub mod core;
 pub mod error;
+pub mod fixture;
 pub mod runtime;
