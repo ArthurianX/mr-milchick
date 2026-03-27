@@ -2,6 +2,10 @@
 mod mock_server;
 
 use std::process::{Command, Output};
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use mock_server::{MERGE_REQUEST_IID, MockGitLabServer, PROJECT_ID, base_env, borrow_env};
 
@@ -16,6 +20,16 @@ fn run_cli(subcommand: &str, envs: &[(&str, &str)]) -> Output {
     }
 
     command.output().expect("CLI invocation should succeed")
+}
+
+fn write_temp_flavor(contents: &str) -> String {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("mr-milchick-flavor-{unique}.toml"));
+    fs::write(&path, contents).expect("temp flavor should be written");
+    path.display().to_string()
 }
 
 #[test]
@@ -196,4 +210,85 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
         server.request_count("POST", "/slack/api/chat.postMessage"),
         2
     );
+}
+
+#[test]
+fn refine_mode_uses_partial_slack_template_override_from_flavor_file() {
+    let server = MockGitLabServer::start();
+    let flavor_path = write_temp_flavor(
+        r#"
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[templates.slack_app]
+root = "Template override for {{mr_ref}}"
+"#,
+    );
+
+    let mut envs = base_env(&server);
+    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+    envs.push(("MR_MILCHICK_FLAVOR_PATH", flavor_path.clone()));
+
+    let output = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(bodies.len(), 2);
+    assert!(bodies[0].contains("Template override for MR #3995"));
+    assert!(bodies[1].contains("No findings were produced."));
+
+    let _ = fs::remove_file(flavor_path);
+}
+
+#[test]
+fn refine_mode_invalid_template_override_falls_back_to_default_output() {
+    let server = MockGitLabServer::start();
+    let flavor_path = write_temp_flavor(
+        r#"
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[templates.slack_app]
+root = "Template override for {{unknown_placeholder}}"
+"#,
+    );
+
+    let mut envs = base_env(&server);
+    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+    envs.push(("MR_MILCHICK_FLAVOR_PATH", flavor_path.clone()));
+
+    let output = run_cli("refine", &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(bodies.len(), 2);
+    assert!(bodies[0].contains(":gitlab: Mr. Milchick updated <"));
+
+    let _ = fs::remove_file(flavor_path);
 }

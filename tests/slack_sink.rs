@@ -6,8 +6,7 @@ mod mock_server;
 use mock_server::MockGitLabServer;
 use mr_milchick::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 use mr_milchick::core::model::{
-    MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity,
-    RenderedMessage,
+    NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
 };
 use mr_milchick::runtime::NotificationSink;
 use serde_json::{Value, json};
@@ -29,19 +28,9 @@ async fn sends_compact_slack_message_and_thread_payload() {
     });
 
     let notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
         subject: ":gitlab: Reviews Needed for <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>, by @arthur :pepe-review:".to_string(),
-        body: RenderedMessage {
-            title: Some("The department has a request.".to_string()),
-            sections: vec![
-                MessageSection::Paragraph(
-                    "Review requested for: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>".to_string(),
-                ),
-                MessageSection::Paragraph(
-                    "_Assign reviewers_ *@principal-reviewer* *@bob*".to_string(),
-                ),
-            ],
-            footer: None,
-        },
+        body: "*The department has a request.*\nReview requested for: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>\n_Assign reviewers_ *@principal-reviewer* *@bob*".to_string(),
         audience: NotificationAudience::Default,
         severity: NotificationSeverity::Info,
     };

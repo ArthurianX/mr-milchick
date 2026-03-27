@@ -19,6 +19,7 @@ This directory holds the detailed docs that used to live in the root README. Sta
 ## Output And Tone
 
 - [Tone and messages](tone-and-messages.md): deterministic tone selection, category usage, and where those messages appear.
+- [Message templates](message-templates.md): connector template fields, placeholders, tone variables, and example templates for GitLab and Slack.
 
 ## Validation
 

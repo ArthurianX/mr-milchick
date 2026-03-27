@@ -16,3 +16,44 @@ enabled = true
 #[slack_app.user_map]
 # "engineer.girl1" = ""
 # "engineer.guy1" = ""
+
+# Template inspiration
+# Uncomment any section below to start customizing connector output.
+# These examples match the current built-in defaults.
+
+#[templates.gitlab]
+#summary = """
+## {{summary_title}}
+#
+#{{summary_intro}}
+#
+#{{findings_block}}
+#
+#{{actions_block}}
+#
+#_{{closing_tone_message}}_
+#"""
+
+#[templates.slack_app]
+#root = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
+#thread = """
+#*{{notification_title}}*
+#{{mr_line}}
+#{{reviewers_line}}
+#{{summary_intro}}
+#{{findings_block}}
+#{{actions_block}}
+#_{{summary_footer}}_
+#"""
+
+#[templates.slack_workflow]
+#title = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
+#thread = """
+#{{notification_title}}
+#{{mr_line}}
+#{{reviewers_line}}
+#{{summary_intro}}
+#{{findings_block}}
+#{{actions_block}}
+#{{summary_footer}}
+#"""

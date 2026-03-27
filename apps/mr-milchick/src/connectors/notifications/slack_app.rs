@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::core::model::{
-    MessageSection, NotificationAudience, NotificationDeliveryReport, NotificationMessage,
-    NotificationSinkKind,
+    NotificationAudience, NotificationDeliveryReport, NotificationMessage, NotificationSinkKind,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, NotificationSink};
 
@@ -87,7 +86,7 @@ impl NotificationSink for SlackAppSink {
         };
 
         let subject = replace_gitlab_mentions(&notification.subject, &self.config.user_map);
-        let text = render_slack_app_message(notification, &self.config.user_map);
+        let text = replace_gitlab_mentions(&notification.body, &self.config.user_map);
         let root_ts = post_message(
             &self.http,
             &format!(
@@ -173,46 +172,6 @@ async fn post_message(
     Ok(payload.ts.or(payload.channel))
 }
 
-pub fn render_slack_app_message(
-    notification: &NotificationMessage,
-    user_map: &BTreeMap<String, String>,
-) -> String {
-    let mut lines = Vec::new();
-
-    if let Some(title) = &notification.body.title {
-        lines.push(format!("*{}*", replace_gitlab_mentions(title, user_map)));
-    }
-
-    for section in &notification.body.sections {
-        match section {
-            MessageSection::Paragraph(text) => lines.push(replace_gitlab_mentions(text, user_map)),
-            MessageSection::BulletList(items) => {
-                for item in items {
-                    lines.push(format!("• {}", replace_gitlab_mentions(item, user_map)));
-                }
-            }
-            MessageSection::KeyValueList(items) => {
-                for (key, value) in items {
-                    lines.push(format!(
-                        "*{}*: {}",
-                        replace_gitlab_mentions(key, user_map),
-                        replace_gitlab_mentions(value, user_map)
-                    ));
-                }
-            }
-            MessageSection::CodeBlock { content, .. } => {
-                lines.push(format!("```{}```", content));
-            }
-        }
-    }
-
-    if let Some(footer) = &notification.body.footer {
-        lines.push(format!("_{}_", replace_gitlab_mentions(footer, user_map)));
-    }
-
-    lines.join("\n")
-}
-
 fn replace_gitlab_mentions(text: &str, user_map: &BTreeMap<String, String>) -> String {
     let mut rendered = String::with_capacity(text.len());
     let chars = text.chars().collect::<Vec<_>>();
@@ -276,25 +235,24 @@ fn is_gitlab_mention_char(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::{NotificationSeverity, RenderedMessage};
+    use crate::core::model::{NotificationSeverity, NotificationSinkKind};
 
     #[test]
-    fn renders_structured_slack_app_message() {
+    fn rewrites_mentions_in_rendered_slack_app_message() {
+        let mut user_map = BTreeMap::new();
+        user_map.insert("alice".to_string(), "U01234567".to_string());
         let message = NotificationMessage {
+            sink: NotificationSinkKind::SlackApp,
             subject: "Review requested".to_string(),
-            body: RenderedMessage {
-                title: Some("MR #12".to_string()),
-                sections: vec![MessageSection::BulletList(vec!["@alice".to_string()])],
-                footer: Some("Kind regards.".to_string()),
-            },
+            body: "*MR #12*\nHello @alice\n• @alice\n_Kind regards._".to_string(),
             audience: NotificationAudience::Default,
             severity: NotificationSeverity::Info,
         };
 
-        let rendered = render_slack_app_message(&message, &BTreeMap::new());
+        let rendered = replace_gitlab_mentions(&message.body, &user_map);
         assert!(rendered.contains("*MR #12*"));
-        assert!(rendered.contains("MR #12"));
-        assert!(rendered.contains("• @alice"));
+        assert!(rendered.contains("Hello <@U01234567>"));
+        assert!(rendered.contains("• <@U01234567>"));
         assert!(rendered.contains("_Kind regards._"));
     }
 

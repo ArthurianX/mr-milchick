@@ -8,7 +8,6 @@ use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
 use crate::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
 use crate::core::actions::planner::enrich_with_reviewer_assignment;
-use crate::core::comment::render::build_summary_message;
 use crate::core::domain::codeowners::context::CodeownersContext;
 use crate::core::domain::codeowners::matcher::{
     collect_matched_rules_for_snapshot, match_usernames,
@@ -19,9 +18,13 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
+use crate::core::message_templates::{
+    build_notification_template_context, build_summary_template_context, render_gitlab_summary,
+    render_slack_app_notification, render_slack_workflow_notification, resolve_template_catalog,
+};
 use crate::core::model::{
-    MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity, ReviewAction,
-    ReviewActionKind, ReviewPlatformKind,
+    NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
+    ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
 use crate::core::rules::engine::evaluate_rules;
 use crate::core::rules::model::RuleOutcome;
@@ -89,6 +92,7 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
     let flavor = load_flavor_config()?;
     let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+    let template_catalog = resolve_template_catalog(flavor.as_ref());
 
     let mut outcome = evaluate_rules(&ctx);
     let snapshot = wiring.review_connector.load_snapshot().await?;
@@ -99,9 +103,12 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
         &app_config.codeowners,
     );
 
-    let summary = build_summary_message(&outcome, &ctx, &selector);
+    let summary = render_gitlab_summary(
+        &template_catalog,
+        &build_summary_template_context(&outcome, &snapshot, &selector, &ctx),
+    );
     outcome.action_plan.push(ReviewAction::UpsertSummary {
-        message: summary.clone(),
+        markdown: summary.clone(),
     });
 
     match mode {
@@ -114,13 +121,13 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             print_action_plan(&outcome, true);
             println!("Structured summary comment preview:");
             println!("---");
-            if let Some(ReviewAction::UpsertSummary { message }) = outcome
+            if let Some(ReviewAction::UpsertSummary { markdown }) = outcome
                 .action_plan
                 .actions
                 .iter()
                 .find(|action| matches!(action, ReviewAction::UpsertSummary { .. }))
             {
-                println!("{}", render_gitlab_markdown(message));
+                println!("{}", render_gitlab_markdown(markdown));
             }
             println!("---");
             print_snapshot_details(&snapshot);
@@ -133,8 +140,15 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
             let strategy = ExecutionStrategy::from_env();
             let notification_policy =
                 resolve_notification_policy(&app_config.runtime, flavor.as_ref());
-            let notifications =
-                build_notifications(strategy, &outcome, &snapshot, &summary, &selector, &ctx);
+            let notifications = build_notifications(
+                strategy,
+                &outcome,
+                &snapshot,
+                &template_catalog,
+                &selector,
+                &ctx,
+                &wiring.capabilities.notification_sinks,
+            );
             let report = wiring
                 .execute(
                     strategy,
@@ -400,9 +414,10 @@ fn build_notifications(
     strategy: ExecutionStrategy,
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
-    summary: &crate::core::model::RenderedMessage,
+    template_catalog: &crate::core::message_templates::TemplateCatalog,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
+    sink_kinds: &[NotificationSinkKind],
 ) -> Vec<NotificationMessage> {
     if strategy != ExecutionStrategy::Real
         || outcome.action_plan.has_fail_pipeline()
@@ -412,90 +427,99 @@ fn build_notifications(
     }
 
     let reviewers = reviewers_for_notification(outcome, snapshot);
-    let mut body = summary.clone();
+    let notification_context = build_notification_template_context(
+        outcome,
+        snapshot,
+        selector,
+        ctx,
+        reviewers.reviewers.clone(),
+        reviewers.new_reviewers.clone(),
+        reviewers.existing_reviewers.clone(),
+    );
 
-    if let Some(url) = &snapshot.review_ref.web_url {
-        body.sections.insert(
-            0,
-            MessageSection::Paragraph(format!("Merge request: <{}|{}>", url, snapshot.title)),
-        );
-    } else {
-        body.sections.insert(
-            0,
-            MessageSection::Paragraph(format!("Merge request: {}", snapshot.title)),
-        );
-    }
+    sink_kinds
+        .iter()
+        .filter_map(|sink| match sink {
+            NotificationSinkKind::SlackApp => {
+                let (subject, body) =
+                    render_slack_app_notification(template_catalog, &notification_context);
+                Some(NotificationMessage {
+                    sink: *sink,
+                    subject,
+                    body,
+                    audience: NotificationAudience::Default,
+                    severity: NotificationSeverity::Info,
+                })
+            }
+            NotificationSinkKind::SlackWorkflow => {
+                let (subject, body) =
+                    render_slack_workflow_notification(template_catalog, &notification_context);
+                Some(NotificationMessage {
+                    sink: *sink,
+                    subject,
+                    body,
+                    audience: NotificationAudience::Default,
+                    severity: NotificationSeverity::Info,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
 
-    let subject = if let Some(reviewers) = reviewers {
-        let mentions = reviewers
-            .iter()
-            .map(|reviewer| format!("*@{}*", reviewer))
-            .collect::<Vec<_>>()
-            .join(" ");
-        body.sections.insert(
-            1,
-            MessageSection::Paragraph(format!("_Assign reviewers_ {}", mentions)),
-        );
-
-        format!(
-            ":gitlab: Reviews Needed for <{}|MR #{}>, by @{} :pepe-review:",
-            snapshot.review_ref.web_url.clone().unwrap_or_default(),
-            snapshot.review_ref.review_id,
-            snapshot.author.username
-        )
-    } else {
-        body.title = Some(selector.select(ToneCategory::Observation, ctx).to_string());
-        format!(
-            ":gitlab: Mr. Milchick updated <{}|MR #{}>, by @{}",
-            snapshot.review_ref.web_url.clone().unwrap_or_default(),
-            snapshot.review_ref.review_id,
-            snapshot.author.username
-        )
-    };
-
-    vec![NotificationMessage {
-        subject,
-        body,
-        audience: NotificationAudience::Default,
-        severity: NotificationSeverity::Info,
-    }]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct NotificationReviewers {
+    reviewers: Vec<String>,
+    new_reviewers: Vec<String>,
+    existing_reviewers: Vec<String>,
 }
 
 fn reviewers_for_notification(
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
-) -> Option<Vec<String>> {
-    let assigned_reviewers =
-        outcome
-            .action_plan
-            .actions
-            .iter()
-            .find_map(|action| match action {
-                ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
-                    reviewers
-                        .iter()
-                        .map(|reviewer| reviewer.username.clone())
-                        .collect::<Vec<_>>(),
-                ),
-                _ => None,
-            })?;
+) -> NotificationReviewers {
+    let assigned_reviewers = outcome
+        .action_plan
+        .actions
+        .iter()
+        .find_map(|action| match action {
+            ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
+                reviewers
+                    .iter()
+                    .map(|reviewer| reviewer.username.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        });
+
+    let Some(assigned_reviewers) = assigned_reviewers else {
+        return NotificationReviewers::default();
+    };
 
     let mut merged_reviewers = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut existing_reviewers = Vec::new();
 
     for reviewer in snapshot.reviewer_usernames() {
         if seen.insert(reviewer.clone()) {
             merged_reviewers.push(reviewer);
+            existing_reviewers.push(merged_reviewers.last().cloned().unwrap_or_default());
         }
     }
 
+    let mut new_reviewers = Vec::new();
     for reviewer in assigned_reviewers {
         if seen.insert(reviewer.clone()) {
             merged_reviewers.push(reviewer);
+            new_reviewers.push(merged_reviewers.last().cloned().unwrap_or_default());
         }
     }
 
-    Some(merged_reviewers)
+    NotificationReviewers {
+        reviewers: merged_reviewers,
+        new_reviewers,
+        existing_reviewers,
+    }
 }
 
 fn print_observe_action_plan(outcome: &RuleOutcome) {
@@ -691,7 +715,7 @@ mod tests {
     #[test]
     fn summary_action_is_described() {
         let text = describe_planned_action(&ReviewAction::UpsertSummary {
-            message: crate::core::model::RenderedMessage::new(Some("Summary".to_string())),
+            markdown: "## Summary".to_string(),
         });
 
         assert!(text.contains("UpsertSummary"));
@@ -710,23 +734,23 @@ mod tests {
         let snapshot = sample_snapshot(vec!["principal-reviewer"]);
         let selector = ToneSelector::default();
         let ctx = sample_context();
-        let summary = build_summary_message(&outcome, &ctx, &selector);
 
         let notifications = build_notifications(
             ExecutionStrategy::Real,
             &outcome,
             &snapshot,
-            &summary,
+            &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &[NotificationSinkKind::SlackApp],
         );
 
         assert_eq!(notifications.len(), 1);
-        assert!(matches!(
-            notifications[0].body.sections.get(1),
-            Some(MessageSection::Paragraph(line))
-                if line.contains("_Assign reviewers_ *@principal-reviewer* *@bob*")
-        ));
+        assert!(
+            notifications[0]
+                .body
+                .contains("_Assign reviewers_ *@principal-reviewer* *@bob*")
+        );
     }
 
     #[test]
@@ -735,24 +759,22 @@ mod tests {
         let snapshot = sample_snapshot(Vec::new());
         let selector = ToneSelector::default();
         let ctx = sample_context();
-        let summary = build_summary_message(&outcome, &ctx, &selector);
 
         let notifications = build_notifications(
             ExecutionStrategy::Real,
             &outcome,
             &snapshot,
-            &summary,
+            &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &[NotificationSinkKind::SlackWorkflow],
         );
 
         assert_eq!(notifications.len(), 1);
         assert!(notifications[0].subject.contains("Mr. Milchick updated"));
-        assert!(matches!(
-            notifications[0].body.sections.first(),
-            Some(MessageSection::Paragraph(line))
-                if line.contains("Merge request: <https://gitlab.example.com/group/project/-/merge_requests/456|Frontend adjustments>")
-        ));
+        assert!(notifications[0]
+            .body
+            .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
     }
 
     #[test]
@@ -785,6 +807,7 @@ mod tests {
             slack_app: Some(FlavorSlackAppConfig {
                 user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
             }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
@@ -825,6 +848,7 @@ mod tests {
                     ("bob".to_string(), "".to_string()),
                 ]),
             }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
@@ -889,6 +913,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         assert_eq!(
@@ -925,6 +950,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         assert_eq!(

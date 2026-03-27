@@ -43,6 +43,8 @@ pub struct FlavorConfig {
     pub notifications: Vec<FlavorNotification>,
     #[serde(default)]
     pub slack_app: Option<FlavorSlackAppConfig>,
+    #[serde(default)]
+    pub templates: FlavorTemplatesConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -61,6 +63,38 @@ pub struct FlavorNotification {
 pub struct FlavorSlackAppConfig {
     #[serde(default)]
     pub user_map: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct FlavorTemplatesConfig {
+    #[serde(default)]
+    pub gitlab: FlavorGitLabTemplates,
+    #[serde(default)]
+    pub slack_app: FlavorSlackAppTemplates,
+    #[serde(default)]
+    pub slack_workflow: FlavorSlackWorkflowTemplates,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct FlavorGitLabTemplates {
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct FlavorSlackAppTemplates {
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub thread: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct FlavorSlackWorkflowTemplates {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub thread: Option<String>,
 }
 
 fn default_true() -> bool {
