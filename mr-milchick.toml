@@ -13,6 +13,11 @@ enabled = false
 kind = "slack-app"
 enabled = true
 
+[slack_app.user_map]
+"arthur" = "U028DDKDJ4E"
+"principal-reviewer" = "U03D9NN5HB6"
+"bob" = "U028GSCQBUJ"
+
 #[slack_app.user_map]
 # "engineer.girl1" = ""
 # "engineer.guy1" = ""
