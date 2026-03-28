@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::runtime::ExecutionMode;
 
@@ -38,6 +38,16 @@ pub struct FixtureArgs {
     /// Load synthetic review data from a TOML fixture instead of GitLab CI
     #[arg(long)]
     pub fixture: Option<String>,
+
+    /// Override the fixture notification template path to render
+    #[arg(long, value_enum)]
+    pub fixture_variant: Option<FixtureNotificationVariantArg>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum FixtureNotificationVariantArg {
+    First,
+    Update,
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -77,6 +87,15 @@ impl Command {
             Command::Observe(args) => args.fixture.fixture.as_deref(),
             Command::Refine(args) => args.fixture.fixture.as_deref(),
             Command::Explain(args) => args.fixture.fixture.as_deref(),
+            Command::Version => None,
+        }
+    }
+
+    pub fn fixture_variant(&self) -> Option<FixtureNotificationVariantArg> {
+        match self {
+            Command::Observe(args) => args.fixture.fixture_variant,
+            Command::Refine(args) => args.fixture.fixture_variant,
+            Command::Explain(args) => args.fixture.fixture_variant,
             Command::Version => None,
         }
     }

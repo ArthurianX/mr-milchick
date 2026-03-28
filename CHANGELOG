@@ -207,7 +207,7 @@ This release establishes the architectural baseline, execution model, and policy
 #### Action planning system
 - Action planning abstraction separating evaluation from execution
 - Initial action types:
-  - Assign reviewers
+  - Assigned reviewers
   - Post summary comment
   - Fail pipeline
 - Deterministic planning flow

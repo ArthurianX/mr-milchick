@@ -54,21 +54,25 @@ summary = """## {{summary_title}}
 _{{closing_tone_message}}_"""
 
 [templates.slack_app]
-root = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
-thread = """*{{notification_title}}*
-{{mr_line}}
+first_root = "{{notification_subject}}"
+first_thread = """*{{notification_title}}*
+Merge request: {{mr_link}}
 {{reviewers_line}}
-{{summary_intro}}
+"""
+update_root = "{{notification_subject}}"
+update_thread = """Merge request: {{mr_link}}
 {{findings_block}}
 {{actions_block}}
 _{{summary_footer}}_"""
 
 [templates.slack_workflow]
-title = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
-thread = """{{notification_title}}
-{{mr_line}}
+first_title = "{{notification_subject}}"
+first_thread = """{{notification_title}}
+Merge request: {{mr_link}}
 {{reviewers_line}}
-{{summary_intro}}
+"""
+update_title = "{{notification_subject}}"
+update_thread = """Merge request: {{mr_link}}
 {{findings_block}}
 {{actions_block}}
 {{summary_footer}}"""
@@ -82,10 +86,14 @@ Supported TOML fields today:
 - `[[notifications]].enabled`
 - `[slack_app.user_map]`
 - `[templates.gitlab].summary`
-- `[templates.slack_app].root`
-- `[templates.slack_app].thread`
-- `[templates.slack_workflow].title`
-- `[templates.slack_workflow].thread`
+- `[templates.slack_app].first_root`
+- `[templates.slack_app].first_thread`
+- `[templates.slack_app].update_root`
+- `[templates.slack_app].update_thread`
+- `[templates.slack_workflow].first_title`
+- `[templates.slack_workflow].first_thread`
+- `[templates.slack_workflow].update_title`
+- `[templates.slack_workflow].update_thread`
 
 Behavior notes:
 
@@ -102,8 +110,10 @@ Behavior notes:
 Connector output can be customized from `mr-milchick.toml`.
 
 - GitLab uses `[templates.gitlab].summary`
-- Slack app uses `[templates.slack_app].root` and `[templates.slack_app].thread`
-- Slack workflow uses `[templates.slack_workflow].title` and `[templates.slack_workflow].thread`
+- Slack app uses `first_*` and `update_*` template fields.
+- Slack workflow uses `first_*` and `update_*` template fields.
+- `first_*` is the lighter initial notification shape.
+- `update_*` is the fuller follow-up/update shape.
 
 Templates use `{{placeholder}}` interpolation only.
 
@@ -125,8 +135,8 @@ GitLab-only placeholders:
 Useful renderer helpers:
 
 - `summary_title`, `summary_intro`, `summary_footer`
-- `notification_title`, `notification_subject_action`, `notification_subject_suffix`
-- `mr_line`, `reviewers_line`, `mr_ref_link`
+- `notification_title`, `notification_subject`
+- `reviewers_line`, `mr_ref_link`
 
 See [message-templates.md](message-templates.md) for complete examples and connector-specific output details.
 

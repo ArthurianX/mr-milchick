@@ -144,14 +144,14 @@ mod tests {
         let message = NotificationMessage {
             sink: NotificationSinkKind::SlackWorkflow,
             subject: "Review requested".to_string(),
-            body: "MR #12\nAssign reviewers @alice\nOpen MR (https://example.test)".to_string(),
+            body: "MR #12\nAssigned reviewers @alice\nOpen MR (https://example.test)".to_string(),
             audience: NotificationAudience::Default,
             severity: NotificationSeverity::Info,
         };
 
         let rendered = message.body.clone();
         assert!(rendered.contains("MR #12"));
-        assert!(rendered.contains("Assign reviewers @alice"));
+        assert!(rendered.contains("Assigned reviewers @alice"));
         assert!(rendered.contains("Open MR (https://example.test)"));
         assert!(!rendered.contains('*'));
         assert!(!rendered.contains('<'));

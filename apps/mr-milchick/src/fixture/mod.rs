@@ -6,6 +6,7 @@ use crate::context::model::{
     PipelineSource, ProjectId,
 };
 use crate::core::actions::model::ActionPlan;
+use crate::core::message_templates::NotificationTemplateVariant;
 use crate::core::model::{
     Actor, ChangeType, ChangedFile, RepositoryRef, ReviewAction, ReviewMetadata,
     ReviewPlatformKind, ReviewRef, ReviewSnapshot,
@@ -18,12 +19,21 @@ pub struct ReviewFixture {
     pub merge_request_iid: String,
     #[serde(default = "default_pipeline_source")]
     pub pipeline_source: String,
+    #[serde(default)]
+    pub notification_variant: Option<FixtureNotificationVariant>,
     #[serde(rename = "merge_request")]
     pub merge_request: FixtureMergeRequest,
     #[serde(default)]
     pub findings: Vec<FixtureFinding>,
     #[serde(default)]
     pub actions: Vec<FixtureAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FixtureNotificationVariant {
+    First,
+    Update,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -84,6 +94,13 @@ pub fn load_review_fixture(path: impl AsRef<std::path::Path>) -> Result<ReviewFi
 }
 
 impl ReviewFixture {
+    pub fn notification_template_variant(&self) -> Option<NotificationTemplateVariant> {
+        self.notification_variant.map(|variant| match variant {
+            FixtureNotificationVariant::First => NotificationTemplateVariant::First,
+            FixtureNotificationVariant::Update => NotificationTemplateVariant::Update,
+        })
+    }
+
     pub fn to_ci_context(&self) -> Result<CiContext> {
         Ok(CiContext {
             project_id: ProjectId(self.project_id.trim().to_string()),
@@ -300,6 +317,7 @@ mod tests {
             r#"
 project_id = "412"
 merge_request_iid = "3995"
+notification_variant = "first"
 
 [merge_request]
 title = "Frontend adjustments"
@@ -333,6 +351,10 @@ reviewers = ["bob"]
         assert_eq!(snapshot.changed_files.len(), 1);
         assert_eq!(outcome.findings.len(), 1);
         assert_eq!(outcome.action_plan.actions.len(), 1);
+        assert_eq!(
+            fixture.notification_template_variant(),
+            Some(NotificationTemplateVariant::First)
+        );
     }
 
     #[test]

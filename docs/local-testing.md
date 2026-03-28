@@ -46,7 +46,7 @@ Expected result:
 ## Observe A Fixture Scenario
 
 ```bash
-cargo run -- observe --fixture fixtures/review-request.toml
+cargo run -- observe --fixture fixtures/first-notification.toml
 ```
 
 Expected result:
@@ -151,7 +151,7 @@ Expected result:
 MR_MILCHICK_SLACK_ENABLED=true \
 MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
-cargo run -- refine --fixture fixtures/review-request.toml --send-notifications
+cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
 ```
 
 Expected result:
@@ -189,3 +189,4 @@ Expected result:
 - Set `MR_MILCHICK_DRY_RUN=true` with `refine` if you want an execution-shaped report without live GitLab or Slack writes.
 - `MR_MILCHICK_SLACK_BASE_URL` is available for local mocks and connector tests; the production default is `https://slack.com/api`.
 - Use `--fixture` whenever you want to iterate on templates and notifications before testing against a real merge request.
+- Use `--fixture-variant first|update` when you want to compare both notification template paths without changing the fixture file.

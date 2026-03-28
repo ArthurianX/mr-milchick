@@ -84,17 +84,25 @@ pub struct FlavorGitLabTemplates {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 pub struct FlavorSlackAppTemplates {
     #[serde(default)]
-    pub root: Option<String>,
+    pub first_root: Option<String>,
     #[serde(default)]
-    pub thread: Option<String>,
+    pub first_thread: Option<String>,
+    #[serde(default)]
+    pub update_root: Option<String>,
+    #[serde(default)]
+    pub update_thread: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 pub struct FlavorSlackWorkflowTemplates {
     #[serde(default)]
-    pub title: Option<String>,
+    pub first_title: Option<String>,
     #[serde(default)]
-    pub thread: Option<String>,
+    pub first_thread: Option<String>,
+    #[serde(default)]
+    pub update_title: Option<String>,
+    #[serde(default)]
+    pub update_thread: Option<String>,
 }
 
 fn default_true() -> bool {

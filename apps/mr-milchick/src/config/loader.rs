@@ -441,10 +441,10 @@ kind = "gitlab"
 summary = "## {{summary_title}}"
 
 [templates.slack_app]
-root = "custom root"
+first_root = "custom root"
 
 [templates.slack_workflow]
-title = "custom title"
+first_title = "custom title"
 "###;
 
         let flavor = toml::from_str::<FlavorConfig>(raw).expect("flavor config should parse");
@@ -454,11 +454,11 @@ title = "custom title"
             Some("## {{summary_title}}")
         );
         assert_eq!(
-            flavor.templates.slack_app.root.as_deref(),
+            flavor.templates.slack_app.first_root.as_deref(),
             Some("custom root")
         );
         assert_eq!(
-            flavor.templates.slack_workflow.title.as_deref(),
+            flavor.templates.slack_workflow.first_title.as_deref(),
             Some("custom title")
         );
     }

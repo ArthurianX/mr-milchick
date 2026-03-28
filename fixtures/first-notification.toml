@@ -1,5 +1,6 @@
 project_id = "412"
 merge_request_iid = "3995"
+notification_variant = "first"
 
 [merge_request]
 title = "Frontend adjustments"

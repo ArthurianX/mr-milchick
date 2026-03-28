@@ -18,20 +18,22 @@ const GITLAB_SUMMARY_TEMPLATE: &str = r#"## {{summary_title}}
 
 _{{closing_tone_message}}_"#;
 
-const SLACK_APP_ROOT_TEMPLATE: &str = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}";
-const SLACK_APP_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
-{{mr_line}}
-{{reviewers_line}}
-{{summary_intro}}
+const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
+const SLACK_APP_FIRST_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
+Merge request: {{mr_link}}
+{{reviewers_line}}"#;
+const SLACK_APP_UPDATE_ROOT_TEMPLATE: &str = "{{notification_subject}}";
+const SLACK_APP_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
 {{actions_block}}
 _{{summary_footer}}_"#;
 
-const SLACK_WORKFLOW_TITLE_TEMPLATE: &str = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}";
-const SLACK_WORKFLOW_THREAD_TEMPLATE: &str = r#"{{notification_title}}
-{{mr_line}}
-{{reviewers_line}}
-{{summary_intro}}
+const SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE: &str = "{{notification_subject}}";
+const SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE: &str = r#"{{notification_title}}
+Merge request: {{mr_link}}
+{{reviewers_line}}"#;
+const SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE: &str = "{{notification_subject}}";
+const SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
 {{actions_block}}
 {{summary_footer}}"#;
@@ -66,9 +68,7 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "summary_intro",
     "summary_footer",
     "notification_title",
-    "notification_subject_action",
-    "notification_subject_suffix",
-    "mr_line",
+    "notification_subject",
     "reviewers_line",
     "mr_ref_link",
 ];
@@ -102,7 +102,6 @@ const GITLAB_SUMMARY_PLACEHOLDERS: &[&str] = &[
     "summary_title",
     "summary_intro",
     "summary_footer",
-    "mr_line",
     "reviewers_line",
     "mr_ref_link",
     "closing_tone_message",
@@ -123,12 +122,16 @@ impl Default for TemplateCatalog {
                 summary: GITLAB_SUMMARY_TEMPLATE.to_string(),
             },
             slack_app: SlackAppTemplateCatalog {
-                root: SLACK_APP_ROOT_TEMPLATE.to_string(),
-                thread: SLACK_APP_THREAD_TEMPLATE.to_string(),
+                first_root: SLACK_APP_FIRST_ROOT_TEMPLATE.to_string(),
+                first_thread: SLACK_APP_FIRST_THREAD_TEMPLATE.to_string(),
+                update_root: SLACK_APP_UPDATE_ROOT_TEMPLATE.to_string(),
+                update_thread: SLACK_APP_UPDATE_THREAD_TEMPLATE.to_string(),
             },
             slack_workflow: SlackWorkflowTemplateCatalog {
-                title: SLACK_WORKFLOW_TITLE_TEMPLATE.to_string(),
-                thread: SLACK_WORKFLOW_THREAD_TEMPLATE.to_string(),
+                first_title: SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE.to_string(),
+                first_thread: SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE.to_string(),
+                update_title: SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE.to_string(),
+                update_thread: SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE.to_string(),
             },
         }
     }
@@ -141,14 +144,18 @@ pub struct GitLabTemplateCatalog {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAppTemplateCatalog {
-    pub root: String,
-    pub thread: String,
+    pub first_root: String,
+    pub first_thread: String,
+    pub update_root: String,
+    pub update_thread: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackWorkflowTemplateCatalog {
-    pub title: String,
-    pub thread: String,
+    pub first_title: String,
+    pub first_thread: String,
+    pub update_title: String,
+    pub update_thread: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,8 +176,7 @@ pub struct NotificationTemplateContext {
     summary_intro: String,
     summary_footer: String,
     notification_title: String,
-    notification_subject_action: String,
-    notification_subject_suffix: String,
+    notification_subject: String,
     reviewers: Vec<String>,
     new_reviewers: Vec<String>,
     existing_reviewers: Vec<String>,
@@ -202,12 +208,22 @@ struct SelectedTone {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationTemplateVariant {
+    First,
+    Update,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TemplateField {
     GitLabSummary,
-    SlackAppRoot,
-    SlackAppThread,
-    SlackWorkflowTitle,
-    SlackWorkflowThread,
+    SlackAppFirstRoot,
+    SlackAppFirstThread,
+    SlackAppUpdateRoot,
+    SlackAppUpdateThread,
+    SlackWorkflowFirstTitle,
+    SlackWorkflowFirstThread,
+    SlackWorkflowUpdateTitle,
+    SlackWorkflowUpdateThread,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,20 +237,28 @@ impl TemplateField {
     fn config_path(self) -> &'static str {
         match self {
             Self::GitLabSummary => "templates.gitlab.summary",
-            Self::SlackAppRoot => "templates.slack_app.root",
-            Self::SlackAppThread => "templates.slack_app.thread",
-            Self::SlackWorkflowTitle => "templates.slack_workflow.title",
-            Self::SlackWorkflowThread => "templates.slack_workflow.thread",
+            Self::SlackAppFirstRoot => "templates.slack_app.first_root",
+            Self::SlackAppFirstThread => "templates.slack_app.first_thread",
+            Self::SlackAppUpdateRoot => "templates.slack_app.update_root",
+            Self::SlackAppUpdateThread => "templates.slack_app.update_thread",
+            Self::SlackWorkflowFirstTitle => "templates.slack_workflow.first_title",
+            Self::SlackWorkflowFirstThread => "templates.slack_workflow.first_thread",
+            Self::SlackWorkflowUpdateTitle => "templates.slack_workflow.update_title",
+            Self::SlackWorkflowUpdateThread => "templates.slack_workflow.update_thread",
         }
     }
 
     fn allowed_placeholders(self) -> &'static [&'static str] {
         match self {
             Self::GitLabSummary => GITLAB_SUMMARY_PLACEHOLDERS,
-            Self::SlackAppRoot
-            | Self::SlackAppThread
-            | Self::SlackWorkflowTitle
-            | Self::SlackWorkflowThread => COMMON_PLACEHOLDERS,
+            Self::SlackAppFirstRoot
+            | Self::SlackAppFirstThread
+            | Self::SlackAppUpdateRoot
+            | Self::SlackAppUpdateThread
+            | Self::SlackWorkflowFirstTitle
+            | Self::SlackWorkflowFirstThread
+            | Self::SlackWorkflowUpdateTitle
+            | Self::SlackWorkflowUpdateThread => COMMON_PLACEHOLDERS,
         }
     }
 }
@@ -252,24 +276,44 @@ pub fn resolve_template_catalog(flavor: Option<&FlavorConfig>) -> TemplateCatalo
         TemplateField::GitLabSummary,
     );
     apply_template_override(
-        &mut catalog.slack_app.root,
-        flavor.templates.slack_app.root.as_deref(),
-        TemplateField::SlackAppRoot,
+        &mut catalog.slack_app.first_root,
+        flavor.templates.slack_app.first_root.as_deref(),
+        TemplateField::SlackAppFirstRoot,
     );
     apply_template_override(
-        &mut catalog.slack_app.thread,
-        flavor.templates.slack_app.thread.as_deref(),
-        TemplateField::SlackAppThread,
+        &mut catalog.slack_app.first_thread,
+        flavor.templates.slack_app.first_thread.as_deref(),
+        TemplateField::SlackAppFirstThread,
     );
     apply_template_override(
-        &mut catalog.slack_workflow.title,
-        flavor.templates.slack_workflow.title.as_deref(),
-        TemplateField::SlackWorkflowTitle,
+        &mut catalog.slack_app.update_root,
+        flavor.templates.slack_app.update_root.as_deref(),
+        TemplateField::SlackAppUpdateRoot,
     );
     apply_template_override(
-        &mut catalog.slack_workflow.thread,
-        flavor.templates.slack_workflow.thread.as_deref(),
-        TemplateField::SlackWorkflowThread,
+        &mut catalog.slack_app.update_thread,
+        flavor.templates.slack_app.update_thread.as_deref(),
+        TemplateField::SlackAppUpdateThread,
+    );
+    apply_template_override(
+        &mut catalog.slack_workflow.first_title,
+        flavor.templates.slack_workflow.first_title.as_deref(),
+        TemplateField::SlackWorkflowFirstTitle,
+    );
+    apply_template_override(
+        &mut catalog.slack_workflow.first_thread,
+        flavor.templates.slack_workflow.first_thread.as_deref(),
+        TemplateField::SlackWorkflowFirstThread,
+    );
+    apply_template_override(
+        &mut catalog.slack_workflow.update_title,
+        flavor.templates.slack_workflow.update_title.as_deref(),
+        TemplateField::SlackWorkflowUpdateTitle,
+    );
+    apply_template_override(
+        &mut catalog.slack_workflow.update_thread,
+        flavor.templates.slack_workflow.update_thread.as_deref(),
+        TemplateField::SlackWorkflowUpdateThread,
     );
 
     catalog
@@ -303,25 +347,21 @@ pub fn build_notification_template_context(
     snapshot: &ReviewSnapshot,
     selector: &ToneSelector,
     ctx: &CiContext,
+    variant: NotificationTemplateVariant,
     reviewers: Vec<String>,
     new_reviewers: Vec<String>,
     existing_reviewers: Vec<String>,
 ) -> NotificationTemplateContext {
-    let has_reviewers = !reviewers.is_empty();
-    let notification_tone_category = if has_reviewers {
+    let snapshot_facts = SnapshotFacts::from_snapshot(snapshot);
+    let notification_tone_category = if matches!(variant, NotificationTemplateVariant::First) {
         ToneCategory::ReviewRequest
     } else {
         ToneCategory::Observation
     };
-    let notification_title = if has_reviewers {
-        "Mr. Milchick Review Summary".to_string()
-    } else {
-        selector.select(ToneCategory::Observation, ctx).to_string()
-    };
     let summary_footer_category = summary_closing_category(outcome);
 
     NotificationTemplateContext {
-        snapshot: SnapshotFacts::from_snapshot(snapshot),
+        snapshot: snapshot_facts.clone(),
         findings: findings_from_outcome(outcome),
         actions: actions_from_outcome(outcome),
         tone: SelectedTone {
@@ -330,17 +370,13 @@ pub fn build_notification_template_context(
         },
         summary_intro: selector.select(ToneCategory::Observation, ctx).to_string(),
         summary_footer: selector.select(summary_footer_category, ctx).to_string(),
-        notification_title,
-        notification_subject_action: if has_reviewers {
-            "Reviews Needed for".to_string()
-        } else {
-            "Mr. Milchick updated".to_string()
-        },
-        notification_subject_suffix: if has_reviewers {
-            " :pepe-review:".to_string()
-        } else {
-            String::new()
-        },
+        notification_title: selector.select(notification_tone_category, ctx).to_string(),
+        notification_subject: build_notification_subject(
+            variant,
+            RenderStyle::SlackApp,
+            &snapshot_facts,
+            &snapshot.author.username,
+        ),
         reviewers,
         new_reviewers,
         existing_reviewers,
@@ -360,33 +396,59 @@ pub fn render_gitlab_summary(
 pub fn render_slack_app_notification(
     catalog: &TemplateCatalog,
     context: &NotificationTemplateContext,
+    variant: NotificationTemplateVariant,
 ) -> (String, String) {
-    (
-        render_template(
-            &catalog.slack_app.root,
-            &context.variables(RenderStyle::SlackApp),
+    match variant {
+        NotificationTemplateVariant::First => (
+            render_template(
+                &catalog.slack_app.first_root,
+                &context.variables(RenderStyle::SlackApp),
+            ),
+            render_template(
+                &catalog.slack_app.first_thread,
+                &context.variables(RenderStyle::SlackApp),
+            ),
         ),
-        render_template(
-            &catalog.slack_app.thread,
-            &context.variables(RenderStyle::SlackApp),
+        NotificationTemplateVariant::Update => (
+            render_template(
+                &catalog.slack_app.update_root,
+                &context.variables(RenderStyle::SlackApp),
+            ),
+            render_template(
+                &catalog.slack_app.update_thread,
+                &context.variables(RenderStyle::SlackApp),
+            ),
         ),
-    )
+    }
 }
 
 pub fn render_slack_workflow_notification(
     catalog: &TemplateCatalog,
     context: &NotificationTemplateContext,
+    variant: NotificationTemplateVariant,
 ) -> (String, String) {
-    (
-        render_template(
-            &catalog.slack_workflow.title,
-            &context.variables(RenderStyle::SlackWorkflow),
+    match variant {
+        NotificationTemplateVariant::First => (
+            render_template(
+                &catalog.slack_workflow.first_title,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
+            render_template(
+                &catalog.slack_workflow.first_thread,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
         ),
-        render_template(
-            &catalog.slack_workflow.thread,
-            &context.variables(RenderStyle::SlackWorkflow),
+        NotificationTemplateVariant::Update => (
+            render_template(
+                &catalog.slack_workflow.update_title,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
+            render_template(
+                &catalog.slack_workflow.update_thread,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
         ),
-    )
+    }
 }
 
 fn apply_template_override(
@@ -537,9 +599,7 @@ impl SummaryTemplateContext {
         values.insert("summary_intro", self.tone.message.clone());
         values.insert("summary_footer", self.closing_tone.message.clone());
         values.insert("notification_title", String::new());
-        values.insert("notification_subject_action", String::new());
-        values.insert("notification_subject_suffix", String::new());
-        values.insert("mr_line", format!("Merge request: {}", values["mr_link"]));
+        values.insert("notification_subject", String::new());
         values.insert("reviewers_line", String::new());
         values.insert("mr_ref_link", ref_link(style, &self.snapshot));
 
@@ -573,14 +633,16 @@ impl NotificationTemplateContext {
         values.insert("summary_footer", self.summary_footer.clone());
         values.insert("notification_title", self.notification_title.clone());
         values.insert(
-            "notification_subject_action",
-            self.notification_subject_action.clone(),
+            "notification_subject",
+            match style {
+                RenderStyle::SlackApp => self.notification_subject.clone(),
+                RenderStyle::SlackWorkflow => self.notification_subject.replace(
+                    &ref_link(RenderStyle::SlackApp, &self.snapshot),
+                    &ref_link(RenderStyle::SlackWorkflow, &self.snapshot),
+                ),
+                RenderStyle::GitLab => String::new(),
+            },
         );
-        values.insert(
-            "notification_subject_suffix",
-            self.notification_subject_suffix.clone(),
-        );
-        values.insert("mr_line", format!("Merge request: {}", values["mr_link"]));
         values.insert(
             "reviewers_line",
             if self.reviewers.is_empty() {
@@ -588,13 +650,13 @@ impl NotificationTemplateContext {
             } else {
                 match style {
                     RenderStyle::GitLab => {
-                        format!("Assign reviewers: {}", values["reviewers_list"])
+                        format!("Assigned reviewers: {}", values["reviewers_list"])
                     }
                     RenderStyle::SlackApp => {
-                        format!("_Assign reviewers_ {}", values["reviewers_list"])
+                        format!("_Assigned reviewers_ {}", values["reviewers_list"])
                     }
                     RenderStyle::SlackWorkflow => {
-                        format!("Assign reviewers {}", values["reviewers_list"])
+                        format!("Assigned reviewers {}", values["reviewers_list"])
                     }
                 }
             },
@@ -721,7 +783,7 @@ fn finding_label(severity: &FindingSeverity) -> String {
 fn describe_action(action: &ReviewAction) -> Option<String> {
     match action {
         ReviewAction::AssignReviewers { reviewers } => Some(format!(
-            "Assign reviewers: {}",
+            "Assigned reviewers: {}",
             reviewers
                 .iter()
                 .map(|reviewer| format!("@{}", reviewer.username))
@@ -810,6 +872,33 @@ fn message_link(style: RenderStyle, url: &str, label: &str) -> String {
 
 fn ref_link(style: RenderStyle, snapshot: &SnapshotFacts) -> String {
     message_link(style, &snapshot.mr_url, &snapshot.mr_ref)
+}
+
+pub fn notification_template_variant(reviewers: &[String]) -> NotificationTemplateVariant {
+    if reviewers.is_empty() {
+        NotificationTemplateVariant::Update
+    } else {
+        NotificationTemplateVariant::First
+    }
+}
+
+fn build_notification_subject(
+    variant: NotificationTemplateVariant,
+    style: RenderStyle,
+    snapshot: &SnapshotFacts,
+    author_username: &str,
+) -> String {
+    match variant {
+        NotificationTemplateVariant::First => format!(
+            "Mr. Milchick took a first look at {}, by @{}",
+            ref_link(style, snapshot),
+            author_username
+        ),
+        NotificationTemplateVariant::Update => format!(
+            "Mr. Milchick - updates on {}",
+            ref_link(style, snapshot)
+        ),
+    }
 }
 
 fn tone_category_name(category: ToneCategory) -> &'static str {
@@ -905,7 +994,7 @@ mod tests {
 
     #[test]
     fn validates_unknown_placeholder() {
-        let error = validate_template("{{unknown_placeholder}}", TemplateField::SlackAppRoot)
+        let error = validate_template("{{unknown_placeholder}}", TemplateField::SlackAppFirstRoot)
             .expect_err("template should fail");
 
         assert!(error.contains("unknown placeholder"));
@@ -936,7 +1025,7 @@ mod tests {
 
         assert!(rendered.contains("Mr. Milchick Review Summary"));
         assert!(rendered.contains("Warning"));
-        assert!(rendered.contains("Assign reviewers: @bob"));
+        assert!(rendered.contains("Assigned reviewers: @bob"));
     }
 
     #[test]
@@ -949,15 +1038,17 @@ mod tests {
                 &sample_snapshot(),
                 &ToneSelector::default(),
                 &sample_context(),
+                NotificationTemplateVariant::First,
                 vec!["principal-reviewer".to_string(), "bob".to_string()],
                 vec!["bob".to_string()],
                 vec!["principal-reviewer".to_string()],
             ),
+            NotificationTemplateVariant::First,
         );
 
-        assert!(subject.contains("Reviews Needed for"));
-        assert!(body.contains("Assign reviewers @principal-reviewer @bob"));
-        assert!(body.contains("No findings were produced."));
+        assert!(subject.contains("took a first look at"));
+        assert!(body.contains("Assigned reviewers @principal-reviewer @bob"));
+        assert!(!body.contains("No findings were produced."));
     }
 
     #[test]
@@ -975,8 +1066,10 @@ mod tests {
             templates: FlavorTemplatesConfig {
                 gitlab: FlavorGitLabTemplates::default(),
                 slack_app: FlavorSlackAppTemplates {
-                    root: Some("custom root for {{mr_ref}}".to_string()),
-                    thread: None,
+                    first_root: Some("custom root for {{mr_ref}}".to_string()),
+                    first_thread: None,
+                    update_root: None,
+                    update_thread: None,
                 },
                 slack_workflow: FlavorSlackWorkflowTemplates::default(),
             },
@@ -984,8 +1077,11 @@ mod tests {
 
         let catalog = resolve_template_catalog(Some(&flavor));
 
-        assert_eq!(catalog.slack_app.root, "custom root for {{mr_ref}}");
-        assert_eq!(catalog.slack_app.thread, SLACK_APP_THREAD_TEMPLATE);
+        assert_eq!(catalog.slack_app.first_root, "custom root for {{mr_ref}}");
+        assert_eq!(
+            catalog.slack_app.update_thread,
+            SLACK_APP_UPDATE_THREAD_TEMPLATE
+        );
     }
 
     #[test]
@@ -1000,8 +1096,10 @@ mod tests {
             templates: FlavorTemplatesConfig {
                 gitlab: FlavorGitLabTemplates::default(),
                 slack_app: FlavorSlackAppTemplates {
-                    root: Some("custom {{unknown_placeholder}}".to_string()),
-                    thread: None,
+                    first_root: Some("custom {{unknown_placeholder}}".to_string()),
+                    first_thread: None,
+                    update_root: None,
+                    update_thread: None,
                 },
                 slack_workflow: FlavorSlackWorkflowTemplates::default(),
             },
@@ -1009,6 +1107,6 @@ mod tests {
 
         let catalog = resolve_template_catalog(Some(&flavor));
 
-        assert_eq!(catalog.slack_app.root, SLACK_APP_ROOT_TEMPLATE);
+        assert_eq!(catalog.slack_app.first_root, SLACK_APP_FIRST_ROOT_TEMPLATE);
     }
 }

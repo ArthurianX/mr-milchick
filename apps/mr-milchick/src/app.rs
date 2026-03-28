@@ -19,8 +19,9 @@ use crate::core::domain::reviewer_routing::{
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
 use crate::core::message_templates::{
-    build_notification_template_context, build_summary_template_context, render_gitlab_summary,
-    render_slack_app_notification, render_slack_workflow_notification, resolve_template_catalog,
+    build_notification_template_context, build_summary_template_context,
+    notification_template_variant, render_gitlab_summary, render_slack_app_notification,
+    render_slack_workflow_notification, resolve_template_catalog,
 };
 use crate::core::model::{
     NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
@@ -31,7 +32,7 @@ use crate::core::rules::model::RuleOutcome;
 use crate::core::tone::{ToneCategory, ToneSelector};
 use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
-use crate::cli::Cli;
+use crate::cli::{Cli, FixtureNotificationVariantArg};
 use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_path};
 use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
@@ -133,6 +134,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     run_mode(
         mode,
         cli.command.fixture_path(),
+        cli.command.fixture_variant(),
         cli.command.send_notifications(),
     )
     .await
@@ -141,10 +143,14 @@ pub async fn run(cli: Cli) -> Result<()> {
 pub async fn run_mode(
     mode: ExecutionMode,
     fixture_path: Option<&str>,
+    fixture_variant: Option<FixtureNotificationVariantArg>,
     send_notifications: bool,
 ) -> Result<()> {
     if send_notifications && fixture_path.is_none() {
         anyhow::bail!("'--send-notifications' is only supported together with '--fixture'");
+    }
+    if fixture_variant.is_some() && fixture_path.is_none() {
+        anyhow::bail!("'--fixture-variant' is only supported together with '--fixture'");
     }
 
     let selector = ToneSelector::default();
@@ -152,10 +158,13 @@ pub async fn run_mode(
     let flavor = load_flavor_config()?;
     let template_catalog = resolve_template_catalog(flavor.as_ref());
     let fixture_mode = fixture_path.is_some();
+    let mut fixture_notification_variant = fixture_variant.map(map_fixture_variant_arg);
 
     let (ctx, snapshot, mut outcome);
     if let Some(fixture_path) = fixture_path {
         let fixture = load_review_fixture(fixture_path)?;
+        fixture_notification_variant =
+            fixture_notification_variant.or_else(|| fixture.notification_template_variant());
         ctx = fixture.to_ci_context()?;
         snapshot = fixture.to_review_snapshot()?;
         outcome = fixture.to_rule_outcome()?;
@@ -211,6 +220,7 @@ pub async fn run_mode(
                     &selector,
                     &ctx,
                     &preview_sink_kinds,
+                    fixture_notification_variant,
                 );
                 print_notification_previews(&notifications);
             }
@@ -237,6 +247,7 @@ pub async fn run_mode(
                 &selector,
                 &ctx,
                 &preview_sink_kinds,
+                fixture_notification_variant,
             );
             if fixture_mode {
                 print_notification_previews(&notifications);
@@ -265,6 +276,7 @@ pub async fn run_mode(
                 &selector,
                 &ctx,
                 &preview_sink_kinds,
+                fixture_notification_variant,
             );
             if fixture_mode {
                 print_notification_previews(&notifications);
@@ -588,17 +600,21 @@ fn build_notifications(
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
     sink_kinds: &[NotificationSinkKind],
+    variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
     if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
         return Vec::new();
     }
 
     let reviewers = reviewers_for_notification(outcome, snapshot);
+    let variant =
+        variant_override.unwrap_or_else(|| notification_template_variant(&reviewers.reviewers));
     let notification_context = build_notification_template_context(
         outcome,
         snapshot,
         selector,
         ctx,
+        variant,
         reviewers.reviewers.clone(),
         reviewers.new_reviewers.clone(),
         reviewers.existing_reviewers.clone(),
@@ -609,7 +625,7 @@ fn build_notifications(
         .filter_map(|sink| match sink {
             NotificationSinkKind::SlackApp => {
                 let (subject, body) =
-                    render_slack_app_notification(template_catalog, &notification_context);
+                    render_slack_app_notification(template_catalog, &notification_context, variant);
                 Some(NotificationMessage {
                     sink: *sink,
                     subject,
@@ -619,8 +635,11 @@ fn build_notifications(
                 })
             }
             NotificationSinkKind::SlackWorkflow => {
-                let (subject, body) =
-                    render_slack_workflow_notification(template_catalog, &notification_context);
+                let (subject, body) = render_slack_workflow_notification(
+                    template_catalog,
+                    &notification_context,
+                    variant,
+                );
                 Some(NotificationMessage {
                     sink: *sink,
                     subject,
@@ -632,6 +651,19 @@ fn build_notifications(
             _ => None,
         })
         .collect()
+}
+
+fn map_fixture_variant_arg(
+    variant: FixtureNotificationVariantArg,
+) -> crate::core::message_templates::NotificationTemplateVariant {
+    match variant {
+        FixtureNotificationVariantArg::First => {
+            crate::core::message_templates::NotificationTemplateVariant::First
+        }
+        FixtureNotificationVariantArg::Update => {
+            crate::core::message_templates::NotificationTemplateVariant::Update
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -909,13 +941,14 @@ mod tests {
             &selector,
             &ctx,
             &[NotificationSinkKind::SlackApp],
+            None,
         );
 
         assert_eq!(notifications.len(), 1);
         assert!(
             notifications[0]
                 .body
-                .contains("_Assign reviewers_ *@principal-reviewer* *@bob*")
+                .contains("_Assigned reviewers_ *@principal-reviewer* *@bob*")
         );
     }
 
@@ -933,10 +966,11 @@ mod tests {
             &selector,
             &ctx,
             &[NotificationSinkKind::SlackWorkflow],
+            None,
         );
 
         assert_eq!(notifications.len(), 1);
-        assert!(notifications[0].subject.contains("Mr. Milchick updated"));
+        assert!(notifications[0].subject.contains("Mr. Milchick - updates"));
         assert!(notifications[0]
             .body
             .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));

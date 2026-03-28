@@ -227,7 +227,7 @@ kind = "slack-app"
 enabled = true
 
 [templates.slack_app]
-root = "Template override for {{mr_ref}}"
+update_root = "Template override for {{mr_ref}}"
 "#,
     );
 
@@ -268,7 +268,7 @@ kind = "slack-app"
 enabled = true
 
 [templates.slack_app]
-root = "Template override for {{unknown_placeholder}}"
+update_root = "Template override for {{unknown_placeholder}}"
 "#,
     );
 
@@ -290,7 +290,7 @@ root = "Template override for {{unknown_placeholder}}"
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
     assert_eq!(bodies.len(), 2);
-    assert!(bodies[0].contains(":gitlab: Mr. Milchick updated <"));
+    assert!(bodies[0].contains("Mr. Milchick - updates on <"));
 
     let _ = fs::remove_file(flavor_path);
 }
@@ -299,7 +299,7 @@ root = "Template override for {{unknown_placeholder}}"
 fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview() {
     let output = run_cli(
         "observe",
-        &["--fixture", "fixtures/review-request.toml"],
+        &["--fixture", "fixtures/first-notification.toml"],
         &[("RUST_LOG", "off")],
     );
 
@@ -314,7 +314,32 @@ fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview(
     assert!(stdout.contains("If you run `refine`, it would:"));
     assert!(stdout.contains("Notification previews:"));
     assert!(stdout.contains("SlackApp"));
-    assert!(stdout.contains("Reviews Needed for"));
+    assert!(stdout.contains("took a first look at"));
+}
+
+#[test]
+fn observe_mode_fixture_variant_override_can_force_update_preview() {
+    let output = run_cli(
+        "observe",
+        &[
+            "--fixture",
+            "fixtures/first-notification.toml",
+            "--fixture-variant",
+            "update",
+        ],
+        &[("RUST_LOG", "off")],
+    );
+
+    assert!(
+        output.status.success(),
+        "observe fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Mr. Milchick - updates"));
+    assert!(!stdout.contains("took a first look at"));
 }
 
 #[test]
@@ -336,7 +361,7 @@ enabled = true
         "refine",
         &[
             "--fixture",
-            "fixtures/review-request.toml",
+            "fixtures/first-notification.toml",
             "--send-notifications",
         ],
         &[
@@ -377,4 +402,16 @@ fn send_notifications_requires_fixture() {
 
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("--send-notifications"));
+}
+
+#[test]
+fn fixture_variant_requires_fixture() {
+    let output = run_cli(
+        "observe",
+        &["--fixture-variant", "first"],
+        &[("RUST_LOG", "off")],
+    );
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--fixture-variant"));
 }

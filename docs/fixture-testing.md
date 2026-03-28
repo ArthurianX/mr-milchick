@@ -25,28 +25,28 @@ Use `--fixture` when you want to:
 
 The repo now ships with starter fixtures in [`fixtures/`](/Users/arthur.kovacs/Work/mr-milchick/fixtures):
 
-- [`review-request.toml`](/Users/arthur.kovacs/Work/mr-milchick/fixtures/review-request.toml): a clean review request that produces reviewer notifications
+- [`first-notification.toml`](/Users/arthur.kovacs/Work/mr-milchick/fixtures/first-notification.toml): a first-touch scenario that renders the lighter `first_*` notification templates
+- [`update-notification.toml`](/Users/arthur.kovacs/Work/mr-milchick/fixtures/update-notification.toml): an update scenario that renders the fuller `update_*` notification templates
 - [`blocking-refine.toml`](/Users/arthur.kovacs/Work/mr-milchick/fixtures/blocking-refine.toml): a blocking scenario that fails the run
-- [`no-findings-update.toml`](/Users/arthur.kovacs/Work/mr-milchick/fixtures/no-findings-update.toml): a no-findings scenario for summary/comment output
 
 ## Quick Commands
 
 Preview the planned actions and notification bodies:
 
 ```bash
-cargo run -- observe --fixture fixtures/review-request.toml
+cargo run -- observe --fixture fixtures/first-notification.toml
 ```
 
 Print the summary comment preview, snapshot details, routing details, and notification previews:
 
 ```bash
-cargo run -- explain --fixture fixtures/review-request.toml
+cargo run -- explain --fixture fixtures/first-notification.toml
 ```
 
 Run the refine pipeline safely with no external delivery:
 
 ```bash
-cargo run -- refine --fixture fixtures/review-request.toml
+cargo run -- refine --fixture fixtures/first-notification.toml
 ```
 
 Actually send Slack notifications from a fixture:
@@ -55,7 +55,7 @@ Actually send Slack notifications from a fixture:
 MR_MILCHICK_SLACK_ENABLED=true \
 MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
-cargo run -- refine --fixture fixtures/review-request.toml --send-notifications
+cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
 ```
 
 Send through Slack workflow instead:
@@ -64,7 +64,14 @@ Send through Slack workflow instead:
 MR_MILCHICK_SLACK_ENABLED=true \
 MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... \
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
-cargo run -- refine --fixture fixtures/review-request.toml --send-notifications
+cargo run -- refine --fixture fixtures/update-notification.toml --send-notifications
+```
+
+Override the fixture’s notification path from the CLI when you want to compare both variants quickly:
+
+```bash
+cargo run -- observe --fixture fixtures/first-notification.toml --fixture-variant update
+cargo run -- observe --fixture fixtures/update-notification.toml --fixture-variant first
 ```
 
 ## How Fixture Mode Interacts With Templates
@@ -85,6 +92,7 @@ Example:
 project_id = "412"
 merge_request_iid = "3995"
 pipeline_source = "merge_request_event"
+notification_variant = "first"
 
 [merge_request]
 title = "Frontend adjustments"
@@ -119,6 +127,12 @@ Top-level:
 - `project_id`
 - `merge_request_iid`
 - `pipeline_source`
+- `notification_variant`
+
+Supported `notification_variant` values:
+
+- `first`
+- `update`
 
 `[merge_request]`:
 
@@ -177,12 +191,13 @@ Supported `kind` values:
 ## Testing Guidelines
 
 - Start with `observe --fixture` while iterating on templates.
+- Use `--fixture-variant first|update` when you want to compare both notification shapes against the same fixture data.
 - Use `explain --fixture` when you want the GitLab summary preview plus routing context.
 - Use `refine --fixture` before `--send-notifications` to confirm the message shape.
 - Keep one fixture per scenario you care about:
-  - review request
+  - first notification
+  - update notification
   - blocking failure
-  - no findings
   - multiple reviewers
   - draft merge request
 - If a notification preview looks wrong, fix the fixture or template first before trying a live MR.
@@ -190,7 +205,8 @@ Supported `kind` values:
 ## Practical Workflow
 
 1. Edit [`mr-milchick.toml`](/Users/arthur.kovacs/Work/mr-milchick/mr-milchick.toml) templates.
-2. Run `cargo run -- observe --fixture fixtures/review-request.toml`.
-3. Run `cargo run -- explain --fixture fixtures/review-request.toml` if you want more context.
-4. When the rendered text looks right, add Slack env vars and run `cargo run -- refine --fixture fixtures/review-request.toml --send-notifications`.
-5. Iterate on the fixture and template until the delivered message feels right.
+2. Run `cargo run -- observe --fixture fixtures/first-notification.toml`.
+3. Run `cargo run -- observe --fixture fixtures/update-notification.toml`.
+4. Run `cargo run -- explain --fixture fixtures/first-notification.toml` if you want more context.
+5. When the rendered text looks right, add Slack env vars and run `cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications`.
+6. Iterate on the fixture and template until the delivered message feels right.

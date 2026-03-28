@@ -8,7 +8,7 @@ Mr Milchick is a CI-native governance tool that can:
 
 - inspect merge request metadata
 - evaluate repository structure and policy
-- assign reviewers
+- Assigned reviewers
 - post comments
 - influence pipeline outcomes
 

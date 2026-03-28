@@ -1,6 +1,7 @@
 # Flavor manifest loaded at runtime.
 # This file is intentionally minimal and only contains settings
 # that the application actually reads from TOML today.
+notification_policy = "always"
 
 [review_platform]
 kind = "gitlab"
@@ -39,25 +40,35 @@ enabled = true
 #_{{closing_tone_message}}_
 #"""
 
-#[templates.slack_app]
-#root = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
-#thread = """
-#*{{notification_title}}*
-#{{mr_line}}
-#{{reviewers_line}}
-#{{summary_intro}}
-#{{findings_block}}
-#{{actions_block}}
-#_{{summary_footer}}_
-#"""
+[templates.slack_app]
+
+first_root = ":gitlab: {{notification_subject}} :pepe-review:"
+first_thread = """
+*{{notification_title}}*
+Merge request: {{mr_link}}
+{{reviewers_line}}
+"""
+
+update_root = ":gitlab: {{notification_subject}} :thread:"
+update_thread = """
+Merge request: {{mr_link}}
+{{findings_block}}
+{{actions_block}}
+_{{summary_footer}}_
+"""
 
 #[templates.slack_workflow]
-#title = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
-#thread = """
+
+#first_title = "{{notification_subject}}"
+#first_thread = """
 #{{notification_title}}
-#{{mr_line}}
+#Merge request: {{mr_link}}
 #{{reviewers_line}}
-#{{summary_intro}}
+#"""
+
+#update_title = "{{notification_subject}}"
+#update_thread = """
+#Merge request: {{mr_link}}
 #{{findings_block}}
 #{{actions_block}}
 #{{summary_footer}}

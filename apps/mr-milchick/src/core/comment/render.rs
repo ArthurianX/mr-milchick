@@ -68,7 +68,7 @@ fn finding_label(severity: &FindingSeverity) -> String {
 fn describe_action(action: &ReviewAction) -> Option<String> {
     match action {
         ReviewAction::AssignReviewers { reviewers } => Some(format!(
-            "Assign reviewers: {}",
+            "Assigned reviewers: {}",
             reviewers
                 .iter()
                 .map(|reviewer| format!("@{}", reviewer.username))

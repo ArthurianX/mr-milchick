@@ -25,12 +25,16 @@ CLI output, rule findings, and policy behavior are unchanged.
 summary = """..."""
 
 [templates.slack_app]
-root = """..."""
-thread = """..."""
+first_root = """..."""
+first_thread = """..."""
+update_root = """..."""
+update_thread = """..."""
 
 [templates.slack_workflow]
-title = """..."""
-thread = """..."""
+first_title = """..."""
+first_thread = """..."""
+update_title = """..."""
+update_thread = """..."""
 ```
 
 ## Available Placeholders
@@ -69,9 +73,7 @@ Additional shared placeholders currently exposed by the renderer:
 - `summary_intro`
 - `summary_footer`
 - `notification_title`
-- `notification_subject_action`
-- `notification_subject_suffix`
-- `mr_line`
+- `notification_subject`
 - `reviewers_line`
 - `mr_ref_link`
 
@@ -157,28 +159,35 @@ Changed files: 3
 
 - **Warning**: Missing label.
 
-- Assign reviewers: @principal-reviewer, @bob
+- Assigned reviewers: @principal-reviewer, @bob
 
 _A refinement opportunity has been identified._
 ```
 
 ### Slack App
 
-Slack app uses two template fields:
+Slack app now uses four template fields:
 
-- `root`: the first posted Slack message
-- `thread`: the threaded follow-up
+- `first_root`
+- `first_thread`
+- `update_root`
+- `update_thread`
+
+`first_*` is intended for the lighter initial notification. `update_*` is intended for the fuller follow-up/update notification.
 
 Example override:
 
 ```toml
 [templates.slack_app]
-root = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
-thread = """
+first_root = "{{notification_subject}}"
+first_thread = """
 *{{notification_title}}*
-{{mr_line}}
+Merge request: {{mr_link}}
 {{reviewers_line}}
-{{summary_intro}}
+"""
+update_root = "{{notification_subject}}"
+update_thread = """
+Merge request: {{mr_link}}
 {{findings_block}}
 {{actions_block}}
 _{{summary_footer}}_
@@ -188,17 +197,13 @@ _{{summary_footer}}_
 Example output:
 
 ```text
-:gitlab: Reviews Needed for <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>, by @arthur :pepe-review:
+Mr. Milchick took a first look at <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>, by @arthur
 ```
 
 ```text
-*Mr. Milchick Review Summary*
+*The department would appreciate a timely review.*
 Merge request: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>
-_Assign reviewers_ *@principal-reviewer* *@bob*
-Mr. Milchick is reviewing the situation.
-No findings were produced.
-• None
-_This request demonstrates admirable clarity._
+_Assigned reviewers_ *@principal-reviewer* *@bob*
 ```
 
 Notes:
@@ -208,21 +213,28 @@ Notes:
 
 ### Slack Workflow
 
-Slack workflow also uses two fields:
+Slack workflow also uses four fields:
 
-- `title`: sent as `mr_milchick_says`
-- `thread`: sent as `mr_milchick_says_thread`
+- `first_title`
+- `first_thread`
+- `update_title`
+- `update_thread`
+
+`first_*` is intended for the lighter initial notification. `update_*` is intended for the fuller follow-up/update notification.
 
 Example override:
 
 ```toml
 [templates.slack_workflow]
-title = ":gitlab: {{notification_subject_action}} {{mr_ref_link}}, by @{{mr_author_username}}{{notification_subject_suffix}}"
-thread = """
+first_title = "{{notification_subject}}"
+first_thread = """
 {{notification_title}}
-{{mr_line}}
+Merge request: {{mr_link}}
 {{reviewers_line}}
-{{summary_intro}}
+"""
+update_title = "{{notification_subject}}"
+update_thread = """
+Merge request: {{mr_link}}
 {{findings_block}}
 {{actions_block}}
 {{summary_footer}}
@@ -232,17 +244,13 @@ thread = """
 Example output:
 
 ```text
-:gitlab: Reviews Needed for MR #3995 (https://gitlab.example.com/group/project/-/merge_requests/3995), by @arthur :pepe-review:
+Mr. Milchick took a first look at MR #3995 (https://gitlab.example.com/group/project/-/merge_requests/3995), by @arthur
 ```
 
 ```text
-Mr. Milchick Review Summary
+A pleasant review opportunity has arrived for your consideration.
 Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/3995)
-Assign reviewers @principal-reviewer @bob
-Mr. Milchick is reviewing the situation.
-No findings were produced.
-- None
-This request demonstrates admirable clarity.
+Assigned reviewers @principal-reviewer @bob
 ```
 
 ## Practical Starting Templates
@@ -254,7 +262,7 @@ This request demonstrates admirable clarity.
 summary = """
 ## Review Summary
 
-{{mr_line}}
+Merge request: {{mr_link}}
 
 {{findings_block}}
 
@@ -266,15 +274,15 @@ summary = """
 
 ```toml
 [templates.slack_app]
-root = ":gitlab: {{mr_ref_link}} needs attention"
+first_root = "{{mr_ref_link}} needs attention"
 ```
 
 ### Minimal Slack Workflow Customization
 
 ```toml
 [templates.slack_workflow]
-thread = """
-{{mr_line}}
+update_thread = """
+Merge request: {{mr_link}}
 {{reviewers_line}}
 {{findings_block}}
 {{actions_block}}
