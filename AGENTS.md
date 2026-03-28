@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Mr. Milchick is a Rust CLI binary (`mr-milchick`) that enforces merge request governance inside GitLab CI pipelines. It is **not** a service or bot — it runs as a single invocation per pipeline, reads CI environment variables, evaluates policy rules, and optionally mutates GitLab (assign reviewers, post comments, fail pipeline).
+Mr. Milchick is a Rust CLI binary (`mr-milchick`) that enforces merge request governance inside GitLab CI pipelines. It is **not** a service or bot — it runs as a single invocation per pipeline, reads CI environment variables, evaluates policy rules, and optionally mutates GitLab (Assigned reviewers, post comments, fail pipeline).
 
 Three subcommands: `observe` (dry-run evaluation), `refine` (execute actions), `explain` (deep reasoning output with snapshot details).
 

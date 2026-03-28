@@ -2,13 +2,18 @@
 mod mock_server;
 
 use std::process::{Command, Output};
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use mock_server::{MERGE_REQUEST_IID, MockGitLabServer, PROJECT_ID, base_env, borrow_env};
 
-fn run_cli(subcommand: &str, envs: &[(&str, &str)]) -> Output {
+fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mr-milchick"));
     command.current_dir(env!("CARGO_MANIFEST_DIR"));
     command.arg(subcommand);
+    command.args(extra_args);
     command.env_clear();
 
     for (key, value) in envs {
@@ -18,10 +23,21 @@ fn run_cli(subcommand: &str, envs: &[(&str, &str)]) -> Output {
     command.output().expect("CLI invocation should succeed")
 }
 
+fn write_temp_flavor(contents: &str) -> String {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("mr-milchick-flavor-{unique}.toml"));
+    fs::write(&path, contents).expect("temp flavor should be written");
+    path.display().to_string()
+}
+
 #[test]
 fn observe_mode_skips_gitlab_for_non_merge_request_pipelines() {
     let output = run_cli(
         "observe",
+        &[],
         &[
             ("CI_PROJECT_ID", PROJECT_ID),
             ("CI_PIPELINE_SOURCE", "push"),
@@ -51,7 +67,7 @@ fn observe_mode_skips_gitlab_for_non_merge_request_pipelines() {
 fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
     let server = MockGitLabServer::start();
     let envs = base_env(&server);
-    let output = run_cli("observe", &borrow_env(&envs));
+    let output = run_cli("observe", &[], &borrow_env(&envs));
 
     assert!(
         output.status.success(),
@@ -80,7 +96,7 @@ fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
 fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     let server = MockGitLabServer::start();
     let envs = base_env(&server);
-    let output = run_cli("refine", &borrow_env(&envs));
+    let output = run_cli("refine", &[], &borrow_env(&envs));
 
     assert!(
         output.status.success(),
@@ -113,7 +129,7 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
     envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
 
-    let first = run_cli("refine", &borrow_env(&envs));
+    let first = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
         first.status.success(),
         "first refine failed: {}\n{}",
@@ -125,7 +141,7 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
     assert!(first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
     assert!(first_stdout.contains("[Notification SlackApp] delivered=true sent"));
 
-    let second = run_cli("refine", &borrow_env(&envs));
+    let second = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
         second.status.success(),
         "second refine failed: {}\n{}",
@@ -161,7 +177,7 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
         "on-applied-action".to_string(),
     ));
 
-    let first = run_cli("refine", &borrow_env(&envs));
+    let first = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
         first.status.success(),
         "first refine failed: {}\n{}",
@@ -173,7 +189,7 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
     assert!(first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
     assert!(first_stdout.contains("[Notification SlackApp] delivered=true sent"));
 
-    let second = run_cli("refine", &borrow_env(&envs));
+    let second = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
         second.status.success(),
         "second refine failed: {}\n{}",
@@ -196,4 +212,206 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
         server.request_count("POST", "/slack/api/chat.postMessage"),
         2
     );
+}
+
+#[test]
+fn refine_mode_uses_partial_slack_template_override_from_flavor_file() {
+    let server = MockGitLabServer::start();
+    let flavor_path = write_temp_flavor(
+        r#"
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[templates.slack_app]
+update_root = "Template override for {{mr_ref}}"
+"#,
+    );
+
+    let mut envs = base_env(&server);
+    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+    envs.push(("MR_MILCHICK_FLAVOR_PATH", flavor_path.clone()));
+
+    let output = run_cli("refine", &[], &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(bodies.len(), 2);
+    assert!(bodies[0].contains("Template override for MR #3995"));
+    assert!(bodies[1].contains("No findings were produced."));
+
+    let _ = fs::remove_file(flavor_path);
+}
+
+#[test]
+fn refine_mode_invalid_template_override_falls_back_to_default_output() {
+    let server = MockGitLabServer::start();
+    let flavor_path = write_temp_flavor(
+        r#"
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[templates.slack_app]
+update_root = "Template override for {{unknown_placeholder}}"
+"#,
+    );
+
+    let mut envs = base_env(&server);
+    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
+    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
+    envs.push(("MR_MILCHICK_FLAVOR_PATH", flavor_path.clone()));
+
+    let output = run_cli("refine", &[], &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(bodies.len(), 2);
+    assert!(bodies[0].contains("Mr. Milchick - updates on <"));
+
+    let _ = fs::remove_file(flavor_path);
+}
+
+#[test]
+fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview() {
+    let output = run_cli(
+        "observe",
+        &["--fixture", "fixtures/first-notification.toml"],
+        &[("RUST_LOG", "off")],
+    );
+
+    assert!(
+        output.status.success(),
+        "observe fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("If you run `refine`, it would:"));
+    assert!(stdout.contains("Notification previews:"));
+    assert!(stdout.contains("SlackApp"));
+    assert!(stdout.contains("took a first look at"));
+}
+
+#[test]
+fn observe_mode_fixture_variant_override_can_force_update_preview() {
+    let output = run_cli(
+        "observe",
+        &[
+            "--fixture",
+            "fixtures/first-notification.toml",
+            "--fixture-variant",
+            "update",
+        ],
+        &[("RUST_LOG", "off")],
+    );
+
+    assert!(
+        output.status.success(),
+        "observe fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Mr. Milchick - updates"));
+    assert!(!stdout.contains("took a first look at"));
+}
+
+#[test]
+fn refine_mode_fixture_sends_slack_notifications_without_gitlab_env() {
+    let server = MockGitLabServer::start();
+    let slack_base_url = server.slack_api_base_url();
+    let flavor_path = write_temp_flavor(
+        r#"
+[review_platform]
+kind = "gitlab"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+"#,
+    );
+
+    let output = run_cli(
+        "refine",
+        &[
+            "--fixture",
+            "fixtures/first-notification.toml",
+            "--send-notifications",
+        ],
+        &[
+            ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
+            ("MR_MILCHICK_SLACK_ENABLED", "true"),
+            ("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test"),
+            ("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X"),
+            ("MR_MILCHICK_SLACK_BASE_URL", slack_base_url.as_str()),
+            ("RUST_LOG", "off"),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "refine fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[Notification SlackApp] delivered=true sent"));
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        2
+    );
+    assert_eq!(
+        server.request_count_prefix("GET", "/api/v4/projects/"),
+        0,
+        "fixture mode should not talk to GitLab"
+    );
+
+    let _ = fs::remove_file(flavor_path);
+}
+
+#[test]
+fn send_notifications_requires_fixture() {
+    let output = run_cli("refine", &["--send-notifications"], &[("RUST_LOG", "off")]);
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--send-notifications"));
+}
+
+#[test]
+fn fixture_variant_requires_fixture() {
+    let output = run_cli(
+        "observe",
+        &["--fixture-variant", "first"],
+        &[("RUST_LOG", "off")],
+    );
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--fixture-variant"));
 }

@@ -430,4 +430,36 @@ enabled = true
             Some(&"U01234567".to_string())
         );
     }
+
+    #[test]
+    fn parses_flavor_config_templates() {
+        let raw = r###"
+[review_platform]
+kind = "gitlab"
+
+[templates.gitlab]
+summary = "## {{summary_title}}"
+
+[templates.slack_app]
+first_root = "custom root"
+
+[templates.slack_workflow]
+first_title = "custom title"
+"###;
+
+        let flavor = toml::from_str::<FlavorConfig>(raw).expect("flavor config should parse");
+
+        assert_eq!(
+            flavor.templates.gitlab.summary.as_deref(),
+            Some("## {{summary_title}}")
+        );
+        assert_eq!(
+            flavor.templates.slack_app.first_root.as_deref(),
+            Some("custom root")
+        );
+        assert_eq!(
+            flavor.templates.slack_workflow.first_title.as_deref(),
+            Some("custom title")
+        );
+    }
 }

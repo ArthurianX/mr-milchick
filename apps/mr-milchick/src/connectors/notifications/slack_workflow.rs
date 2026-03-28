@@ -4,12 +4,9 @@ use reqwest::Client;
 use serde::Serialize;
 
 use crate::core::model::{
-    MessageSection, NotificationAudience, NotificationDeliveryReport, NotificationMessage,
-    NotificationSinkKind,
+    NotificationAudience, NotificationDeliveryReport, NotificationMessage, NotificationSinkKind,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, NotificationSink};
-
-use crate::connectors::notifications::simplify_slack_formatting;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackWorkflowConfig {
@@ -75,8 +72,8 @@ impl NotificationSink for SlackWorkflowSink {
             NotificationAudience::User(user) | NotificationAudience::Group(user) => user.as_str(),
         };
 
-        let title = render_slack_workflow_title(notification);
-        let thread = render_slack_workflow_message(notification);
+        let title = notification.subject.clone();
+        let thread = notification.body.clone();
 
         post_workflow_webhook_message(&self.http, webhook_url, channel, &title, &thread)
             .await
@@ -137,105 +134,26 @@ async fn post_workflow_webhook_message(
     Ok(None)
 }
 
-pub fn render_slack_workflow_title(notification: &NotificationMessage) -> String {
-    simplify_slack_formatting(&notification.subject)
-}
-
-pub fn render_slack_workflow_message(notification: &NotificationMessage) -> String {
-    let mut lines = Vec::new();
-
-    if let Some(title) = &notification.body.title {
-        lines.push(simplify_slack_formatting(title));
-    }
-
-    for section in &notification.body.sections {
-        match section {
-            MessageSection::Paragraph(text) => lines.push(simplify_slack_formatting(text)),
-            MessageSection::BulletList(items) => {
-                for item in items {
-                    lines.push(format!("- {}", simplify_slack_formatting(item)));
-                }
-            }
-            MessageSection::KeyValueList(items) => {
-                for (key, value) in items {
-                    lines.push(format!(
-                        "{}: {}",
-                        simplify_slack_formatting(key),
-                        simplify_slack_formatting(value)
-                    ));
-                }
-            }
-            MessageSection::CodeBlock { content, .. } => lines.push(content.clone()),
-        }
-    }
-
-    if let Some(footer) = &notification.body.footer {
-        lines.push(simplify_slack_formatting(footer));
-    }
-
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::{NotificationAudience, NotificationSeverity, RenderedMessage};
+    use crate::core::model::{NotificationAudience, NotificationSeverity, NotificationSinkKind};
 
     #[test]
-    fn renders_plain_slack_workflow_message() {
+    fn preserves_plain_workflow_message_payload() {
         let message = NotificationMessage {
+            sink: NotificationSinkKind::SlackWorkflow,
             subject: "Review requested".to_string(),
-            body: RenderedMessage {
-                title: Some("*MR #12*".to_string()),
-                sections: vec![MessageSection::Paragraph(
-                    "_Assign reviewers_ *@alice*".to_string(),
-                )],
-                footer: Some("<https://example.test|Open MR>".to_string()),
-            },
+            body: "MR #12\nAssigned reviewers @alice\nOpen MR (https://example.test)".to_string(),
             audience: NotificationAudience::Default,
             severity: NotificationSeverity::Info,
         };
 
-        let rendered = render_slack_workflow_message(&message);
+        let rendered = message.body.clone();
         assert!(rendered.contains("MR #12"));
-        assert!(rendered.contains("Assign reviewers @alice"));
+        assert!(rendered.contains("Assigned reviewers @alice"));
         assert!(rendered.contains("Open MR (https://example.test)"));
         assert!(!rendered.contains('*'));
         assert!(!rendered.contains('<'));
-    }
-
-    #[test]
-    fn renders_minimal_workflow_title_from_linked_subject() {
-        let message = NotificationMessage {
-            subject:
-                ":gitlab: Reviews Needed for <https://example.test/mr/1|MR #1>, by @arthur :pepe-review:"
-                    .to_string(),
-            body: RenderedMessage::new(None),
-            audience: NotificationAudience::Default,
-            severity: NotificationSeverity::Info,
-        };
-
-        let rendered = render_slack_workflow_title(&message);
-        assert_eq!(
-            rendered,
-            ":gitlab: Reviews Needed for MR #1 (https://example.test/mr/1), by @arthur :pepe-review:"
-        );
-    }
-
-    #[test]
-    fn renders_generic_workflow_title_without_review_needed_prefix() {
-        let message = NotificationMessage {
-            subject: ":gitlab: Mr. Milchick updated <https://example.test/mr/1|MR #1>, by @arthur"
-                .to_string(),
-            body: RenderedMessage::new(None),
-            audience: NotificationAudience::Default,
-            severity: NotificationSeverity::Info,
-        };
-
-        let rendered = render_slack_workflow_title(&message);
-        assert_eq!(
-            rendered,
-            ":gitlab: Mr. Milchick updated MR #1 (https://example.test/mr/1), by @arthur"
-        );
     }
 }

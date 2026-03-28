@@ -3,9 +3,9 @@ pub mod client;
 pub mod dto;
 
 use crate::core::model::{
-    Actor, AppliedReviewAction, ChangeType, ChangedFile, MessageSection, RenderedMessage,
-    RepositoryRef, ReviewAction, ReviewActionKind, ReviewActionReport, ReviewMetadata,
-    ReviewPlatformKind, ReviewRef, ReviewSnapshot, SkippedReviewAction,
+    Actor, AppliedReviewAction, ChangeType, ChangedFile, RepositoryRef, ReviewAction,
+    ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind, ReviewRef,
+    ReviewSnapshot, SkippedReviewAction,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, ReviewConnector};
 use async_trait::async_trait;
@@ -115,8 +115,8 @@ impl ReviewConnector for GitLabReviewConnector {
                         detail: Some(final_reviewers.join(", ")),
                     });
                 }
-                ReviewAction::UpsertSummary { message } => {
-                    let body = render_gitlab_markdown(message);
+                ReviewAction::UpsertSummary { markdown } => {
+                    let body = render_gitlab_markdown(markdown);
                     if let Some(existing_note) = existing_notes
                         .iter()
                         .find(|note| note.body.contains(MR_MILCHICK_MARKER))
@@ -256,46 +256,12 @@ fn repository_from_web_url(web_url: &str) -> RepositoryRef {
     }
 }
 
-pub fn render_gitlab_markdown(message: &RenderedMessage) -> String {
-    let mut lines = vec![MR_MILCHICK_MARKER.to_string()];
-
-    if let Some(title) = &message.title {
-        lines.push(format!("## {}", title));
-        lines.push(String::new());
+pub fn render_gitlab_markdown(markdown: &str) -> String {
+    if markdown.trim().is_empty() {
+        MR_MILCHICK_MARKER.to_string()
+    } else {
+        format!("{}\n\n{}", MR_MILCHICK_MARKER, markdown.trim())
     }
-
-    for section in &message.sections {
-        match section {
-            MessageSection::Paragraph(text) => {
-                lines.push(text.clone());
-                lines.push(String::new());
-            }
-            MessageSection::BulletList(items) => {
-                for item in items {
-                    lines.push(format!("- {}", item));
-                }
-                lines.push(String::new());
-            }
-            MessageSection::KeyValueList(items) => {
-                for (key, value) in items {
-                    lines.push(format!("- **{}**: {}", key, value));
-                }
-                lines.push(String::new());
-            }
-            MessageSection::CodeBlock { language, content } => {
-                lines.push(format!("```{}", language.clone().unwrap_or_default()));
-                lines.push(content.clone());
-                lines.push("```".to_string());
-                lines.push(String::new());
-            }
-        }
-    }
-
-    if let Some(footer) = &message.footer {
-        lines.push(format!("_{}_", footer));
-    }
-
-    lines.join("\n").trim().to_string()
 }
 
 fn map_request_error(err: anyhow::Error) -> ConnectorError {

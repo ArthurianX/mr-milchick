@@ -35,6 +35,8 @@ Tone shows up in three main places:
 - the rendered GitLab summary message
 - Slack notification messages built during reviewer assignment
 
+With connector templates enabled, those connector messages may now reference the selected tone through placeholders such as `{{tone_message}}`, `{{tone_category}}`, `{{closing_tone_message}}`, and `{{closing_tone_category}}`.
+
 Tone does not change rule evaluation, reviewer selection, CODEOWNERS behavior, or blocking policy. It only changes the human-facing phrasing wrapped around those outcomes.
 
 ## Why The Registry Matters
@@ -48,3 +50,4 @@ Appending new lines is the safe change when you want to expand the tone set with
 The goal is not randomness and not roleplay. The goal is predictable messaging that softens strict automation without making the result ambiguous.
 
 For the command and execution flow around those messages, see [architecture.md](architecture.md).
+For template authoring, see [message-templates.md](message-templates.md).

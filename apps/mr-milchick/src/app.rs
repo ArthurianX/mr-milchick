@@ -8,7 +8,6 @@ use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
 use crate::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
 use crate::core::actions::planner::enrich_with_reviewer_assignment;
-use crate::core::comment::render::build_summary_message;
 use crate::core::domain::codeowners::context::CodeownersContext;
 use crate::core::domain::codeowners::matcher::{
     collect_matched_rules_for_snapshot, match_usernames,
@@ -19,19 +18,26 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
+use crate::core::message_templates::{
+    build_notification_template_context, build_summary_template_context,
+    notification_template_variant, render_gitlab_summary, render_slack_app_notification,
+    render_slack_workflow_notification, resolve_template_catalog,
+};
 use crate::core::model::{
-    MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity, ReviewAction,
-    ReviewActionKind, ReviewPlatformKind,
+    NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
+    ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
 use crate::core::rules::engine::evaluate_rules;
 use crate::core::rules::model::RuleOutcome;
 use crate::core::tone::{ToneCategory, ToneSelector};
 use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
-use crate::cli::Cli;
+use crate::cli::{Cli, FixtureNotificationVariantArg};
 use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_path};
 use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
+use crate::fixture::load_review_fixture;
+use crate::runtime::{ConnectorError, NotificationSink, ReviewConnector};
 
 #[cfg(all(feature = "gitlab", feature = "github"))]
 compile_error!("Exactly one review connector feature must be enabled.");
@@ -46,6 +52,9 @@ struct AppConfigContext {
     routing_config: ReviewerRoutingConfig,
     codeowners: CodeownersContext,
 }
+
+#[derive(Debug)]
+struct FixtureReviewConnector;
 
 fn load_app_config_context() -> Result<AppConfigContext> {
     let runtime = load_config()?;
@@ -63,6 +72,54 @@ fn load_app_config_context() -> Result<AppConfigContext> {
     })
 }
 
+#[async_trait::async_trait]
+impl ReviewConnector for FixtureReviewConnector {
+    fn kind(&self) -> ReviewPlatformKind {
+        ReviewPlatformKind::GitLab
+    }
+
+    async fn load_snapshot(
+        &self,
+    ) -> std::result::Result<crate::core::model::ReviewSnapshot, ConnectorError> {
+        Err(ConnectorError::Unsupported(
+            "fixture review connector cannot load live snapshots".to_string(),
+        ))
+    }
+
+    async fn apply_review_actions(
+        &self,
+        actions: &[ReviewAction],
+    ) -> std::result::Result<crate::core::model::ReviewActionReport, ConnectorError> {
+        let mut report = crate::core::model::ReviewActionReport::default();
+
+        for action in actions {
+            let detail = match action {
+                ReviewAction::AssignReviewers { reviewers } => Some(
+                    reviewers
+                        .iter()
+                        .map(|reviewer| reviewer.username.clone())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+                ReviewAction::UpsertSummary { .. } => Some("fixture".to_string()),
+                ReviewAction::AddLabels { labels } | ReviewAction::RemoveLabels { labels } => {
+                    Some(labels.join(", "))
+                }
+                ReviewAction::FailPipeline { reason } => Some(reason.clone()),
+            };
+
+            report
+                .applied
+                .push(crate::core::model::AppliedReviewAction {
+                    action: action.kind(),
+                    detail,
+                });
+        }
+
+        Ok(report)
+    }
+}
+
 pub async fn run(cli: Cli) -> Result<()> {
     if matches!(cli.command, crate::cli::Command::Version) {
         crate::cli::print_version();
@@ -70,71 +127,160 @@ pub async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    let mode: ExecutionMode = cli.command.into();
-    run_mode(mode).await
+    let mode = cli
+        .command
+        .execution_mode()
+        .expect("execution mode should exist for non-version commands");
+    run_mode(
+        mode,
+        cli.command.fixture_path(),
+        cli.command.fixture_variant(),
+        cli.command.send_notifications(),
+    )
+    .await
 }
 
-pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
-    let ctx = build_ci_context()?;
-    let selector = ToneSelector::default();
-    let app_config = load_app_config_context()?;
-
-    println!("{}", selector.select(ToneCategory::Observation, &ctx));
-    print_compiled_capabilities();
-
-    if !ctx.is_merge_request_pipeline() {
-        println!("This pipeline does not currently present merge request responsibilities.");
-        return Ok(());
+pub async fn run_mode(
+    mode: ExecutionMode,
+    fixture_path: Option<&str>,
+    fixture_variant: Option<FixtureNotificationVariantArg>,
+    send_notifications: bool,
+) -> Result<()> {
+    if send_notifications && fixture_path.is_none() {
+        anyhow::bail!("'--send-notifications' is only supported together with '--fixture'");
+    }
+    if fixture_variant.is_some() && fixture_path.is_none() {
+        anyhow::bail!("'--fixture-variant' is only supported together with '--fixture'");
     }
 
+    let selector = ToneSelector::default();
+    let app_config = load_app_config_context()?;
     let flavor = load_flavor_config()?;
-    let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+    let template_catalog = resolve_template_catalog(flavor.as_ref());
+    let fixture_mode = fixture_path.is_some();
+    let mut fixture_notification_variant = fixture_variant.map(map_fixture_variant_arg);
 
-    let mut outcome = evaluate_rules(&ctx);
-    let snapshot = wiring.review_connector.load_snapshot().await?;
-    outcome = enrich_with_reviewer_assignment(
-        outcome,
-        &snapshot,
-        &app_config.routing_config,
-        &app_config.codeowners,
+    let (ctx, snapshot, mut outcome);
+    if let Some(fixture_path) = fixture_path {
+        let fixture = load_review_fixture(fixture_path)?;
+        fixture_notification_variant =
+            fixture_notification_variant.or_else(|| fixture.notification_template_variant());
+        ctx = fixture.to_ci_context()?;
+        snapshot = fixture.to_review_snapshot()?;
+        outcome = fixture.to_rule_outcome()?;
+    } else {
+        ctx = build_ci_context()?;
+        println!("{}", selector.select(ToneCategory::Observation, &ctx));
+        print_compiled_capabilities();
+
+        if !ctx.is_merge_request_pipeline() {
+            println!("This pipeline does not currently present merge request responsibilities.");
+            return Ok(());
+        }
+
+        let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+        snapshot = wiring.review_connector.load_snapshot().await?;
+        outcome = enrich_with_reviewer_assignment(
+            evaluate_rules(&ctx),
+            &snapshot,
+            &app_config.routing_config,
+            &app_config.codeowners,
+        );
+    }
+
+    if fixture_mode {
+        println!("{}", selector.select(ToneCategory::Observation, &ctx));
+        print_compiled_capabilities();
+    }
+
+    let wiring = if fixture_mode {
+        build_fixture_runtime_wiring(&app_config, flavor.as_ref())?
+    } else {
+        build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?
+    };
+    let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
+
+    let summary = render_gitlab_summary(
+        &template_catalog,
+        &build_summary_template_context(&outcome, &snapshot, &selector, &ctx),
     );
-
-    let summary = build_summary_message(&outcome, &ctx, &selector);
     outcome.action_plan.push(ReviewAction::UpsertSummary {
-        message: summary.clone(),
+        markdown: summary.clone(),
     });
 
     match mode {
         ExecutionMode::Observe => {
             print_outcome(&outcome);
             print_observe_action_plan(&outcome);
+            if fixture_mode {
+                let notifications = build_notifications(
+                    &outcome,
+                    &snapshot,
+                    &template_catalog,
+                    &selector,
+                    &ctx,
+                    &preview_sink_kinds,
+                    fixture_notification_variant,
+                );
+                print_notification_previews(&notifications);
+            }
         }
         ExecutionMode::Explain => {
             print_outcome(&outcome);
             print_action_plan(&outcome, true);
             println!("Structured summary comment preview:");
             println!("---");
-            if let Some(ReviewAction::UpsertSummary { message }) = outcome
+            if let Some(ReviewAction::UpsertSummary { markdown }) = outcome
                 .action_plan
                 .actions
                 .iter()
                 .find(|action| matches!(action, ReviewAction::UpsertSummary { .. }))
             {
-                println!("{}", render_gitlab_markdown(message));
+                println!("{}", render_gitlab_markdown(markdown));
             }
             println!("---");
             print_snapshot_details(&snapshot);
+            let notifications = build_notifications(
+                &outcome,
+                &snapshot,
+                &template_catalog,
+                &selector,
+                &ctx,
+                &preview_sink_kinds,
+                fixture_notification_variant,
+            );
+            if fixture_mode {
+                print_notification_previews(&notifications);
+            }
             print_codeowners_details(&snapshot, &app_config);
         }
         ExecutionMode::Refine => {
             print_outcome(&outcome);
             print_action_plan(&outcome, true);
 
-            let strategy = ExecutionStrategy::from_env();
+            let strategy = if fixture_mode {
+                if send_notifications {
+                    ExecutionStrategy::Real
+                } else {
+                    ExecutionStrategy::DryRun
+                }
+            } else {
+                ExecutionStrategy::from_env()
+            };
             let notification_policy =
                 resolve_notification_policy(&app_config.runtime, flavor.as_ref());
-            let notifications =
-                build_notifications(strategy, &outcome, &snapshot, &summary, &selector, &ctx);
+            let notifications = build_notifications(
+                &outcome,
+                &snapshot,
+                &template_catalog,
+                &selector,
+                &ctx,
+                &preview_sink_kinds,
+                fixture_notification_variant,
+            );
+            if fixture_mode {
+                print_notification_previews(&notifications);
+            }
             let report = wiring
                 .execute(
                     strategy,
@@ -155,7 +301,6 @@ pub async fn run_mode(mode: ExecutionMode) -> Result<()> {
 
     Ok(())
 }
-
 fn build_runtime_wiring(
     ctx: &crate::context::model::CiContext,
     app_config: &AppConfigContext,
@@ -173,7 +318,28 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     );
 
-    let mut sinks: Vec<Box<dyn crate::runtime::NotificationSink>> = Vec::new();
+    Ok(RuntimeWiring::new(
+        Box::new(gitlab),
+        build_notification_sinks(app_config, flavor),
+    ))
+}
+
+fn build_fixture_runtime_wiring(
+    app_config: &AppConfigContext,
+    flavor: Option<&FlavorConfig>,
+) -> Result<RuntimeWiring> {
+    validate_flavor(flavor)?;
+    Ok(RuntimeWiring::new(
+        Box::new(FixtureReviewConnector),
+        build_notification_sinks(app_config, flavor),
+    ))
+}
+
+fn build_notification_sinks(
+    app_config: &AppConfigContext,
+    flavor: Option<&FlavorConfig>,
+) -> Vec<Box<dyn NotificationSink>> {
+    let mut sinks: Vec<Box<dyn NotificationSink>> = Vec::new();
 
     #[cfg(feature = "slack-app")]
     if notification_enabled_by_flavor(flavor, "slack-app") {
@@ -201,7 +367,23 @@ fn build_runtime_wiring(
         }
     }
 
-    Ok(RuntimeWiring::new(Box::new(gitlab), sinks))
+    sinks
+}
+
+fn configured_notification_sink_kinds(flavor: Option<&FlavorConfig>) -> Vec<NotificationSinkKind> {
+    let mut sinks = Vec::new();
+
+    #[cfg(feature = "slack-app")]
+    if notification_enabled_by_flavor(flavor, "slack-app") {
+        sinks.push(NotificationSinkKind::SlackApp);
+    }
+
+    #[cfg(feature = "slack-workflow")]
+    if notification_enabled_by_flavor(flavor, "slack-workflow") {
+        sinks.push(NotificationSinkKind::SlackWorkflow);
+    }
+
+    sinks
 }
 
 fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
@@ -396,106 +578,147 @@ fn print_execution_report(report: &crate::runtime::ExecutionReport) {
     }
 }
 
+fn print_notification_previews(notifications: &[NotificationMessage]) {
+    if notifications.is_empty() {
+        println!("No notification previews were produced.");
+        return;
+    }
+
+    println!("Notification previews:");
+    for notification in notifications {
+        println!("--- {:?} subject ---", notification.sink);
+        println!("{}", notification.subject);
+        println!("--- {:?} body ---", notification.sink);
+        println!("{}", notification.body);
+    }
+}
+
 fn build_notifications(
-    strategy: ExecutionStrategy,
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
-    summary: &crate::core::model::RenderedMessage,
+    template_catalog: &crate::core::message_templates::TemplateCatalog,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
+    sink_kinds: &[NotificationSinkKind],
+    variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
-    if strategy != ExecutionStrategy::Real
-        || outcome.action_plan.has_fail_pipeline()
-        || outcome.has_blocking_findings()
-    {
+    if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
         return Vec::new();
     }
 
     let reviewers = reviewers_for_notification(outcome, snapshot);
-    let mut body = summary.clone();
+    let variant =
+        variant_override.unwrap_or_else(|| notification_template_variant(&reviewers.reviewers));
+    let notification_context = build_notification_template_context(
+        outcome,
+        snapshot,
+        selector,
+        ctx,
+        variant,
+        reviewers.reviewers.clone(),
+        reviewers.new_reviewers.clone(),
+        reviewers.existing_reviewers.clone(),
+    );
 
-    if let Some(url) = &snapshot.review_ref.web_url {
-        body.sections.insert(
-            0,
-            MessageSection::Paragraph(format!("Merge request: <{}|{}>", url, snapshot.title)),
-        );
-    } else {
-        body.sections.insert(
-            0,
-            MessageSection::Paragraph(format!("Merge request: {}", snapshot.title)),
-        );
+    sink_kinds
+        .iter()
+        .filter_map(|sink| match sink {
+            NotificationSinkKind::SlackApp => {
+                let (subject, body) =
+                    render_slack_app_notification(template_catalog, &notification_context, variant);
+                Some(NotificationMessage {
+                    sink: *sink,
+                    subject,
+                    body,
+                    audience: NotificationAudience::Default,
+                    severity: NotificationSeverity::Info,
+                })
+            }
+            NotificationSinkKind::SlackWorkflow => {
+                let (subject, body) = render_slack_workflow_notification(
+                    template_catalog,
+                    &notification_context,
+                    variant,
+                );
+                Some(NotificationMessage {
+                    sink: *sink,
+                    subject,
+                    body,
+                    audience: NotificationAudience::Default,
+                    severity: NotificationSeverity::Info,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn map_fixture_variant_arg(
+    variant: FixtureNotificationVariantArg,
+) -> crate::core::message_templates::NotificationTemplateVariant {
+    match variant {
+        FixtureNotificationVariantArg::First => {
+            crate::core::message_templates::NotificationTemplateVariant::First
+        }
+        FixtureNotificationVariantArg::Update => {
+            crate::core::message_templates::NotificationTemplateVariant::Update
+        }
     }
+}
 
-    let subject = if let Some(reviewers) = reviewers {
-        let mentions = reviewers
-            .iter()
-            .map(|reviewer| format!("*@{}*", reviewer))
-            .collect::<Vec<_>>()
-            .join(" ");
-        body.sections.insert(
-            1,
-            MessageSection::Paragraph(format!("_Assign reviewers_ {}", mentions)),
-        );
-
-        format!(
-            ":gitlab: Reviews Needed for <{}|MR #{}>, by @{} :pepe-review:",
-            snapshot.review_ref.web_url.clone().unwrap_or_default(),
-            snapshot.review_ref.review_id,
-            snapshot.author.username
-        )
-    } else {
-        body.title = Some(selector.select(ToneCategory::Observation, ctx).to_string());
-        format!(
-            ":gitlab: Mr. Milchick updated <{}|MR #{}>, by @{}",
-            snapshot.review_ref.web_url.clone().unwrap_or_default(),
-            snapshot.review_ref.review_id,
-            snapshot.author.username
-        )
-    };
-
-    vec![NotificationMessage {
-        subject,
-        body,
-        audience: NotificationAudience::Default,
-        severity: NotificationSeverity::Info,
-    }]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct NotificationReviewers {
+    reviewers: Vec<String>,
+    new_reviewers: Vec<String>,
+    existing_reviewers: Vec<String>,
 }
 
 fn reviewers_for_notification(
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
-) -> Option<Vec<String>> {
-    let assigned_reviewers =
-        outcome
-            .action_plan
-            .actions
-            .iter()
-            .find_map(|action| match action {
-                ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
-                    reviewers
-                        .iter()
-                        .map(|reviewer| reviewer.username.clone())
-                        .collect::<Vec<_>>(),
-                ),
-                _ => None,
-            })?;
+) -> NotificationReviewers {
+    let assigned_reviewers = outcome
+        .action_plan
+        .actions
+        .iter()
+        .find_map(|action| match action {
+            ReviewAction::AssignReviewers { reviewers } if !reviewers.is_empty() => Some(
+                reviewers
+                    .iter()
+                    .map(|reviewer| reviewer.username.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        });
+
+    let Some(assigned_reviewers) = assigned_reviewers else {
+        return NotificationReviewers::default();
+    };
 
     let mut merged_reviewers = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut existing_reviewers = Vec::new();
 
     for reviewer in snapshot.reviewer_usernames() {
         if seen.insert(reviewer.clone()) {
             merged_reviewers.push(reviewer);
+            existing_reviewers.push(merged_reviewers.last().cloned().unwrap_or_default());
         }
     }
 
+    let mut new_reviewers = Vec::new();
     for reviewer in assigned_reviewers {
         if seen.insert(reviewer.clone()) {
             merged_reviewers.push(reviewer);
+            new_reviewers.push(merged_reviewers.last().cloned().unwrap_or_default());
         }
     }
 
-    Some(merged_reviewers)
+    NotificationReviewers {
+        reviewers: merged_reviewers,
+        new_reviewers,
+        existing_reviewers,
+    }
 }
 
 fn print_observe_action_plan(outcome: &RuleOutcome) {
@@ -691,7 +914,7 @@ mod tests {
     #[test]
     fn summary_action_is_described() {
         let text = describe_planned_action(&ReviewAction::UpsertSummary {
-            message: crate::core::model::RenderedMessage::new(Some("Summary".to_string())),
+            markdown: "## Summary".to_string(),
         });
 
         assert!(text.contains("UpsertSummary"));
@@ -710,23 +933,23 @@ mod tests {
         let snapshot = sample_snapshot(vec!["principal-reviewer"]);
         let selector = ToneSelector::default();
         let ctx = sample_context();
-        let summary = build_summary_message(&outcome, &ctx, &selector);
 
         let notifications = build_notifications(
-            ExecutionStrategy::Real,
             &outcome,
             &snapshot,
-            &summary,
+            &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &[NotificationSinkKind::SlackApp],
+            None,
         );
 
         assert_eq!(notifications.len(), 1);
-        assert!(matches!(
-            notifications[0].body.sections.get(1),
-            Some(MessageSection::Paragraph(line))
-                if line.contains("_Assign reviewers_ *@principal-reviewer* *@bob*")
-        ));
+        assert!(
+            notifications[0]
+                .body
+                .contains("_Assigned reviewers_ *@principal-reviewer* *@bob*")
+        );
     }
 
     #[test]
@@ -735,24 +958,22 @@ mod tests {
         let snapshot = sample_snapshot(Vec::new());
         let selector = ToneSelector::default();
         let ctx = sample_context();
-        let summary = build_summary_message(&outcome, &ctx, &selector);
 
         let notifications = build_notifications(
-            ExecutionStrategy::Real,
             &outcome,
             &snapshot,
-            &summary,
+            &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &[NotificationSinkKind::SlackWorkflow],
+            None,
         );
 
         assert_eq!(notifications.len(), 1);
-        assert!(notifications[0].subject.contains("Mr. Milchick updated"));
-        assert!(matches!(
-            notifications[0].body.sections.first(),
-            Some(MessageSection::Paragraph(line))
-                if line.contains("Merge request: <https://gitlab.example.com/group/project/-/merge_requests/456|Frontend adjustments>")
-        ));
+        assert!(notifications[0].subject.contains("Mr. Milchick - updates"));
+        assert!(notifications[0]
+            .body
+            .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
     }
 
     #[test]
@@ -785,6 +1006,7 @@ mod tests {
             slack_app: Some(FlavorSlackAppConfig {
                 user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
             }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
@@ -825,6 +1047,7 @@ mod tests {
                     ("bob".to_string(), "".to_string()),
                 ]),
             }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
@@ -889,6 +1112,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         assert_eq!(
@@ -925,6 +1149,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
         assert_eq!(

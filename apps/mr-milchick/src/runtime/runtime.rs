@@ -78,7 +78,10 @@ impl RuntimeWiring {
             notification_skip_reason(notification_policy, strategy, &review_report);
 
         for sink in &self.notification_sinks {
-            for notification in notifications {
+            for notification in notifications
+                .iter()
+                .filter(|notification| notification.sink == sink.kind())
+            {
                 let report = if let Some(reason) = &notification_skip_reason {
                     crate::core::model::NotificationDeliveryReport {
                         sink: sink.kind(),

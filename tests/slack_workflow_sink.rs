@@ -8,8 +8,7 @@ use mr_milchick::connectors::notifications::slack_workflow::{
     SlackWorkflowConfig, SlackWorkflowSink,
 };
 use mr_milchick::core::model::{
-    MessageSection, NotificationAudience, NotificationMessage, NotificationSeverity,
-    RenderedMessage,
+    NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
 };
 use mr_milchick::runtime::NotificationSink;
 use serde_json::{Value, json};
@@ -24,19 +23,9 @@ async fn sends_workflow_messages_with_simple_formatting_and_threading() {
     });
 
     let notification = NotificationMessage {
-        subject: ":gitlab: Reviews Needed for <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>, by @arthur :pepe-review:".to_string(),
-        body: RenderedMessage {
-            title: Some("The department has a request.".to_string()),
-            sections: vec![
-                MessageSection::Paragraph(
-                    "Review requested for: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>".to_string(),
-                ),
-                MessageSection::Paragraph(
-                    "_Assign reviewers_ *@principal-reviewer* *@bob*".to_string(),
-                ),
-            ],
-            footer: None,
-        },
+        sink: NotificationSinkKind::SlackWorkflow,
+        subject: "Reviews Needed for MR #3995 (https://gitlab.example.com/group/project/-/merge_requests/3995), by @arthur :pepe-review:".to_string(),
+        body: "The department has a request.\nReview requested for: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/3995)\nAssigned reviewers @principal-reviewer @bob".to_string(),
         audience: NotificationAudience::Default,
         severity: NotificationSeverity::Info,
     };
@@ -53,7 +42,7 @@ async fn sends_workflow_messages_with_simple_formatting_and_threading() {
     assert_eq!(
         payload["mr_milchick_says"],
         json!(
-            ":gitlab: Reviews Needed for MR #3995 (https://gitlab.example.com/group/project/-/merge_requests/3995), by @arthur :pepe-review:"
+            "Reviews Needed for MR #3995 (https://gitlab.example.com/group/project/-/merge_requests/3995), by @arthur :pepe-review:"
         )
     );
 
@@ -62,7 +51,7 @@ async fn sends_workflow_messages_with_simple_formatting_and_threading() {
         .expect("thread message should be a string");
     assert!(thread_message.contains("The department has a request."));
     assert!(thread_message.contains("Review requested for: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/3995)"));
-    assert!(thread_message.contains("Assign reviewers @principal-reviewer @bob"));
+    assert!(thread_message.contains("Assigned reviewers @principal-reviewer @bob"));
     assert!(!thread_message.contains('*'));
     assert!(!thread_message.contains('<'));
 }

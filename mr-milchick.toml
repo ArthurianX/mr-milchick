@@ -1,6 +1,7 @@
 # Flavor manifest loaded at runtime.
 # This file is intentionally minimal and only contains settings
 # that the application actually reads from TOML today.
+notification_policy = "always"
 
 [review_platform]
 kind = "gitlab"
@@ -13,6 +14,62 @@ enabled = false
 kind = "slack-app"
 enabled = true
 
+[slack_app.user_map]
+"arthur" = "U028DDKDJ4E"
+"principal-reviewer" = "U03D9NN5HB6"
+"bob" = "U028GSCQBUJ"
+
 #[slack_app.user_map]
 # "engineer.girl1" = ""
 # "engineer.guy1" = ""
+
+# Template inspiration
+# Uncomment any section below to start customizing connector output.
+# These examples match the current built-in defaults.
+
+#[templates.gitlab]
+#summary = """
+## {{summary_title}}
+#
+#{{summary_intro}}
+#
+#{{findings_block}}
+#
+#{{actions_block}}
+#
+#_{{closing_tone_message}}_
+#"""
+
+[templates.slack_app]
+
+first_root = ":gitlab: {{notification_subject}} :pepe-review:"
+first_thread = """
+*{{notification_title}}*
+Merge request: {{mr_link}}
+{{reviewers_line}}
+"""
+
+update_root = ":gitlab: {{notification_subject}} :thread:"
+update_thread = """
+Merge request: {{mr_link}}
+{{findings_block}}
+{{actions_block}}
+_{{summary_footer}}_
+"""
+
+#[templates.slack_workflow]
+
+#first_title = "{{notification_subject}}"
+#first_thread = """
+#{{notification_title}}
+#Merge request: {{mr_link}}
+#{{reviewers_line}}
+#"""
+
+#update_title = "{{notification_subject}}"
+#update_thread = """
+#Merge request: {{mr_link}}
+#{{findings_block}}
+#{{actions_block}}
+#{{summary_footer}}
+#"""

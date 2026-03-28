@@ -1,0 +1,28 @@
+project_id = "412"
+merge_request_iid = "4010"
+notification_variant = "update"
+
+[merge_request]
+title = "Documentation touch-up"
+url = "https://gitlab.example.com/group/project/-/merge_requests/4010"
+author = "arthur"
+source_branch = "chore/docs-cleanup"
+target_branch = "develop"
+labels = []
+existing_reviewers = []
+is_draft = false
+default_branch = "develop"
+
+[[merge_request.changed_files]]
+path = "docs/README.md"
+change_type = "modified"
+additions = 6
+deletions = 2
+
+[[findings]]
+severity = "warning"
+message = "Documentation updates should carry the 'documentation' label."
+
+[[actions]]
+kind = "add-labels"
+labels = ["documentation"]

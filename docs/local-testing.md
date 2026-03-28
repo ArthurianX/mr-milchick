@@ -8,11 +8,15 @@ cargo test
 
 Then run local smoke tests by setting the same environment variables the CI job would provide.
 
+If you want to iterate on output and notifications without a live merge request, see [fixture-testing.md](fixture-testing.md).
+
 ## Base Notes
 
 - `observe` and `explain` do not execute review actions.
 - `refine` is the only command affected by `MR_MILCHICK_DRY_RUN`.
 - In merge request mode, even `observe` and `explain` still load the merge request snapshot from GitLab, so you may need `GITLAB_TOKEN`.
+- With `--fixture`, no live GitLab snapshot is loaded.
+- `refine --fixture` is dry-run by default. Add `--send-notifications` if you want real Slack delivery.
 - Reviewer configuration is always read from `MR_MILCHICK_REVIEWERS`.
 - `MR_MILCHICK_CODEOWNERS_ENABLED` defaults to `true`.
 
@@ -38,6 +42,18 @@ Expected result:
 - observation output
 - a blocking finding about the missing `0. run-tests` label
 - no external mutation
+
+## Observe A Fixture Scenario
+
+```bash
+cargo run -- observe --fixture fixtures/first-notification.toml
+```
+
+Expected result:
+
+- findings and planned actions from the fixture
+- notification previews for configured sinks
+- no GitLab or Slack mutation
 
 ## Observe A Passing Epic Branch
 
@@ -129,6 +145,22 @@ Expected result:
 - summary comment created or updated
 - one Slack workflow trigger sent with `mr_milchick_talks_to`, `mr_milchick_says`, and `mr_milchick_says_thread`
 
+## Refine A Fixture And Send Slack Notifications
+
+```bash
+MR_MILCHICK_SLACK_ENABLED=true \
+MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
+MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X \
+cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
+```
+
+Expected result:
+
+- no GitLab reads or writes
+- notification previews printed before execution
+- one Slack root message and one Slack thread message when Slack app is enabled
+- the same message templates used in real execution
+
 ## Explain Routing And CODEOWNERS
 
 ```bash
@@ -156,3 +188,5 @@ Expected result:
 - Use `cargo run -- version` to confirm the current build surface before a smoke test.
 - Set `MR_MILCHICK_DRY_RUN=true` with `refine` if you want an execution-shaped report without live GitLab or Slack writes.
 - `MR_MILCHICK_SLACK_BASE_URL` is available for local mocks and connector tests; the production default is `https://slack.com/api`.
+- Use `--fixture` whenever you want to iterate on templates and notifications before testing against a real merge request.
+- Use `--fixture-variant first|update` when you want to compare both notification template paths without changing the fixture file.

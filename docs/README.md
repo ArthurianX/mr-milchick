@@ -19,7 +19,9 @@ This directory holds the detailed docs that used to live in the root README. Sta
 ## Output And Tone
 
 - [Tone and messages](tone-and-messages.md): deterministic tone selection, category usage, and where those messages appear.
+- [Message templates](message-templates.md): connector template fields, placeholders, tone variables, and example templates for GitLab and Slack.
 
 ## Validation
 
 - [Local testing](local-testing.md): local smoke-test commands, expected behavior, and notes for testing GitLab and Slack integrations without changing the docs setup flow.
+- [Fixture testing](fixture-testing.md): run `observe`, `explain`, and `refine` from local TOML fixtures, preview notifications, and optionally send Slack notifications without a live MR.

@@ -41,6 +41,41 @@ enabled = false
 [slack_app.user_map]
 "engineer.lady1" = "U01234567"
 "engineer.guy1" = "U07654321"
+
+[templates.gitlab]
+summary = """## {{summary_title}}
+
+{{tone_message}}
+
+{{findings_block}}
+
+{{actions_block}}
+
+_{{closing_tone_message}}_"""
+
+[templates.slack_app]
+first_root = "{{notification_subject}}"
+first_thread = """*{{notification_title}}*
+Merge request: {{mr_link}}
+{{reviewers_line}}
+"""
+update_root = "{{notification_subject}}"
+update_thread = """Merge request: {{mr_link}}
+{{findings_block}}
+{{actions_block}}
+_{{summary_footer}}_"""
+
+[templates.slack_workflow]
+first_title = "{{notification_subject}}"
+first_thread = """{{notification_title}}
+Merge request: {{mr_link}}
+{{reviewers_line}}
+"""
+update_title = "{{notification_subject}}"
+update_thread = """Merge request: {{mr_link}}
+{{findings_block}}
+{{actions_block}}
+{{summary_footer}}"""
 ```
 
 Supported TOML fields today:
@@ -50,6 +85,15 @@ Supported TOML fields today:
 - `[[notifications]].kind`
 - `[[notifications]].enabled`
 - `[slack_app.user_map]`
+- `[templates.gitlab].summary`
+- `[templates.slack_app].first_root`
+- `[templates.slack_app].first_thread`
+- `[templates.slack_app].update_root`
+- `[templates.slack_app].update_thread`
+- `[templates.slack_workflow].first_title`
+- `[templates.slack_workflow].first_thread`
+- `[templates.slack_workflow].update_title`
+- `[templates.slack_workflow].update_thread`
 
 Behavior notes:
 
@@ -58,6 +102,43 @@ Behavior notes:
 - `[[notifications]]` entries may use `slack-app` and `slack-workflow`.
 - If `enabled` is omitted for a notification entry, it defaults to `true`.
 - If a flavor file is present, only notification entries that are listed and enabled are activated.
+- Template overrides are field-by-field. Missing fields keep the built-in default.
+- Invalid template fields warn and fall back to the built-in default for that field.
+
+## Message Templates
+
+Connector output can be customized from `mr-milchick.toml`.
+
+- GitLab uses `[templates.gitlab].summary`
+- Slack app uses `first_*` and `update_*` template fields.
+- Slack workflow uses `first_*` and `update_*` template fields.
+- `first_*` is the lighter initial notification shape.
+- `update_*` is the fuller follow-up/update shape.
+
+Templates use `{{placeholder}}` interpolation only.
+
+Core placeholders:
+
+- `mr_number`, `mr_ref`, `mr_title`, `mr_url`, `mr_author_username`
+- `source_branch`, `target_branch`, `is_draft`, `changed_file_count`
+- `findings_count`, `blocking_findings_count`, `warning_findings_count`, `info_findings_count`
+- `actions_count`, `reviewers_count`, `new_reviewers_count`, `existing_reviewers_count`
+- `mr_link`, `reviewers_list`, `new_reviewers_list`, `existing_reviewers_list`
+- `findings_block`, `actions_block`
+- `tone_message`, `tone_category`
+
+GitLab-only placeholders:
+
+- `closing_tone_message`
+- `closing_tone_category`
+
+Useful renderer helpers:
+
+- `summary_title`, `summary_intro`, `summary_footer`
+- `notification_title`, `notification_subject`
+- `reviewers_line`, `mr_ref_link`
+
+See [message-templates.md](message-templates.md) for complete examples and connector-specific output details.
 
 ## Environment Variables
 
@@ -178,5 +259,6 @@ If a mapping value is blank, it is ignored. In TOML, quote usernames that contai
 - With `notification_policy = "on-applied-action"`, enabled sinks only receive notifications when the review connector actually applies the summary upsert.
 - GitLab is the only implemented review connector today.
 - Slack app and Slack workflow are the only implemented notification sinks today.
+- Connector templates only affect GitLab and Slack output in this version. CLI output remains unchanged.
 
 For setup examples, see [ci-quickstart.md](ci-quickstart.md). For capability validation, see [connectors-and-capabilities.md](connectors-and-capabilities.md).

@@ -125,7 +125,7 @@ pub struct ReviewMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewAction {
     AssignReviewers { reviewers: Vec<Actor> },
-    UpsertSummary { message: RenderedMessage },
+    UpsertSummary { markdown: String },
     AddLabels { labels: Vec<String> },
     RemoveLabels { labels: Vec<String> },
     FailPipeline { reason: String },
@@ -154,8 +154,9 @@ impl ReviewAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationMessage {
+    pub sink: NotificationSinkKind,
     pub subject: String,
-    pub body: RenderedMessage,
+    pub body: String,
     pub audience: NotificationAudience,
     pub severity: NotificationSeverity,
 }

@@ -6,7 +6,7 @@ mod mock_server;
 use mock_server::{MERGE_REQUEST_IID, MockGitLabServer, PROJECT_ID};
 use mr_milchick::connectors::gitlab::api::GitLabConfig;
 use mr_milchick::connectors::gitlab::{GitLabReviewConnector, MR_MILCHICK_MARKER};
-use mr_milchick::core::model::{Actor, RenderedMessage, ReviewAction, ReviewActionKind};
+use mr_milchick::core::model::{Actor, ReviewAction, ReviewActionKind};
 use mr_milchick::runtime::ReviewConnector;
 use serde_json::{Value, json};
 
@@ -62,7 +62,7 @@ async fn applies_review_actions_idempotently() {
             ],
         },
         ReviewAction::UpsertSummary {
-            message: RenderedMessage::new(Some("Summary".to_string())),
+            markdown: "## Summary".to_string(),
         },
     ];
 
