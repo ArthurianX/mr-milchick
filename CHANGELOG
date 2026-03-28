@@ -7,6 +7,39 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [1.4.0] — 2026-03-28
+
+This release adds connector-owned message templating and a much better local iteration loop for notification work.
+
+### Added
+
+- Connector message templates in `mr-milchick.toml` for:
+  - GitLab summary comments
+  - Slack app root and thread messages
+  - Slack workflow title and thread messages
+- Field-level template override validation with fallback to built-in defaults when a template field is invalid.
+- Fixture-backed `observe`, `explain`, and `refine` runs for local scenario testing without a live merge request.
+- Fixture-driven Slack delivery via `refine --fixture ... --send-notifications`.
+- Explicit fixture notification variants:
+  - `notification_variant = "first"`
+  - `notification_variant = "update"`
+- CLI override for fixture notification rendering with `--fixture-variant first|update`.
+- Starter fixture scenarios for:
+  - `fixtures/first-notification.toml`
+  - `fixtures/update-notification.toml`
+  - `fixtures/blocking-refine.toml`
+
+### Changed
+
+- Connector notification templates are now split into `first_*` and `update_*` fields instead of a single shared Slack message shape.
+- Default Slack notification copy now uses a neutral `first` lifecycle framing instead of the older review-request-specific wording.
+- Template placeholders were simplified:
+  - added `notification_subject`
+  - removed `notification_subject_action`
+  - removed `notification_subject_suffix`
+  - removed `mr_line`
+- Documentation now includes full template examples, fixture-testing guidance, and starter config snippets based on the current built-in defaults.
+
 ## [1.1.0] — 2026-03-24
 
 This release makes Slack app review notifications capable of pinging the right people directly.
