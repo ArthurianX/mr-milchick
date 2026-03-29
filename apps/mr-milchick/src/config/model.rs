@@ -70,6 +70,8 @@ pub struct FlavorTemplatesConfig {
     #[serde(default)]
     pub gitlab: FlavorGitLabTemplates,
     #[serde(default)]
+    pub github: FlavorGitHubTemplates,
+    #[serde(default)]
     pub slack_app: FlavorSlackAppTemplates,
     #[serde(default)]
     pub slack_workflow: FlavorSlackWorkflowTemplates,
@@ -77,6 +79,12 @@ pub struct FlavorTemplatesConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 pub struct FlavorGitLabTemplates {
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct FlavorGitHubTemplates {
     #[serde(default)]
     pub summary: Option<String>,
 }

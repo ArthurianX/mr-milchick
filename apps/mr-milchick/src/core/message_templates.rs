@@ -4,7 +4,7 @@ use tracing::warn;
 
 use crate::config::model::FlavorConfig;
 use crate::context::model::CiContext;
-use crate::core::model::{NotificationSinkKind, ReviewAction, ReviewSnapshot};
+use crate::core::model::{NotificationSinkKind, ReviewAction, ReviewPlatformKind, ReviewSnapshot};
 use crate::core::rules::model::{FindingSeverity, RuleOutcome};
 use crate::core::tone::{ToneCategory, ToneSelector};
 
@@ -17,6 +17,7 @@ const GITLAB_SUMMARY_TEMPLATE: &str = r#"## {{summary_title}}
 {{actions_block}}
 
 _{{closing_tone_message}}_"#;
+const GITHUB_SUMMARY_TEMPLATE: &str = GITLAB_SUMMARY_TEMPLATE;
 
 const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_FIRST_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
@@ -107,10 +108,12 @@ const GITLAB_SUMMARY_PLACEHOLDERS: &[&str] = &[
     "closing_tone_message",
     "closing_tone_category",
 ];
+const GITHUB_SUMMARY_PLACEHOLDERS: &[&str] = GITLAB_SUMMARY_PLACEHOLDERS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateCatalog {
     pub gitlab: GitLabTemplateCatalog,
+    pub github: GitHubTemplateCatalog,
     pub slack_app: SlackAppTemplateCatalog,
     pub slack_workflow: SlackWorkflowTemplateCatalog,
 }
@@ -120,6 +123,9 @@ impl Default for TemplateCatalog {
         Self {
             gitlab: GitLabTemplateCatalog {
                 summary: GITLAB_SUMMARY_TEMPLATE.to_string(),
+            },
+            github: GitHubTemplateCatalog {
+                summary: GITHUB_SUMMARY_TEMPLATE.to_string(),
             },
             slack_app: SlackAppTemplateCatalog {
                 first_root: SLACK_APP_FIRST_ROOT_TEMPLATE.to_string(),
@@ -139,6 +145,11 @@ impl Default for TemplateCatalog {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitLabTemplateCatalog {
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubTemplateCatalog {
     pub summary: String,
 }
 
@@ -216,6 +227,7 @@ pub enum NotificationTemplateVariant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TemplateField {
     GitLabSummary,
+    GitHubSummary,
     SlackAppFirstRoot,
     SlackAppFirstThread,
     SlackAppUpdateRoot,
@@ -229,6 +241,7 @@ enum TemplateField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RenderStyle {
     GitLab,
+    GitHub,
     SlackApp,
     SlackWorkflow,
 }
@@ -237,6 +250,7 @@ impl TemplateField {
     fn config_path(self) -> &'static str {
         match self {
             Self::GitLabSummary => "templates.gitlab.summary",
+            Self::GitHubSummary => "templates.github.summary",
             Self::SlackAppFirstRoot => "templates.slack_app.first_root",
             Self::SlackAppFirstThread => "templates.slack_app.first_thread",
             Self::SlackAppUpdateRoot => "templates.slack_app.update_root",
@@ -251,6 +265,7 @@ impl TemplateField {
     fn allowed_placeholders(self) -> &'static [&'static str] {
         match self {
             Self::GitLabSummary => GITLAB_SUMMARY_PLACEHOLDERS,
+            Self::GitHubSummary => GITHUB_SUMMARY_PLACEHOLDERS,
             Self::SlackAppFirstRoot
             | Self::SlackAppFirstThread
             | Self::SlackAppUpdateRoot
@@ -274,6 +289,11 @@ pub fn resolve_template_catalog(flavor: Option<&FlavorConfig>) -> TemplateCatalo
         &mut catalog.gitlab.summary,
         flavor.templates.gitlab.summary.as_deref(),
         TemplateField::GitLabSummary,
+    );
+    apply_template_override(
+        &mut catalog.github.summary,
+        flavor.templates.github.summary.as_deref(),
+        TemplateField::GitHubSummary,
     );
     apply_template_override(
         &mut catalog.slack_app.first_root,
@@ -383,14 +403,17 @@ pub fn build_notification_template_context(
     }
 }
 
-pub fn render_gitlab_summary(
+pub fn render_review_summary(
     catalog: &TemplateCatalog,
     context: &SummaryTemplateContext,
+    platform: ReviewPlatformKind,
 ) -> String {
-    render_template(
-        &catalog.gitlab.summary,
-        &context.variables(RenderStyle::GitLab, true),
-    )
+    let (template, style) = match platform {
+        ReviewPlatformKind::GitLab => (&catalog.gitlab.summary, RenderStyle::GitLab),
+        ReviewPlatformKind::GitHub => (&catalog.github.summary, RenderStyle::GitHub),
+    };
+
+    render_template(template, &context.variables(style, true))
 }
 
 pub fn render_slack_app_notification(
@@ -640,7 +663,7 @@ impl NotificationTemplateContext {
                     &ref_link(RenderStyle::SlackApp, &self.snapshot),
                     &ref_link(RenderStyle::SlackWorkflow, &self.snapshot),
                 ),
-                RenderStyle::GitLab => String::new(),
+                RenderStyle::GitLab | RenderStyle::GitHub => String::new(),
             },
         );
         values.insert(
@@ -649,7 +672,7 @@ impl NotificationTemplateContext {
                 String::new()
             } else {
                 match style {
-                    RenderStyle::GitLab => {
+                    RenderStyle::GitLab | RenderStyle::GitHub => {
                         format!("Assigned reviewers: {}", values["reviewers_list"])
                     }
                     RenderStyle::SlackApp => {
@@ -819,7 +842,9 @@ fn format_findings_block(style: RenderStyle, findings: &[FindingView]) -> String
     findings
         .iter()
         .map(|finding| match style {
-            RenderStyle::GitLab => format!("- **{}**: {}", finding.label, finding.message),
+            RenderStyle::GitLab | RenderStyle::GitHub => {
+                format!("- **{}**: {}", finding.label, finding.message)
+            }
             RenderStyle::SlackApp => format!("*{}*: {}", finding.label, finding.message),
             RenderStyle::SlackWorkflow => format!("{}: {}", finding.label, finding.message),
         })
@@ -831,7 +856,9 @@ fn format_actions_block(style: RenderStyle, actions: &[String]) -> String {
     actions
         .iter()
         .map(|action| match style {
-            RenderStyle::GitLab | RenderStyle::SlackWorkflow => format!("- {}", action),
+            RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
+                format!("- {}", action)
+            }
             RenderStyle::SlackApp => format!("• {}", action),
         })
         .collect::<Vec<_>>()
@@ -840,7 +867,7 @@ fn format_actions_block(style: RenderStyle, actions: &[String]) -> String {
 
 fn format_reviewers_list(style: RenderStyle, reviewers: &[String]) -> String {
     match style {
-        RenderStyle::GitLab => reviewers
+        RenderStyle::GitLab | RenderStyle::GitHub => reviewers
             .iter()
             .map(|reviewer| format!("@{}", reviewer))
             .collect::<Vec<_>>()
@@ -864,7 +891,7 @@ fn message_link(style: RenderStyle, url: &str, label: &str) -> String {
     }
 
     match style {
-        RenderStyle::GitLab => format!("[{}]({})", label, url),
+        RenderStyle::GitLab | RenderStyle::GitHub => format!("[{}]({})", label, url),
         RenderStyle::SlackApp => format!("<{}|{}>", url, label),
         RenderStyle::SlackWorkflow => format!("{} ({})", label, url),
     }
@@ -977,12 +1004,12 @@ mod tests {
 
     fn sample_context() -> CiContext {
         CiContext {
-            project_id: crate::context::model::ProjectId("123".to_string()),
-            merge_request: Some(crate::context::model::MergeRequestRef {
-                iid: crate::context::model::MergeRequestIid("456".to_string()),
+            project_key: crate::context::model::ProjectKey("123".to_string()),
+            review: Some(crate::context::model::ReviewContextRef {
+                id: crate::context::model::ReviewId("456".to_string()),
             }),
             pipeline: crate::context::model::PipelineInfo {
-                source: crate::context::model::PipelineSource::MergeRequestEvent,
+                source: crate::context::model::PipelineSource::ReviewEvent,
             },
             branches: crate::context::model::BranchInfo {
                 source: crate::context::model::BranchName("feat/buttons".to_string()),
@@ -1013,7 +1040,7 @@ mod tests {
             }],
         });
 
-        let rendered = render_gitlab_summary(
+        let rendered = render_review_summary(
             &TemplateCatalog::default(),
             &build_summary_template_context(
                 &outcome,
@@ -1021,6 +1048,7 @@ mod tests {
                 &ToneSelector::default(),
                 &sample_context(),
             ),
+            ReviewPlatformKind::GitLab,
         );
 
         assert!(rendered.contains("Mr. Milchick Review Summary"));
@@ -1065,6 +1093,7 @@ mod tests {
             slack_app: Some(FlavorSlackAppConfig::default()),
             templates: FlavorTemplatesConfig {
                 gitlab: FlavorGitLabTemplates::default(),
+                github: crate::config::model::FlavorGitHubTemplates::default(),
                 slack_app: FlavorSlackAppTemplates {
                     first_root: Some("custom root for {{mr_ref}}".to_string()),
                     first_thread: None,
@@ -1095,6 +1124,7 @@ mod tests {
             slack_app: None,
             templates: FlavorTemplatesConfig {
                 gitlab: FlavorGitLabTemplates::default(),
+                github: crate::config::model::FlavorGitHubTemplates::default(),
                 slack_app: FlavorSlackAppTemplates {
                     first_root: Some("custom {{unknown_placeholder}}".to_string()),
                     first_thread: None,

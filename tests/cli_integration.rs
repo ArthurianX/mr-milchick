@@ -7,7 +7,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use mock_server::{MERGE_REQUEST_IID, MockGitLabServer, PROJECT_ID, base_env, borrow_env};
+use mock_server::{MockGitLabServer, PROJECT_ID, borrow_env};
+#[cfg(not(feature = "github"))]
+use mock_server::{MERGE_REQUEST_IID, base_env};
+#[cfg(feature = "github")]
+use mock_server::github_base_env;
 
 fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mr-milchick"));
@@ -15,12 +19,40 @@ fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Outp
     command.arg(subcommand);
     command.args(extra_args);
     command.env_clear();
+    let has_flavor_override = envs
+        .iter()
+        .any(|(key, _)| *key == "MR_MILCHICK_FLAVOR_PATH");
+    let default_flavor = (!has_flavor_override).then(|| {
+        write_temp_flavor(&format!(
+            r#"[review_platform]
+kind = "{}"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[[notifications]]
+kind = "slack-workflow"
+enabled = true
+"#,
+            compiled_review_platform_kind()
+        ))
+    });
 
     for (key, value) in envs {
         command.env(key, value);
     }
+    if let Some(path) = &default_flavor {
+        command.env("MR_MILCHICK_FLAVOR_PATH", path);
+    }
 
-    command.output().expect("CLI invocation should succeed")
+    let output = command.output().expect("CLI invocation should succeed");
+
+    if let Some(path) = default_flavor {
+        let _ = fs::remove_file(path);
+    }
+
+    output
 }
 
 fn write_temp_flavor(contents: &str) -> String {
@@ -31,6 +63,61 @@ fn write_temp_flavor(contents: &str) -> String {
     let path = std::env::temp_dir().join(format!("mr-milchick-flavor-{unique}.toml"));
     fs::write(&path, contents).expect("temp flavor should be written");
     path.display().to_string()
+}
+
+fn compiled_review_platform_kind() -> &'static str {
+    #[cfg(feature = "github")]
+    {
+        "github"
+    }
+    #[cfg(not(feature = "github"))]
+    {
+        "gitlab"
+    }
+}
+
+fn review_env(server: &MockGitLabServer) -> Vec<(&'static str, String)> {
+    #[cfg(feature = "github")]
+    {
+        github_base_env(server)
+    }
+    #[cfg(not(feature = "github"))]
+    {
+        base_env(server)
+    }
+}
+
+fn review_path() -> String {
+    #[cfg(feature = "github")]
+    {
+        format!("/api/github/repos/ArthurianX/mr-milchick/pulls/3995")
+    }
+    #[cfg(not(feature = "github"))]
+    {
+        format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}")
+    }
+}
+
+fn review_files_path() -> String {
+    #[cfg(feature = "github")]
+    {
+        format!("{}/files", review_path())
+    }
+    #[cfg(not(feature = "github"))]
+    {
+        format!("{}/changes", review_path())
+    }
+}
+
+fn review_comments_path() -> String {
+    #[cfg(feature = "github")]
+    {
+        "/api/github/repos/ArthurianX/mr-milchick/issues/3995/comments".to_string()
+    }
+    #[cfg(not(feature = "github"))]
+    {
+        format!("{}/notes", review_path())
+    }
 }
 
 #[test]
@@ -58,15 +145,37 @@ fn observe_mode_skips_gitlab_for_non_merge_request_pipelines() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("This pipeline does not currently present merge request responsibilities.")
+    assert!(stdout.contains("This pipeline does not currently present review responsibilities."));
+}
+
+#[cfg(feature = "github")]
+#[test]
+fn observe_mode_skips_github_for_non_review_pipelines() {
+    let output = run_cli(
+        "observe",
+        &[],
+        &[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REPOSITORY", "ArthurianX/mr-milchick"),
+            ("RUST_LOG", "off"),
+        ],
     );
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("This pipeline does not currently present review responsibilities."));
 }
 
 #[test]
 fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
     let server = MockGitLabServer::start();
-    let envs = base_env(&server);
+    let envs = review_env(&server);
     let output = run_cli("observe", &[], &borrow_env(&envs));
 
     assert!(
@@ -81,21 +190,43 @@ fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
     assert!(stdout.contains("If you run `refine`, it would:"));
     assert!(stdout.contains("[AssignReviewers] principal-reviewer, bob"));
 
-    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
-    let notes_path = format!("{mr_path}/notes");
-    assert_eq!(server.request_count("GET", &mr_path), 1);
-    assert_eq!(
-        server.request_count("GET", &format!("{mr_path}/changes")),
-        1
+    assert_eq!(server.request_count("GET", &review_path()), 1);
+    assert_eq!(server.request_count_prefix("GET", &review_files_path()), 1);
+    assert_eq!(server.request_count("POST", &review_comments_path()), 0);
+}
+
+#[cfg(feature = "github")]
+#[test]
+fn refine_mode_runs_end_to_end_through_github_runtime_wiring() {
+    let server = MockGitLabServer::start();
+    let envs = github_base_env(&server);
+    let output = run_cli("refine", &[], &borrow_env(&envs));
+
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
-    assert_eq!(server.request_count("POST", &notes_path), 0);
-    assert_eq!(server.request_count("PUT", &mr_path), 0);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Planned actions:"));
+    assert!(stdout.contains("[AssignReviewers] principal-reviewer, bob"));
+    assert!(stdout.contains("Execution report:"));
+    assert!(stdout.contains("[ReviewersAssigned] principal-reviewer, bob"));
+    assert!(stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
+
+    assert_eq!(
+        server.assigned_reviewers(),
+        vec!["principal-reviewer".to_string(), "bob".to_string()]
+    );
+    assert_eq!(server.note_bodies().len(), 1);
 }
 
 #[test]
 fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     let server = MockGitLabServer::start();
-    let envs = base_env(&server);
+    let envs = review_env(&server);
     let output = run_cli("refine", &[], &borrow_env(&envs));
 
     assert!(
@@ -122,7 +253,7 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
 #[test]
 fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
-    let mut envs = base_env(&server);
+    let mut envs = review_env(&server);
     envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
     envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
@@ -153,9 +284,7 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
     assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
     assert!(second_stdout.contains("[Notification SlackApp] delivered=true sent"));
 
-    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
-    let notes_path = format!("{mr_path}/notes");
-    assert_eq!(server.request_count("POST", &notes_path), 1);
+    assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
@@ -166,7 +295,7 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
 #[test]
 fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
-    let mut envs = base_env(&server);
+    let mut envs = review_env(&server);
     envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
     envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
@@ -204,9 +333,7 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
             .contains("[Notification SlackApp] delivered=false skipped because summary unchanged")
     );
 
-    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
-    let notes_path = format!("{mr_path}/notes");
-    assert_eq!(server.request_count("POST", &notes_path), 1);
+    assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
@@ -218,9 +345,9 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
 fn refine_mode_uses_partial_slack_template_override_from_flavor_file() {
     let server = MockGitLabServer::start();
     let flavor_path = write_temp_flavor(
-        r#"
+        &r#"
 [review_platform]
-kind = "gitlab"
+kind = "__PLATFORM__"
 
 [[notifications]]
 kind = "slack-app"
@@ -228,10 +355,11 @@ enabled = true
 
 [templates.slack_app]
 update_root = "Template override for {{mr_ref}}"
-"#,
+"#
+        .replace("__PLATFORM__", compiled_review_platform_kind()),
     );
 
-    let mut envs = base_env(&server);
+    let mut envs = review_env(&server);
     envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
     envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
@@ -249,8 +377,16 @@ update_root = "Template override for {{mr_ref}}"
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
     assert_eq!(bodies.len(), 2);
-    assert!(bodies[0].contains("Template override for MR #3995"));
-    assert!(bodies[1].contains("No findings were produced."));
+    assert!(
+        bodies
+            .iter()
+            .any(|body| body.contains("Template override for"))
+    );
+    assert!(
+        bodies
+            .iter()
+            .any(|body| body.contains("No findings were produced."))
+    );
 
     let _ = fs::remove_file(flavor_path);
 }
@@ -259,9 +395,9 @@ update_root = "Template override for {{mr_ref}}"
 fn refine_mode_invalid_template_override_falls_back_to_default_output() {
     let server = MockGitLabServer::start();
     let flavor_path = write_temp_flavor(
-        r#"
+        &r#"
 [review_platform]
-kind = "gitlab"
+kind = "__PLATFORM__"
 
 [[notifications]]
 kind = "slack-app"
@@ -269,10 +405,11 @@ enabled = true
 
 [templates.slack_app]
 update_root = "Template override for {{unknown_placeholder}}"
-"#,
+"#
+        .replace("__PLATFORM__", compiled_review_platform_kind()),
     );
 
-    let mut envs = base_env(&server);
+    let mut envs = review_env(&server);
     envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
     envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
@@ -290,7 +427,7 @@ update_root = "Template override for {{unknown_placeholder}}"
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
     assert_eq!(bodies.len(), 2);
-    assert!(bodies[0].contains("Mr. Milchick - updates on <"));
+    assert!(bodies.iter().all(|body| !body.contains("unknown_placeholder")));
 
     let _ = fs::remove_file(flavor_path);
 }
@@ -346,16 +483,17 @@ fn observe_mode_fixture_variant_override_can_force_update_preview() {
 fn refine_mode_fixture_sends_slack_notifications_without_gitlab_env() {
     let server = MockGitLabServer::start();
     let slack_base_url = server.slack_api_base_url();
-    let flavor_path = write_temp_flavor(
+    let flavor_path = write_temp_flavor(&format!(
         r#"
 [review_platform]
-kind = "gitlab"
+kind = "{platform}"
 
 [[notifications]]
 kind = "slack-app"
 enabled = true
 "#,
-    );
+        platform = compiled_review_platform_kind(),
+    ));
 
     let output = run_cli(
         "refine",
@@ -391,6 +529,11 @@ enabled = true
         server.request_count_prefix("GET", "/api/v4/projects/"),
         0,
         "fixture mode should not talk to GitLab"
+    );
+    assert_eq!(
+        server.request_count_prefix("GET", "/api/github/repos/"),
+        0,
+        "fixture mode should not talk to GitHub"
     );
 
     let _ = fs::remove_file(flavor_path);

@@ -1,0 +1,33 @@
+notification_policy = "always"
+
+[review_platform]
+kind = "github"
+
+[[notifications]]
+kind = "slack-workflow"
+enabled = false
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+
+[slack_app.user_map]
+"arthur" = "U028DDKDJ4E"
+"principal-reviewer" = "U03D9NN5HB6"
+"bob" = "U028GSCQBUJ"
+
+[templates.slack_app]
+first_root = ":github: {{notification_subject}} :pepe-review:"
+first_thread = """
+*{{notification_title}}*
+Pull request: {{mr_link}}
+{{reviewers_line}}
+"""
+
+update_root = ":github: {{notification_subject}} :thread:"
+update_thread = """
+Pull request: {{mr_link}}
+{{findings_block}}
+{{actions_block}}
+_{{summary_footer}}_
+"""

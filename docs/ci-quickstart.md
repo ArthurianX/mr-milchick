@@ -1,15 +1,15 @@
 # CI Quickstart
 
-This guide shows the shortest path to running Mr Milchick in a GitLab merge request pipeline, then layering on Slack delivery.
+This guide shows the shortest path to running Mr Milchick in a GitLab merge request pipeline, then layering on Slack delivery. GitHub connector support and tag-based GitHub Releases now ship from the same repository, but the example below keeps the GitLab CI rollout path because it mirrors the existing pipeline model directly.
 
 ## What You Need
 
-Mr Milchick currently supports one review connector and two optional notification sinks:
+Mr Milchick currently supports two review connectors and two optional notification sinks:
 
-- review connector: GitLab
+- review connectors: GitLab, GitHub
 - notification sinks: Slack workflow, Slack app
 
-The binary expects GitLab merge request CI variables at runtime. Real GitLab reads and writes also require `GITLAB_TOKEN`.
+The binary expects platform review context at runtime. Real GitLab reads and writes require `GITLAB_TOKEN`; real GitHub reads and writes require `GITHUB_TOKEN`.
 
 ## Minimal Flavor File
 
@@ -29,6 +29,8 @@ enabled = false
 ```
 
 Save that as `mr-milchick.toml` in the repo root, or point `MR_MILCHICK_FLAVOR_PATH` at another file. If you omit the file entirely, compiled notification sinks are treated as enabled by default.
+
+For GitHub builds, switch `kind = "gitlab"` to `kind = "github"`.
 
 ## Example GitLab Pipeline
 
@@ -75,6 +77,17 @@ milchick:observe:
 ```
 
 Once the planned output looks right, rename the job and switch the command to `./dist/mr-milchick refine`.
+
+## GitHub Releases
+
+This repository now includes [`.github/workflows/release.yml`](../.github/workflows/release.yml). On tag pushes it:
+
+- verifies the tagged commit is on `master`
+- runs `cargo test --workspace --locked`
+- builds Linux musl artifacts for both `gitlab` and `github`
+- publishes a GitHub Release with both connector-specific binaries and flavor examples
+
+For day-to-day GitHub pull request execution, [`.github/workflows/review.yml`](../.github/workflows/review.yml) starts the connector in `observe` mode on `pull_request` and points `MR_MILCHICK_FLAVOR_PATH` at [`mr-milchick.github.toml`](../mr-milchick.github.toml). Keep that workflow on `observe` until the output matches your expectations, then switch it to `refine` when you are ready for live reviewer assignment and summary upserts.
 
 ## Required Variables
 

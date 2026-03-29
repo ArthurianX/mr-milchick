@@ -13,6 +13,17 @@ use serde_json::{Value, json};
 
 pub const PROJECT_ID: &str = "412";
 pub const MERGE_REQUEST_IID: &str = "3995";
+pub const GITHUB_PROJECT_KEY: &str = "ArthurianX/mr-milchick";
+pub const PULL_REQUEST_NUMBER: &str = "3995";
+
+#[derive(Debug, Clone)]
+struct MockGithubFile {
+    path: String,
+    previous_path: Option<String>,
+    status: String,
+    additions: Option<u32>,
+    deletions: Option<u32>,
+}
 
 #[derive(Debug, Clone)]
 struct RequestRecord {
@@ -31,6 +42,7 @@ struct MockNote {
 struct ServerState {
     reviewers: Vec<String>,
     notes: Vec<MockNote>,
+    github_files: Vec<MockGithubFile>,
     request_log: Vec<RequestRecord>,
     next_note_id: u64,
     next_slack_ts: u64,
@@ -45,10 +57,21 @@ pub struct MockGitLabServer {
 
 impl MockGitLabServer {
     pub fn start() -> Self {
-        Self::start_with_reviewers(Vec::new())
+        Self::start_with_reviewers_and_github_files(Vec::new(), 1)
     }
 
     pub fn start_with_reviewers(reviewers: Vec<&str>) -> Self {
+        Self::start_with_reviewers_and_github_files(reviewers, 1)
+    }
+
+    pub fn start_with_github_file_count(file_count: usize) -> Self {
+        Self::start_with_reviewers_and_github_files(Vec::new(), file_count)
+    }
+
+    pub fn start_with_reviewers_and_github_files(
+        reviewers: Vec<&str>,
+        file_count: usize,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
         listener
             .set_nonblocking(true)
@@ -63,6 +86,7 @@ impl MockGitLabServer {
                 .map(|value| value.to_string())
                 .collect(),
             notes: Vec::new(),
+            github_files: github_files(file_count),
             request_log: Vec::new(),
             next_note_id: 1,
             next_slack_ts: 1,
@@ -99,6 +123,10 @@ impl MockGitLabServer {
 
     pub fn slack_api_base_url(&self) -> String {
         format!("http://{}/slack/api", self.address)
+    }
+
+    pub fn github_api_base_url(&self) -> String {
+        format!("http://{}/api/github", self.address)
     }
 
     pub fn request_count(&self, method: &str, path: &str) -> usize {
@@ -299,6 +327,11 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
     let notes_path = format!("{mr_path}/notes");
     let changes_path = format!("{mr_path}/changes");
+    let pr_path = format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}");
+    let requested_reviewers_path = format!("{pr_path}/requested_reviewers");
+    let files_path = format!("{pr_path}/files");
+    let issue_comments_path =
+        format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
     let slack_post_message_path = "/slack/api/chat.postMessage";
 
     match (request.method.as_str(), request.path.as_str()) {
@@ -331,6 +364,50 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             })
             .to_string(),
         },
+        ("GET", path) if path == pr_path => HttpResponse {
+            status_code: 200,
+            body: json!({
+                "number": 3995,
+                "title": "Frontend adjustments",
+                "body": "Refresh the UI flow",
+                "state": "open",
+                "draft": false,
+                "html_url": "https://github.com/ArthurianX/mr-milchick/pull/3995",
+                "user": {"login": "arthur"},
+                "requested_reviewers": state.reviewers.iter().map(|username| json!({"login": username})).collect::<Vec<_>>(),
+                "labels": [{"name": "frontend"}],
+            })
+            .to_string(),
+        },
+        ("GET", path) if path.starts_with(&files_path) => {
+            let page = query_param(path, "page")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(1);
+            let per_page = query_param(path, "per_page")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(100);
+            let start = per_page.saturating_mul(page.saturating_sub(1));
+            let files = state
+                .github_files
+                .iter()
+                .skip(start)
+                .take(per_page)
+                .map(|file| {
+                    json!({
+                        "filename": file.path,
+                        "previous_filename": file.previous_path,
+                        "status": file.status,
+                        "additions": file.additions,
+                        "deletions": file.deletions,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            HttpResponse {
+                status_code: 200,
+                body: json!(files).to_string(),
+            }
+        }
         ("GET", path) if path == notes_path => HttpResponse {
             status_code: 200,
             body: json!(
@@ -342,6 +419,27 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             )
             .to_string(),
         },
+        ("GET", path) if path.starts_with(&issue_comments_path) => {
+            let page = query_param(path, "page")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(1);
+            let per_page = query_param(path, "per_page")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(100);
+            let start = per_page.saturating_mul(page.saturating_sub(1));
+            let comments = state
+                .notes
+                .iter()
+                .skip(start)
+                .take(per_page)
+                .map(|note| json!({"id": note.id, "body": note.body}))
+                .collect::<Vec<_>>();
+
+            HttpResponse {
+                status_code: 200,
+                body: json!(comments).to_string(),
+            }
+        }
         ("GET", path) if path.starts_with("/api/v4/users?username=") => {
             let username = path
                 .split_once("username=")
@@ -373,12 +471,54 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: "{}".to_string(),
             }
         }
+        ("POST", path) if path == requested_reviewers_path => {
+            let body: Value =
+                serde_json::from_str(&request.body).expect("reviewer request should be JSON");
+            let reviewers = body["reviewers"]
+                .as_array()
+                .expect("reviewers should be an array");
+
+            state.reviewers = reviewers
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .expect("reviewer username should be a string")
+                        .to_string()
+                })
+                .collect();
+
+            HttpResponse {
+                status_code: 200,
+                body: "{}".to_string(),
+            }
+        }
         ("POST", path) if path == notes_path => {
             let body: Value =
                 serde_json::from_str(&request.body).expect("note creation should be JSON");
             let note_body = body["body"]
                 .as_str()
                 .expect("note body should be a string")
+                .to_string();
+
+            let note_id = state.next_note_id;
+            state.next_note_id += 1;
+            state.notes.push(MockNote {
+                id: note_id,
+                body: note_body,
+            });
+
+            HttpResponse {
+                status_code: 201,
+                body: json!({"id": note_id}).to_string(),
+            }
+        }
+        ("POST", path) if path == issue_comments_path => {
+            let body: Value =
+                serde_json::from_str(&request.body).expect("comment creation should be JSON");
+            let note_body = body["body"]
+                .as_str()
+                .expect("comment body should be a string")
                 .to_string();
 
             let note_id = state.next_note_id;
@@ -412,6 +552,36 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 .iter_mut()
                 .find(|note| note.id == note_id)
                 .expect("existing note should be present for update");
+            note.body = note_body;
+
+            HttpResponse {
+                status_code: 200,
+                body: json!({"id": note_id}).to_string(),
+            }
+        }
+        ("PATCH", path)
+            if path.starts_with(&format!(
+                "/api/github/repos/{GITHUB_PROJECT_KEY}/issues/comments/"
+            )) =>
+        {
+            let note_id = path
+                .rsplit('/')
+                .next()
+                .expect("comment path should include id")
+                .parse::<u64>()
+                .expect("comment id should be numeric");
+            let body: Value =
+                serde_json::from_str(&request.body).expect("comment update should be JSON");
+            let note_body = body["body"]
+                .as_str()
+                .expect("comment body should be a string")
+                .to_string();
+
+            let note = state
+                .notes
+                .iter_mut()
+                .find(|note| note.id == note_id)
+                .expect("existing comment should be present for update");
             note.body = note_body;
 
             HttpResponse {
@@ -454,6 +624,30 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             body: json!({"error": "unmatched route", "path": request.path}).to_string(),
         },
     }
+}
+
+fn github_files(count: usize) -> Vec<MockGithubFile> {
+    (0..count)
+        .map(|index| MockGithubFile {
+            path: if index == 0 {
+                "apps/frontend/button.tsx".to_string()
+            } else {
+                format!("packages/pkg-{index}/src/lib.rs")
+            },
+            previous_path: None,
+            status: "modified".to_string(),
+            additions: Some(10),
+            deletions: Some(2),
+        })
+        .collect()
+}
+
+fn query_param<'a>(path: &'a str, key: &str) -> Option<&'a str> {
+    let query = path.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then_some(value)
+    })
 }
 
 fn user_lookup(username: &str) -> Value {
@@ -514,4 +708,49 @@ pub fn borrow_env<'a>(envs: &'a [(&'static str, String)]) -> Vec<(&'a str, &'a s
     envs.iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect()
+}
+
+pub fn github_base_env(server: &MockGitLabServer) -> Vec<(&'static str, String)> {
+    vec![
+        ("GITHUB_ACTIONS", "true".to_string()),
+        ("GITHUB_EVENT_NAME", "pull_request".to_string()),
+        ("GITHUB_REPOSITORY", GITHUB_PROJECT_KEY.to_string()),
+        (
+            "GITHUB_EVENT_PATH",
+            write_github_event_payload().display().to_string(),
+        ),
+        ("GITHUB_TOKEN", "test-token".to_string()),
+        ("GITHUB_API_BASE_URL", server.github_api_base_url()),
+        (
+            "MR_MILCHICK_REVIEWERS",
+            r#"[{"username":"milchick-duty","fallback":true},{"username":"principal-reviewer","mandatory":true},{"username":"bob","areas":["frontend"]}]"#.to_string(),
+        ),
+        ("MR_MILCHICK_MAX_REVIEWERS", "2".to_string()),
+        ("MR_MILCHICK_CODEOWNERS_ENABLED", "false".to_string()),
+        ("MR_MILCHICK_SLACK_ENABLED", "false".to_string()),
+        ("RUST_LOG", "off".to_string()),
+    ]
+}
+
+fn write_github_event_payload() -> std::path::PathBuf {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("mr-milchick-github-event-{unique}.json"));
+    std::fs::write(
+        &path,
+        json!({
+            "number": 3995,
+            "pull_request": {
+                "number": 3995,
+                "head": { "ref": "feat/intentional-cleanup" },
+                "base": { "ref": "develop" },
+                "labels": [{"name": "frontend"}]
+            }
+        })
+        .to_string(),
+    )
+    .expect("github event payload should be written");
+    path
 }

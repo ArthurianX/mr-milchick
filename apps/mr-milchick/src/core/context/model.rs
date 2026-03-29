@@ -1,19 +1,19 @@
 #[derive(Debug, Clone)]
 pub struct CiContext {
-    pub project_id: ProjectId,
-    pub merge_request: Option<MergeRequestRef>,
+    pub project_key: ProjectKey,
+    pub review: Option<ReviewContextRef>,
     pub pipeline: PipelineInfo,
     pub branches: BranchInfo,
     pub labels: Vec<Label>,
 }
 
 impl CiContext {
-    pub fn is_merge_request_pipeline(&self) -> bool {
-        self.pipeline.source == PipelineSource::MergeRequestEvent && self.merge_request.is_some()
+    pub fn is_review_pipeline(&self) -> bool {
+        self.pipeline.source == PipelineSource::ReviewEvent && self.review.is_some()
     }
 
-    pub fn merge_request_iid(&self) -> Option<&str> {
-        self.merge_request.as_ref().map(|mr| mr.iid.0.as_str())
+    pub fn review_id(&self) -> Option<&str> {
+        self.review.as_ref().map(|review| review.id.0.as_str())
     }
 
     pub fn has_label(&self, label: &str) -> bool {
@@ -32,21 +32,21 @@ impl CiContext {
         BranchKind::from_branch_name(self.source_branch())
     }
 
-    pub fn project_id(&self) -> &str {
-        self.project_id.0.as_str()
+    pub fn project_key(&self) -> &str {
+        self.project_key.0.as_str()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct ProjectId(pub String);
+pub struct ProjectKey(pub String);
 
 #[derive(Debug, Clone)]
-pub struct MergeRequestRef {
-    pub iid: MergeRequestIid,
+pub struct ReviewContextRef {
+    pub id: ReviewId,
 }
 
 #[derive(Debug, Clone)]
-pub struct MergeRequestIid(pub String);
+pub struct ReviewId(pub String);
 
 #[derive(Debug, Clone)]
 pub struct Label(pub String);
@@ -67,7 +67,7 @@ pub struct PipelineInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineSource {
-    MergeRequestEvent,
+    ReviewEvent,
     Push,
     Schedule,
     Unknown,
@@ -104,12 +104,12 @@ mod tests {
 
     fn sample_context() -> CiContext {
         CiContext {
-            project_id: ProjectId("123".to_string()),
-            merge_request: Some(MergeRequestRef {
-                iid: MergeRequestIid("456".to_string()),
+            project_key: ProjectKey("123".to_string()),
+            review: Some(ReviewContextRef {
+                id: ReviewId("456".to_string()),
             }),
             pipeline: PipelineInfo {
-                source: PipelineSource::MergeRequestEvent,
+                source: PipelineSource::ReviewEvent,
             },
             branches: BranchInfo {
                 source: BranchName("epic/test-thing".to_string()),
@@ -123,15 +123,15 @@ mod tests {
     }
 
     #[test]
-    fn detects_merge_request_pipeline() {
+    fn detects_review_pipeline() {
         let ctx = sample_context();
-        assert!(ctx.is_merge_request_pipeline());
+        assert!(ctx.is_review_pipeline());
     }
 
     #[test]
-    fn finds_merge_request_iid() {
+    fn finds_review_id() {
         let ctx = sample_context();
-        assert_eq!(ctx.merge_request_iid(), Some("456"));
+        assert_eq!(ctx.review_id(), Some("456"));
     }
 
     #[test]
@@ -156,9 +156,9 @@ mod tests {
     }
 
     #[test]
-    fn detects_non_mr_pipeline_when_mr_is_missing() {
+    fn detects_non_review_pipeline_when_review_is_missing() {
         let mut ctx = sample_context();
-        ctx.merge_request = None;
-        assert!(!ctx.is_merge_request_pipeline());
+        ctx.review = None;
+        assert!(!ctx.is_review_pipeline());
     }
 }
