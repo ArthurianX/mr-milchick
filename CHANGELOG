@@ -7,6 +7,38 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [2.0.0] — 2026-03-29
+
+This release adds first-class GitHub pull request support and formalizes the connector-neutral runtime model.
+
+### Added
+
+- GitHub review connector with snapshot loading, reviewer assignment, summary comment upsert, and pagination-aware API access.
+- GitHub Actions workflows for:
+  - pull request `observe` execution
+  - tag-based GitHub Releases that publish both GitLab and GitHub binaries
+- GitHub-specific flavor example in `mr-milchick.github.toml`.
+- Connector-specific release assets for:
+  - `mr-milchick-gitlab-linux-x86_64-musl`
+  - `mr-milchick-github-linux-x86_64-musl`
+
+### Changed
+
+- CI context loading is now review-platform aware and can read either GitLab CI or GitHub Actions metadata.
+- Flavor templates now support both `[templates.gitlab]` and `[templates.github]`.
+- Capability reporting now prints the actually compiled review connector instead of assuming GitLab.
+- Documentation now describes both supported review connectors and the GitHub release workflow.
+
+### Breaking Changes
+
+- Public Rust context types were renamed to connector-neutral forms:
+  - `ProjectId` -> `ProjectKey`
+  - `MergeRequestRef` -> `ReviewContextRef`
+  - `MergeRequestIid` -> `ReviewId`
+- Public `CiContext` helpers were renamed from merge-request-specific names to review-neutral names.
+- Summary rendering is now selected by review platform rather than a GitLab-only public function path.
+- The default build now compiles the GitHub connector plus Slack sinks.
+
 ## [1.4.0] — 2026-03-28
 
 This release adds connector-owned message templating and a much better local iteration loop for notification work.

@@ -111,7 +111,7 @@ Use the version command in CI logs:
 Current output shape:
 
 ```text
-mr-milchick 1.4.0 (<git-sha> <build-date>)
+mr-milchick 2.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - review platform: gitlab
 - notification sinks: slack-app, slack-workflow
@@ -120,7 +120,7 @@ Compiled capabilities:
 GitHub build shape:
 
 ```text
-mr-milchick 1.4.0 (<git-sha> <build-date>)
+mr-milchick 2.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - review platform: github
 - notification sinks: slack-app, slack-workflow
