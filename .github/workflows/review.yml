@@ -1,0 +1,21 @@
+name: Review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Observe pull request
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MR_MILCHICK_FLAVOR_PATH: mr-milchick.github.toml
+        run: cargo run --locked --no-default-features --features "github slack-app slack-workflow" -- observe

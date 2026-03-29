@@ -40,6 +40,19 @@ enabled = true
 #_{{closing_tone_message}}_
 #"""
 
+#[templates.github]
+#summary = """
+## {{summary_title}}
+#
+#{{summary_intro}}
+#
+#{{findings_block}}
+#
+#{{actions_block}}
+#
+#_{{closing_tone_message}}_
+#"""
+
 [templates.slack_app]
 
 first_root = ":gitlab: {{notification_subject}} :pepe-review:"

@@ -34,18 +34,18 @@ mod tests {
     use super::*;
     use crate::core::actions::model::Action;
     use crate::core::context::model::{
-        BranchInfo, BranchName, CiContext, Label, MergeRequestIid, MergeRequestRef, PipelineInfo,
-        PipelineSource, ProjectId,
+        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
+        ReviewContextRef, ReviewId,
     };
 
     fn base_context() -> CiContext {
         CiContext {
-            project_id: ProjectId("123".to_string()),
-            merge_request: Some(MergeRequestRef {
-                iid: MergeRequestIid("456".to_string()),
+            project_key: ProjectKey("123".to_string()),
+            review: Some(ReviewContextRef {
+                id: ReviewId("456".to_string()),
             }),
             pipeline: PipelineInfo {
-                source: PipelineSource::MergeRequestEvent,
+                source: PipelineSource::ReviewEvent,
             },
             branches: BranchInfo {
                 source: BranchName("epic/big-thing".to_string()),

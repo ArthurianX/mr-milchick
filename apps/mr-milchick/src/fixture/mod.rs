@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::context::model::{
-    BranchInfo, BranchName, CiContext, Label, MergeRequestIid, MergeRequestRef, PipelineInfo,
-    PipelineSource, ProjectId,
+    BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
+    ReviewContextRef, ReviewId,
 };
 use crate::core::actions::model::ActionPlan;
 use crate::core::message_templates::NotificationTemplateVariant;
@@ -103,9 +103,9 @@ impl ReviewFixture {
 
     pub fn to_ci_context(&self) -> Result<CiContext> {
         Ok(CiContext {
-            project_id: ProjectId(self.project_id.trim().to_string()),
-            merge_request: Some(MergeRequestRef {
-                iid: MergeRequestIid(self.merge_request_iid.trim().to_string()),
+            project_key: ProjectKey(self.project_id.trim().to_string()),
+            review: Some(ReviewContextRef {
+                id: ReviewId(self.merge_request_iid.trim().to_string()),
             }),
             pipeline: PipelineInfo {
                 source: parse_pipeline_source(&self.pipeline_source)?,
@@ -124,19 +124,19 @@ impl ReviewFixture {
         })
     }
 
-    pub fn to_review_snapshot(&self) -> Result<ReviewSnapshot> {
-        let repository_url = repository_url_from_review_url(&self.merge_request.url);
+    pub fn to_review_snapshot(&self, platform: ReviewPlatformKind) -> Result<ReviewSnapshot> {
+        let repository_url = repository_url_from_review_url(platform, &self.merge_request.url);
         let (namespace, name) = repository_identity_from_url(repository_url.as_deref());
 
         Ok(ReviewSnapshot {
             review_ref: ReviewRef {
-                platform: ReviewPlatformKind::GitLab,
+                platform,
                 project_key: self.project_id.clone(),
                 review_id: self.merge_request_iid.clone(),
                 web_url: Some(self.merge_request.url.clone()),
             },
             repository: RepositoryRef {
-                platform: ReviewPlatformKind::GitLab,
+                platform,
                 namespace,
                 name,
                 web_url: repository_url,
@@ -256,7 +256,9 @@ impl FixtureAction {
 
 fn parse_pipeline_source(raw: &str) -> Result<PipelineSource> {
     match raw.trim() {
-        "merge_request_event" => Ok(PipelineSource::MergeRequestEvent),
+        "merge_request_event" | "pull_request" | "pull_request_target" => {
+            Ok(PipelineSource::ReviewEvent)
+        }
         "push" => Ok(PipelineSource::Push),
         "schedule" => Ok(PipelineSource::Schedule),
         "unknown" => Ok(PipelineSource::Unknown),
@@ -275,11 +277,16 @@ fn parse_change_type(raw: &str) -> Result<ChangeType> {
     }
 }
 
-fn repository_url_from_review_url(review_url: &str) -> Option<String> {
-    review_url
-        .split_once("/-/merge_requests/")
-        .map(|(prefix, _)| prefix.to_string())
-        .filter(|value| !value.trim().is_empty())
+fn repository_url_from_review_url(
+    platform: ReviewPlatformKind,
+    review_url: &str,
+) -> Option<String> {
+    let prefix = match platform {
+        ReviewPlatformKind::GitLab => review_url.split_once("/-/merge_requests/"),
+        ReviewPlatformKind::GitHub => review_url.split_once("/pull/"),
+    }?;
+
+    Some(prefix.0.to_string()).filter(|value| !value.trim().is_empty())
 }
 
 fn repository_identity_from_url(repository_url: Option<&str>) -> (String, String) {
@@ -343,10 +350,12 @@ reviewers = ["bob"]
         .expect("fixture should parse");
 
         let ctx = fixture.to_ci_context().expect("context should build");
-        let snapshot = fixture.to_review_snapshot().expect("snapshot should build");
+        let snapshot = fixture
+            .to_review_snapshot(ReviewPlatformKind::GitLab)
+            .expect("snapshot should build");
         let outcome = fixture.to_rule_outcome().expect("outcome should build");
 
-        assert!(ctx.is_merge_request_pipeline());
+        assert!(ctx.is_review_pipeline());
         assert_eq!(snapshot.review_ref.review_id, "3995");
         assert_eq!(snapshot.changed_files.len(), 1);
         assert_eq!(outcome.findings.len(), 1);

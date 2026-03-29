@@ -2,6 +2,9 @@ use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 
+#[cfg(feature = "github")]
+use crate::connectors::github::{GitHubReviewConnector, render_github_markdown};
+#[cfg(feature = "gitlab")]
 use crate::connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown};
 #[cfg(feature = "slack-app")]
 use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
@@ -20,7 +23,7 @@ use crate::core::domain::reviewer_routing::{
 use crate::core::domain::snapshot_analysis::summarize_areas;
 use crate::core::message_templates::{
     build_notification_template_context, build_summary_template_context,
-    notification_template_variant, render_gitlab_summary, render_slack_app_notification,
+    notification_template_variant, render_review_summary, render_slack_app_notification,
     render_slack_workflow_notification, resolve_template_catalog,
 };
 use crate::core::model::{
@@ -43,8 +46,6 @@ use crate::runtime::{ConnectorError, NotificationSink, ReviewConnector};
 compile_error!("Exactly one review connector feature must be enabled.");
 #[cfg(not(any(feature = "gitlab", feature = "github")))]
 compile_error!("Exactly one review connector feature must be enabled.");
-#[cfg(feature = "github")]
-compile_error!("The GitHub review connector is not implemented yet.");
 
 #[derive(Debug, Clone)]
 struct AppConfigContext {
@@ -75,7 +76,7 @@ fn load_app_config_context() -> Result<AppConfigContext> {
 #[async_trait::async_trait]
 impl ReviewConnector for FixtureReviewConnector {
     fn kind(&self) -> ReviewPlatformKind {
-        ReviewPlatformKind::GitLab
+        compiled_review_platform()
     }
 
     async fn load_snapshot(
@@ -117,6 +118,27 @@ impl ReviewConnector for FixtureReviewConnector {
         }
 
         Ok(report)
+    }
+}
+
+fn compiled_review_platform() -> ReviewPlatformKind {
+    #[cfg(feature = "gitlab")]
+    {
+        ReviewPlatformKind::GitLab
+    }
+    #[cfg(feature = "github")]
+    {
+        ReviewPlatformKind::GitHub
+    }
+}
+
+fn render_summary_for_platform(markdown: &str, platform: ReviewPlatformKind) -> String {
+    match platform {
+        #[cfg(feature = "gitlab")]
+        ReviewPlatformKind::GitLab => render_gitlab_markdown(markdown),
+        #[cfg(feature = "github")]
+        ReviewPlatformKind::GitHub => render_github_markdown(markdown),
+        _ => unreachable!("unsupported compiled review platform"),
     }
 }
 
@@ -166,15 +188,15 @@ pub async fn run_mode(
         fixture_notification_variant =
             fixture_notification_variant.or_else(|| fixture.notification_template_variant());
         ctx = fixture.to_ci_context()?;
-        snapshot = fixture.to_review_snapshot()?;
+        snapshot = fixture.to_review_snapshot(compiled_review_platform())?;
         outcome = fixture.to_rule_outcome()?;
     } else {
         ctx = build_ci_context()?;
         println!("{}", selector.select(ToneCategory::Observation, &ctx));
         print_compiled_capabilities();
 
-        if !ctx.is_merge_request_pipeline() {
-            println!("This pipeline does not currently present merge request responsibilities.");
+        if !ctx.is_review_pipeline() {
+            println!("This pipeline does not currently present review responsibilities.");
             return Ok(());
         }
 
@@ -200,9 +222,10 @@ pub async fn run_mode(
     };
     let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
 
-    let summary = render_gitlab_summary(
+    let summary = render_review_summary(
         &template_catalog,
         &build_summary_template_context(&outcome, &snapshot, &selector, &ctx),
+        compiled_review_platform(),
     );
     outcome.action_plan.push(ReviewAction::UpsertSummary {
         markdown: summary.clone(),
@@ -236,7 +259,10 @@ pub async fn run_mode(
                 .iter()
                 .find(|action| matches!(action, ReviewAction::UpsertSummary { .. }))
             {
-                println!("{}", render_gitlab_markdown(markdown));
+                println!(
+                    "{}",
+                    render_summary_for_platform(markdown, compiled_review_platform())
+                );
             }
             println!("---");
             print_snapshot_details(&snapshot);
@@ -307,19 +333,31 @@ fn build_runtime_wiring(
     flavor: Option<&FlavorConfig>,
 ) -> Result<RuntimeWiring> {
     validate_flavor(flavor)?;
+    let review_id = ctx
+        .review_id()
+        .ok_or_else(|| anyhow::anyhow!("missing review identifier"))?;
 
-    let gitlab = GitLabReviewConnector::new(
+    #[cfg(feature = "gitlab")]
+    let review_connector: Box<dyn ReviewConnector> = Box::new(GitLabReviewConnector::new(
         crate::connectors::gitlab::api::GitLabConfig::from_env()?,
-        ctx.project_id(),
-        ctx.merge_request_iid()
-            .ok_or_else(|| anyhow::anyhow!("missing merge request IID"))?,
+        ctx.project_key(),
+        review_id,
         ctx.source_branch(),
         ctx.target_branch(),
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
-    );
+    ));
+    #[cfg(feature = "github")]
+    let review_connector: Box<dyn ReviewConnector> = Box::new(GitHubReviewConnector::new(
+        crate::connectors::github::api::GitHubConfig::from_env()?,
+        ctx.project_key(),
+        review_id,
+        ctx.source_branch(),
+        ctx.target_branch(),
+        ctx.labels.iter().map(|label| label.0.clone()).collect(),
+    ));
 
     Ok(RuntimeWiring::new(
-        Box::new(gitlab),
+        review_connector,
         build_notification_sinks(app_config, flavor),
     ))
 }
@@ -388,10 +426,11 @@ fn configured_notification_sink_kinds(flavor: Option<&FlavorConfig>) -> Vec<Noti
 
 fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
     if let Some(flavor) = flavor {
-        if flavor.review_platform.kind != ReviewPlatformKind::GitLab.as_str() {
+        if flavor.review_platform.kind != compiled_review_platform().as_str() {
             anyhow::bail!(
-                "flavor review platform '{}' does not match compiled capability 'gitlab'",
-                flavor.review_platform.kind
+                "flavor review platform '{}' does not match compiled capability '{}'",
+                flavor.review_platform.kind,
+                compiled_review_platform().as_str()
             );
         }
 
@@ -465,7 +504,7 @@ fn resolve_slack_app_user_map(
 
 fn print_compiled_capabilities() {
     println!("Compiled capabilities:");
-    println!("- review platform: gitlab");
+    println!("- review platform: {}", compiled_review_platform().as_str());
     let mut sinks = Vec::new();
     #[cfg(feature = "slack-app")]
     sinks.push("slack-app");
@@ -831,8 +870,8 @@ mod tests {
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::context::model::{
-        BranchInfo, BranchName, CiContext, MergeRequestIid, MergeRequestRef, PipelineInfo,
-        PipelineSource, ProjectId,
+        BranchInfo, BranchName, CiContext, PipelineInfo, PipelineSource, ProjectKey,
+        ReviewContextRef, ReviewId,
     };
     use crate::core::model::{
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
@@ -841,12 +880,12 @@ mod tests {
 
     fn sample_context() -> CiContext {
         CiContext {
-            project_id: ProjectId("123".to_string()),
-            merge_request: Some(MergeRequestRef {
-                iid: MergeRequestIid("456".to_string()),
+            project_key: ProjectKey("123".to_string()),
+            review: Some(ReviewContextRef {
+                id: ReviewId("456".to_string()),
             }),
             pipeline: PipelineInfo {
-                source: PipelineSource::MergeRequestEvent,
+                source: PipelineSource::ReviewEvent,
             },
             branches: BranchInfo {
                 source: BranchName("feat/test".to_string()),

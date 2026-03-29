@@ -24,7 +24,7 @@
 
 ## Overview
 
-Mr Milchick is a Rust CLI for GitLab merge request pipelines. It runs as a single CI job, reads the merge request context, evaluates review policy, plans reviewer and summary actions, and can sync the result back to GitLab with optional Slack notifications. It is a binary (that cares), not a bot and not a long-running service.
+Mr Milchick is a Rust CLI for GitLab merge request pipelines and GitHub pull request workflows. It runs as a single CI job, reads the active review context, evaluates review policy, plans reviewer and summary actions, and can sync the result back to the review platform with optional Slack notifications. It is a binary (that cares), not a bot and not a long-running service.
 
 ## Purpose
 
@@ -38,18 +38,18 @@ The tool exists to keep review governance where the decision already happens: in
 
 `observe` runs the planning flow without mutating anything. `refine` executes the same plan for real, including reviewer assignment, summary comment sync, optional Slack delivery, and pipeline failure when blocking policy remains unresolved. `explain` adds deeper routing and CODEOWNERS detail for debugging, while `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
 
-Today the implemented surface is intentionally small: GitLab is the only review connector, and Slack app plus Slack workflow are the only notification sinks.
+Today the implemented surface is intentionally focused: GitLab and GitHub are the supported review connectors, and Slack app plus Slack workflow are the supported notification sinks.
 
 Internally, the repository now ships as a single crate with layered modules:
 
 - `apps/mr-milchick/src/core`: pure policy, routing, CODEOWNERS, rendering, and tone logic
 - `apps/mr-milchick/src/runtime`: execution traits, capability wiring, and reporting
-- `apps/mr-milchick/src/connectors`: GitLab and Slack integrations
+- `apps/mr-milchick/src/connectors`: GitLab, GitHub, and Slack integrations
 - `apps/mr-milchick/src/app.rs`: CLI orchestration and command flow
 
 ## Quickstart
 
-The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment and notifications.
+The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment and notifications. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
 
 ```yaml
 stages:

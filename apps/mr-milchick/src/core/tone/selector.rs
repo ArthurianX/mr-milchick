@@ -11,13 +11,13 @@ pub struct ToneSelector;
 impl ToneSelector {
     pub fn select(&self, category: ToneCategory, ctx: &CiContext) -> &'static str {
         let messages = messages_for(category);
-        let mr_seed = ctx
-            .merge_request
+        let review_seed = ctx
+            .review
             .as_ref()
-            .map(|m| m.iid.0.as_str())
-            .unwrap_or("no-mr");
+            .map(|review| review.id.0.as_str())
+            .unwrap_or("no-review");
         let index = stable_index(
-            &format!("{}:{}:{:?}", ctx.project_id.0, mr_seed, category),
+            &format!("{}:{}:{:?}", ctx.project_key.0, review_seed, category),
             messages.len(),
         );
 
@@ -35,18 +35,18 @@ fn stable_index(seed: &str, len: usize) -> usize {
 mod tests {
     use super::*;
     use crate::core::context::model::{
-        BranchInfo, BranchName, CiContext, Label, MergeRequestIid, MergeRequestRef, PipelineInfo,
-        PipelineSource, ProjectId,
+        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
+        ReviewContextRef, ReviewId,
     };
 
     fn sample_context() -> CiContext {
         CiContext {
-            project_id: ProjectId("123".to_string()),
-            merge_request: Some(MergeRequestRef {
-                iid: MergeRequestIid("456".to_string()),
+            project_key: ProjectKey("123".to_string()),
+            review: Some(ReviewContextRef {
+                id: ReviewId("456".to_string()),
             }),
             pipeline: PipelineInfo {
-                source: PipelineSource::MergeRequestEvent,
+                source: PipelineSource::ReviewEvent,
             },
             branches: BranchInfo {
                 source: BranchName("feat/test".to_string()),
@@ -68,10 +68,10 @@ mod tests {
     }
 
     #[test]
-    fn supports_missing_merge_request() {
+    fn supports_missing_review() {
         let selector = ToneSelector::default();
         let mut ctx = sample_context();
-        ctx.merge_request = None;
+        ctx.review = None;
 
         let msg = selector.select(ToneCategory::Observation, &ctx);
 
