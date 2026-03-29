@@ -89,12 +89,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF_NAME}" \
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
               --title "mr-milchick ${GITHUB_REF_NAME}" \
               --notes "Release ${GITHUB_REF_NAME}"
 
-          gh release upload "${GITHUB_REF_NAME}" \
+          gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
             dist/mr-milchick-gitlab-linux-x86_64-musl \
             dist/mr-milchick-gitlab.toml \
             dist/mr-milchick-github-linux-x86_64-musl \

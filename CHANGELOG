@@ -7,6 +7,15 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [2.0.2] — 2026-03-29
+
+This release fixes the GitHub release workflow after the GitHub connector launch.
+
+### Fixed
+
+- The release job now passes `--repo "${GITHUB_REPOSITORY}"` to `gh release` commands, so publishing release assets no longer depends on a checked-out `.git` directory.
+- The release workflow now also triggers on published GitHub Releases, covering the GitHub UI release path in addition to raw tag pushes.
+
 ## [2.0.0] — 2026-03-29
 
 This release adds first-class GitHub pull request support and formalizes the connector-neutral runtime model.
