@@ -1,7 +1,9 @@
 <div align="center">
-  <img src="assets/milchick.png" alt="Mr Milchick Logo" >
 
-# 👨🏾‍💼Mr Milchick
+
+# Mr Milchick
+
+<img src="assets/mil.png" height="200" alt="Mr Milchick Logo" >
 
 **A pleasantly unsettling steward for merge requests.**
 
@@ -10,7 +12,7 @@
 [![Documentation](https://docs.rs/mr-milchick/badge.svg)](https://docs.rs/mr-milchick)
 [![License](https://img.shields.io/crates/l/mr-milchick.svg)](LICENSE)
 ![Crates.io Downloads (recent)](https://img.shields.io/crates/dr/mr-milchick?label=Crates%20Downloads)
-
+    
 <br />
 
 [Documentation](docs/README.md) | [Examples](docs/ci-quickstart.md) | [Contributing](CONTRIBUTING.md)
