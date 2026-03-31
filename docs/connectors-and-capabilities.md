@@ -117,7 +117,7 @@ Use the version command in CI logs:
 Platform-only output shape:
 
 ```text
-mr-milchick 2.0.2 (<git-sha> <build-date>)
+mr-milchick 2.0.4 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - notification sinks: none
@@ -126,7 +126,7 @@ Compiled capabilities:
 GitHub default build shape:
 
 ```text
-mr-milchick 2.0.2 (<git-sha> <build-date>)
+mr-milchick 2.0.4 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: github
 - notification sinks: none
@@ -135,7 +135,7 @@ Compiled capabilities:
 GitLab plus Slack output shape:
 
 ```text
-mr-milchick 2.0.2 (<git-sha> <build-date>)
+mr-milchick 2.0.4 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - notification sinks: slack-app, slack-workflow

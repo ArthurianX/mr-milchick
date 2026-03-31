@@ -7,18 +7,18 @@ notification_policy = "always"
 kind = "gitlab"
 
 # Optional Slack notifications:
- [[notifications]]
- kind = "slack-workflow"
- enabled = true
+# [[notifications]]
+# kind = "slack-workflow"
+# enabled = true
 
- [[notifications]]
- kind = "slack-app"
- enabled = true
+# [[notifications]]
+# kind = "slack-app"
+# enabled = true
 
 # [slack_app.user_map]
- "arthur" = "U028DDKDJ4E"
- "principal-reviewer" = "U03D9NN5HB6"
- "bob" = "U028GSCQBUJ"
+# "arthur" = "U028DDKDJ4E"
+# "principal-reviewer" = "U03D9NN5HB6"
+# "bob" = "U028GSCQBUJ"
 
 # Template inspiration
 # Uncomment any section below to start customizing platform connector output.

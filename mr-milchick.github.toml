@@ -4,18 +4,18 @@ notification_policy = "always"
 kind = "github"
 
 # Optional Slack notifications:
- [[notifications]]
- kind = "slack-workflow"
- enabled = true
+# [[notifications]]
+# kind = "slack-workflow"
+# enabled = true
 
- [[notifications]]
- kind = "slack-app"
- enabled = true
+# [[notifications]]
+# kind = "slack-app"
+# enabled = true
 
- [slack_app.user_map]
- "arthur" = "U028DDKDJ4E"
- "principal-reviewer" = "U03D9NN5HB6"
- "bob" = "U028GSCQBUJ"
+# [slack_app.user_map]
+# "arthur" = "U028DDKDJ4E"
+# "principal-reviewer" = "U03D9NN5HB6"
+# "bob" = "U028GSCQBUJ"
 
 # [templates.slack_app]
 # first_root = ":github: {{notification_subject}} :pepe-review:"

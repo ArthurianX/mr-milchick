@@ -7,6 +7,31 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [2.0.4] — 2026-03-31
+
+This release fixes the follow-up release packaging changes from `v2.0.3`.
+
+### Fixed
+
+- The GitHub release workflow now downloads and uploads the slack-enabled artifacts it actually builds, and it again ships the companion flavor manifests alongside those binaries.
+- The sample flavor manifests once again keep Slack notification blocks commented out by default, so they remain valid opt-in examples instead of enabling notification sinks accidentally.
+- The sample Slack user mapping entries are again scoped under `[slack_app.user_map]` instead of leaking into the TOML root.
+
+## [2.0.3] — 2026-03-31
+
+This release refines connector packaging and makes notification sinks a clearer opt-in capability.
+
+### Added
+
+- Slack-enabled GitHub release artifacts for both supported review platforms: `mr-milchick-gitlab-slack-linux-x86_64-musl` and `mr-milchick-github-slack-linux-x86_64-musl`.
+
+### Changed
+
+- The default compiled feature set now builds the GitHub connector without Slack sinks; notification delivery is enabled only when those features are explicitly compiled in.
+- Flavor manifests now use `[platform_connector]` to describe the compiled review platform and present Slack sink sections as optional examples.
+- CI and docs now consistently refer to the action step as `refine`, matching the CLI command surface.
+- Brand assets and release-facing documentation were refreshed to match the new connector packaging model.
+
 ## [2.0.2] — 2026-03-29
 
 This release fixes the GitHub release workflow after the GitHub connector launch.
