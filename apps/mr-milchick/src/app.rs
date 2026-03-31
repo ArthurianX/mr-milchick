@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 
 #[cfg(feature = "github")]
-use crate::connectors::github::{GitHubReviewConnector, render_github_markdown};
+use crate::connectors::github::{GitHubPlatformConnector, render_github_markdown};
 #[cfg(feature = "gitlab")]
-use crate::connectors::gitlab::{GitLabReviewConnector, render_gitlab_markdown};
+use crate::connectors::gitlab::{GitLabPlatformConnector, render_gitlab_markdown};
 #[cfg(feature = "slack-app")]
 use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
@@ -40,12 +40,12 @@ use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_
 use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
 use crate::fixture::load_review_fixture;
-use crate::runtime::{ConnectorError, NotificationSink, ReviewConnector};
+use crate::runtime::{ConnectorError, NotificationSink, PlatformConnector};
 
 #[cfg(all(feature = "gitlab", feature = "github"))]
-compile_error!("Exactly one review connector feature must be enabled.");
+compile_error!("Exactly one platform connector feature must be enabled.");
 #[cfg(not(any(feature = "gitlab", feature = "github")))]
-compile_error!("Exactly one review connector feature must be enabled.");
+compile_error!("Exactly one platform connector feature must be enabled.");
 
 #[derive(Debug, Clone)]
 struct AppConfigContext {
@@ -55,7 +55,7 @@ struct AppConfigContext {
 }
 
 #[derive(Debug)]
-struct FixtureReviewConnector;
+struct FixturePlatformConnector;
 
 fn load_app_config_context() -> Result<AppConfigContext> {
     let runtime = load_config()?;
@@ -74,16 +74,16 @@ fn load_app_config_context() -> Result<AppConfigContext> {
 }
 
 #[async_trait::async_trait]
-impl ReviewConnector for FixtureReviewConnector {
+impl PlatformConnector for FixturePlatformConnector {
     fn kind(&self) -> ReviewPlatformKind {
-        compiled_review_platform()
+        compiled_platform_kind()
     }
 
     async fn load_snapshot(
         &self,
     ) -> std::result::Result<crate::core::model::ReviewSnapshot, ConnectorError> {
         Err(ConnectorError::Unsupported(
-            "fixture review connector cannot load live snapshots".to_string(),
+            "fixture platform connector cannot load live snapshots".to_string(),
         ))
     }
 
@@ -121,7 +121,7 @@ impl ReviewConnector for FixtureReviewConnector {
     }
 }
 
-fn compiled_review_platform() -> ReviewPlatformKind {
+fn compiled_platform_kind() -> ReviewPlatformKind {
     #[cfg(feature = "gitlab")]
     {
         ReviewPlatformKind::GitLab
@@ -188,7 +188,7 @@ pub async fn run_mode(
         fixture_notification_variant =
             fixture_notification_variant.or_else(|| fixture.notification_template_variant());
         ctx = fixture.to_ci_context()?;
-        snapshot = fixture.to_review_snapshot(compiled_review_platform())?;
+        snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
         outcome = fixture.to_rule_outcome()?;
     } else {
         ctx = build_ci_context()?;
@@ -201,7 +201,7 @@ pub async fn run_mode(
         }
 
         let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
-        snapshot = wiring.review_connector.load_snapshot().await?;
+        snapshot = wiring.platform_connector.load_snapshot().await?;
         outcome = enrich_with_reviewer_assignment(
             evaluate_rules(&ctx),
             &snapshot,
@@ -225,7 +225,7 @@ pub async fn run_mode(
     let summary = render_review_summary(
         &template_catalog,
         &build_summary_template_context(&outcome, &snapshot, &selector, &ctx),
-        compiled_review_platform(),
+        compiled_platform_kind(),
     );
     outcome.action_plan.push(ReviewAction::UpsertSummary {
         markdown: summary.clone(),
@@ -261,7 +261,7 @@ pub async fn run_mode(
             {
                 println!(
                     "{}",
-                    render_summary_for_platform(markdown, compiled_review_platform())
+                    render_summary_for_platform(markdown, compiled_platform_kind())
                 );
             }
             println!("---");
@@ -338,7 +338,7 @@ fn build_runtime_wiring(
         .ok_or_else(|| anyhow::anyhow!("missing review identifier"))?;
 
     #[cfg(feature = "gitlab")]
-    let review_connector: Box<dyn ReviewConnector> = Box::new(GitLabReviewConnector::new(
+    let platform_connector: Box<dyn PlatformConnector> = Box::new(GitLabPlatformConnector::new(
         crate::connectors::gitlab::api::GitLabConfig::from_env()?,
         ctx.project_key(),
         review_id,
@@ -347,7 +347,7 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     ));
     #[cfg(feature = "github")]
-    let review_connector: Box<dyn ReviewConnector> = Box::new(GitHubReviewConnector::new(
+    let platform_connector: Box<dyn PlatformConnector> = Box::new(GitHubPlatformConnector::new(
         crate::connectors::github::api::GitHubConfig::from_env()?,
         ctx.project_key(),
         review_id,
@@ -357,7 +357,7 @@ fn build_runtime_wiring(
     ));
 
     Ok(RuntimeWiring::new(
-        review_connector,
+        platform_connector,
         build_notification_sinks(app_config, flavor),
     ))
 }
@@ -368,25 +368,26 @@ fn build_fixture_runtime_wiring(
 ) -> Result<RuntimeWiring> {
     validate_flavor(flavor)?;
     Ok(RuntimeWiring::new(
-        Box::new(FixtureReviewConnector),
+        Box::new(FixturePlatformConnector),
         build_notification_sinks(app_config, flavor),
     ))
 }
 
 fn build_notification_sinks(
-    app_config: &AppConfigContext,
-    flavor: Option<&FlavorConfig>,
+    _app_config: &AppConfigContext,
+    _flavor: Option<&FlavorConfig>,
 ) -> Vec<Box<dyn NotificationSink>> {
+    #[allow(unused_mut)]
     let mut sinks: Vec<Box<dyn NotificationSink>> = Vec::new();
 
     #[cfg(feature = "slack-app")]
-    if notification_enabled_by_flavor(flavor, "slack-app") {
+    if notification_enabled_by_flavor(_flavor, "slack-app") {
         let slack = SlackAppSink::new(SlackAppConfig {
-            enabled: app_config.runtime.slack.enabled,
-            base_url: app_config.runtime.slack.base_url.clone(),
-            bot_token: app_config.runtime.slack.bot_token.clone(),
-            channel: app_config.runtime.slack.channel.clone(),
-            user_map: resolve_slack_app_user_map(&app_config.runtime, flavor),
+            enabled: _app_config.runtime.slack.enabled,
+            base_url: _app_config.runtime.slack.base_url.clone(),
+            bot_token: _app_config.runtime.slack.bot_token.clone(),
+            channel: _app_config.runtime.slack.channel.clone(),
+            user_map: resolve_slack_app_user_map(&_app_config.runtime, _flavor),
         });
         if slack.is_enabled() {
             sinks.push(Box::new(slack));
@@ -394,11 +395,11 @@ fn build_notification_sinks(
     }
 
     #[cfg(feature = "slack-workflow")]
-    if notification_enabled_by_flavor(flavor, "slack-workflow") {
+    if notification_enabled_by_flavor(_flavor, "slack-workflow") {
         let slack = SlackWorkflowSink::new(SlackWorkflowConfig {
-            enabled: app_config.runtime.slack.enabled,
-            webhook_url: app_config.runtime.slack.webhook_url.clone(),
-            channel: app_config.runtime.slack.channel.clone(),
+            enabled: _app_config.runtime.slack.enabled,
+            webhook_url: _app_config.runtime.slack.webhook_url.clone(),
+            channel: _app_config.runtime.slack.channel.clone(),
         });
         if slack.is_enabled() {
             sinks.push(Box::new(slack));
@@ -408,16 +409,17 @@ fn build_notification_sinks(
     sinks
 }
 
-fn configured_notification_sink_kinds(flavor: Option<&FlavorConfig>) -> Vec<NotificationSinkKind> {
+fn configured_notification_sink_kinds(_flavor: Option<&FlavorConfig>) -> Vec<NotificationSinkKind> {
+    #[allow(unused_mut)]
     let mut sinks = Vec::new();
 
     #[cfg(feature = "slack-app")]
-    if notification_enabled_by_flavor(flavor, "slack-app") {
+    if notification_enabled_by_flavor(_flavor, "slack-app") {
         sinks.push(NotificationSinkKind::SlackApp);
     }
 
     #[cfg(feature = "slack-workflow")]
-    if notification_enabled_by_flavor(flavor, "slack-workflow") {
+    if notification_enabled_by_flavor(_flavor, "slack-workflow") {
         sinks.push(NotificationSinkKind::SlackWorkflow);
     }
 
@@ -426,11 +428,11 @@ fn configured_notification_sink_kinds(flavor: Option<&FlavorConfig>) -> Vec<Noti
 
 fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
     if let Some(flavor) = flavor {
-        if flavor.review_platform.kind != compiled_review_platform().as_str() {
+        if flavor.platform_connector.kind != compiled_platform_kind().as_str() {
             anyhow::bail!(
-                "flavor review platform '{}' does not match compiled capability '{}'",
-                flavor.review_platform.kind,
-                compiled_review_platform().as_str()
+                "flavor platform connector '{}' does not match compiled capability '{}'",
+                flavor.platform_connector.kind,
+                compiled_platform_kind().as_str()
             );
         }
 
@@ -452,6 +454,7 @@ fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn notification_enabled_by_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> bool {
     flavor
         .map(|flavor| {
@@ -473,6 +476,7 @@ fn resolve_notification_policy(
         .unwrap_or(NotificationPolicy::Always)
 }
 
+#[allow(dead_code)]
 fn resolve_slack_app_user_map(
     runtime: &RuntimeConfig,
     flavor: Option<&FlavorConfig>,
@@ -504,8 +508,12 @@ fn resolve_slack_app_user_map(
 
 fn print_compiled_capabilities() {
     println!("Compiled capabilities:");
-    println!("- review platform: {}", compiled_review_platform().as_str());
-    let mut sinks = Vec::new();
+    println!(
+        "- platform connector: {}",
+        compiled_platform_kind().as_str()
+    );
+    #[allow(unused_mut)]
+    let mut sinks: Vec<&str> = Vec::new();
     #[cfg(feature = "slack-app")]
     sinks.push("slack-app");
     #[cfg(feature = "slack-workflow")]
@@ -866,7 +874,7 @@ fn print_codeowners_details(
 mod tests {
     use super::*;
     use crate::config::model::{
-        CodeownersConfig, FlavorReviewPlatform, FlavorSlackAppConfig, SlackConfig,
+        CodeownersConfig, FlavorPlatformConnector, FlavorSlackAppConfig, SlackConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::context::model::{
@@ -1037,7 +1045,7 @@ mod tests {
             notification_policy: None,
         };
         let flavor = FlavorConfig {
-            review_platform: FlavorReviewPlatform {
+            platform_connector: FlavorPlatformConnector {
                 kind: "gitlab".to_string(),
             },
             notification_policy: None,
@@ -1075,7 +1083,7 @@ mod tests {
             notification_policy: None,
         };
         let flavor = FlavorConfig {
-            review_platform: FlavorReviewPlatform {
+            platform_connector: FlavorPlatformConnector {
                 kind: "gitlab".to_string(),
             },
             notification_policy: None,
@@ -1145,7 +1153,7 @@ mod tests {
             notification_policy: None,
         };
         let flavor = FlavorConfig {
-            review_platform: FlavorReviewPlatform {
+            platform_connector: FlavorPlatformConnector {
                 kind: "gitlab".to_string(),
             },
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
@@ -1182,7 +1190,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::Always),
         };
         let flavor = FlavorConfig {
-            review_platform: FlavorReviewPlatform {
+            platform_connector: FlavorPlatformConnector {
                 kind: "gitlab".to_string(),
             },
             notification_policy: Some(NotificationPolicy::OnAppliedAction),

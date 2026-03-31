@@ -4,7 +4,7 @@ use crate::core::model::{
 };
 use anyhow::Result;
 
-use crate::runtime::executor::{ExecutionReport, NotificationSink, ReviewConnector};
+use crate::runtime::executor::{ExecutionReport, NotificationSink, PlatformConnector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -31,28 +31,28 @@ impl ExecutionStrategy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCapabilities {
-    pub review_platform: ReviewPlatformKind,
+    pub platform_connector: ReviewPlatformKind,
     pub notification_sinks: Vec<NotificationSinkKind>,
 }
 
 pub struct RuntimeWiring {
-    pub review_connector: Box<dyn ReviewConnector>,
+    pub platform_connector: Box<dyn PlatformConnector>,
     pub notification_sinks: Vec<Box<dyn NotificationSink>>,
     pub capabilities: RuntimeCapabilities,
 }
 
 impl RuntimeWiring {
     pub fn new(
-        review_connector: Box<dyn ReviewConnector>,
+        platform_connector: Box<dyn PlatformConnector>,
         notification_sinks: Vec<Box<dyn NotificationSink>>,
     ) -> Self {
         let capabilities = RuntimeCapabilities {
-            review_platform: review_connector.kind(),
+            platform_connector: platform_connector.kind(),
             notification_sinks: notification_sinks.iter().map(|sink| sink.kind()).collect(),
         };
 
         Self {
-            review_connector,
+            platform_connector,
             notification_sinks,
             capabilities,
         }
@@ -68,7 +68,7 @@ impl RuntimeWiring {
         let review_report = if strategy == ExecutionStrategy::DryRun {
             dry_run_review_report(review_actions)
         } else {
-            self.review_connector
+            self.platform_connector
                 .apply_review_actions(review_actions)
                 .await?
         };

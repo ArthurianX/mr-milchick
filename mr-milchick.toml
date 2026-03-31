@@ -3,28 +3,29 @@
 # that the application actually reads from TOML today.
 notification_policy = "always"
 
-[review_platform]
+[platform_connector]
 kind = "gitlab"
 
-[[notifications]]
-kind = "slack-workflow"
-enabled = false
+# Optional Slack notifications:
+# [[notifications]]
+# kind = "slack-workflow"
+# enabled = true
 
-[[notifications]]
-kind = "slack-app"
-enabled = true
+# [[notifications]]
+# kind = "slack-app"
+# enabled = true
 
-[slack_app.user_map]
-"arthur" = "U028DDKDJ4E"
-"principal-reviewer" = "U03D9NN5HB6"
-"bob" = "U028GSCQBUJ"
+# [slack_app.user_map]
+# "arthur" = "U028DDKDJ4E"
+# "principal-reviewer" = "U03D9NN5HB6"
+# "bob" = "U028GSCQBUJ"
 
 #[slack_app.user_map]
 # "engineer.girl1" = ""
 # "engineer.guy1" = ""
 
 # Template inspiration
-# Uncomment any section below to start customizing connector output.
+# Uncomment any section below to start customizing platform connector output.
 # These examples match the current built-in defaults.
 
 #[templates.gitlab]
@@ -53,22 +54,21 @@ enabled = true
 #_{{closing_tone_message}}_
 #"""
 
-[templates.slack_app]
+# [templates.slack_app]
+# first_root = ":gitlab: {{notification_subject}} :pepe-review:"
+# first_thread = """
+# *{{notification_title}}*
+# Merge request: {{mr_link}}
+# {{reviewers_line}}
+# """
 
-first_root = ":gitlab: {{notification_subject}} :pepe-review:"
-first_thread = """
-*{{notification_title}}*
-Merge request: {{mr_link}}
-{{reviewers_line}}
-"""
-
-update_root = ":gitlab: {{notification_subject}} :thread:"
-update_thread = """
-Merge request: {{mr_link}}
-{{findings_block}}
-{{actions_block}}
-_{{summary_footer}}_
-"""
+# update_root = ":gitlab: {{notification_subject}} :thread:"
+# update_thread = """
+# Merge request: {{mr_link}}
+# {{findings_block}}
+# {{actions_block}}
+# _{{summary_footer}}_
+# """
 
 #[templates.slack_workflow]
 

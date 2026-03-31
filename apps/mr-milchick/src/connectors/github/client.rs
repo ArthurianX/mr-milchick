@@ -154,7 +154,12 @@ impl GitHubClient {
     }
 
     #[instrument(skip(self, body), fields(project_key = %project_key, comment_id = comment_id, body_len = body.len()))]
-    pub async fn update_comment(&self, project_key: &str, comment_id: u64, body: &str) -> Result<()> {
+    pub async fn update_comment(
+        &self,
+        project_key: &str,
+        comment_id: u64,
+        body: &str,
+    ) -> Result<()> {
         let url = format!(
             "{}/repos/{}/issues/comments/{}",
             self.config.base_url.trim_end_matches('/'),

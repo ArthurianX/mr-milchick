@@ -40,10 +40,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - connector: gitlab
+          - artifact_name: gitlab
+            features: "gitlab"
+            include_flavor: true
+            flavor_source: "mr-milchick.toml"
+            flavor_asset: "mr-milchick-gitlab.toml"
+          - artifact_name: github
+            features: "github"
+            include_flavor: true
+            flavor_source: "mr-milchick.github.toml"
+            flavor_asset: "mr-milchick-github.toml"
+          - artifact_name: gitlab-slack
             features: "gitlab slack-app slack-workflow"
-          - connector: github
+            include_flavor: false
+          - artifact_name: github-slack
             features: "github slack-app slack-workflow"
+            include_flavor: false
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
@@ -58,17 +70,15 @@ jobs:
         run: |
           cargo build -p mr-milchick --release --locked --target x86_64-unknown-linux-musl --no-default-features --features "${{ matrix.features }}"
           mkdir -p dist
-          cp target/x86_64-unknown-linux-musl/release/mr-milchick "dist/mr-milchick-${{ matrix.connector }}-linux-x86_64-musl"
-          if [ "${{ matrix.connector }}" = "gitlab" ]; then
-            cp mr-milchick.toml "dist/mr-milchick-gitlab.toml"
-          else
-            cp mr-milchick.github.toml "dist/mr-milchick-github.toml"
+          cp target/x86_64-unknown-linux-musl/release/mr-milchick "dist/mr-milchick-${{ matrix.artifact_name }}-linux-x86_64-musl"
+          if [ "${{ matrix.include_flavor }}" = "true" ]; then
+            cp "${{ matrix.flavor_source }}" "dist/${{ matrix.flavor_asset }}"
           fi
-          chmod +x "dist/mr-milchick-${{ matrix.connector }}-linux-x86_64-musl"
+          chmod +x "dist/mr-milchick-${{ matrix.artifact_name }}-linux-x86_64-musl"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.connector }}
+          name: release-${{ matrix.artifact_name }}
           path: dist/*
 
   release:
@@ -85,6 +95,16 @@ jobs:
         with:
           name: release-github
           path: dist
+      - name: Download GitLab Slack artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-gitlab-slack
+          path: dist
+      - name: Download GitHub Slack artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-github-slack
+          path: dist
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -98,5 +118,7 @@ jobs:
             dist/mr-milchick-gitlab-linux-x86_64-musl \
             dist/mr-milchick-gitlab.toml \
             dist/mr-milchick-github-linux-x86_64-musl \
+            dist/mr-milchick-gitlab-slack-linux-x86_64-musl \
+            dist/mr-milchick-github-slack-linux-x86_64-musl \
             dist/mr-milchick-github.toml \
             --clobber

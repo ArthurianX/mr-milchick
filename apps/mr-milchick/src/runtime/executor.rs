@@ -30,7 +30,7 @@ pub enum ConnectorError {
 }
 
 #[async_trait]
-pub trait ReviewConnector: Send + Sync {
+pub trait PlatformConnector: Send + Sync {
     fn kind(&self) -> ReviewPlatformKind;
 
     async fn load_snapshot(&self) -> ConnectorResult<crate::core::model::ReviewSnapshot>;
@@ -50,6 +50,8 @@ pub trait NotificationSink: Send + Sync {
         notification: &NotificationMessage,
     ) -> ConnectorResult<NotificationDeliveryReport>;
 }
+
+pub use PlatformConnector as ReviewConnector;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionReport {

@@ -68,10 +68,7 @@ impl MockGitLabServer {
         Self::start_with_reviewers_and_github_files(Vec::new(), file_count)
     }
 
-    pub fn start_with_reviewers_and_github_files(
-        reviewers: Vec<&str>,
-        file_count: usize,
-    ) -> Self {
+    pub fn start_with_reviewers_and_github_files(reviewers: Vec<&str>, file_count: usize) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
         listener
             .set_nonblocking(true)

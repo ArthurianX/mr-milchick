@@ -13,7 +13,7 @@ This directory holds the detailed docs that used to live in the root README. Sta
 
 ## Runtime Surface
 
-- [Connectors and capabilities](connectors-and-capabilities.md): what is implemented today, how Cargo features map to runtime behavior, and how to verify the compiled artifact.
+- [Connectors and capabilities](connectors-and-capabilities.md): what is implemented today, how platform connector and notification features map to runtime behavior, and how to verify the compiled artifact.
 - [Architecture](architecture.md): crate boundaries, execution flow, command behavior, and idempotent GitLab summary handling.
 
 ## Output And Tone
