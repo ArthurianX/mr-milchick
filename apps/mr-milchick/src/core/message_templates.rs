@@ -921,10 +921,9 @@ fn build_notification_subject(
             ref_link(style, snapshot),
             author_username
         ),
-        NotificationTemplateVariant::Update => format!(
-            "Mr. Milchick - updates on {}",
-            ref_link(style, snapshot)
-        ),
+        NotificationTemplateVariant::Update => {
+            format!("Mr. Milchick - updates on {}", ref_link(style, snapshot))
+        }
     }
 }
 
@@ -949,7 +948,7 @@ pub fn enabled_notification_targets(sinks: &[NotificationSinkKind]) -> Vec<Notif
 mod tests {
     use super::*;
     use crate::config::model::{
-        FlavorConfig, FlavorGitLabTemplates, FlavorNotification, FlavorReviewPlatform,
+        FlavorConfig, FlavorGitLabTemplates, FlavorNotification, FlavorPlatformConnector,
         FlavorSlackAppConfig, FlavorSlackAppTemplates, FlavorSlackWorkflowTemplates,
         FlavorTemplatesConfig,
     };
@@ -1082,7 +1081,7 @@ mod tests {
     #[test]
     fn uses_partial_template_override_without_affecting_other_fields() {
         let flavor = FlavorConfig {
-            review_platform: FlavorReviewPlatform {
+            platform_connector: FlavorPlatformConnector {
                 kind: "gitlab".to_string(),
             },
             notification_policy: None,
@@ -1116,7 +1115,7 @@ mod tests {
     #[test]
     fn falls_back_to_default_when_override_is_invalid() {
         let flavor = FlavorConfig {
-            review_platform: FlavorReviewPlatform {
+            platform_connector: FlavorPlatformConnector {
                 kind: "gitlab".to_string(),
             },
             notification_policy: None,

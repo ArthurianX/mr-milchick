@@ -10,7 +10,7 @@ Mr Milchick combines three layers:
 2. an optional `mr-milchick.toml` flavor file
 3. environment variables for runtime behavior and secrets
 
-The important rule is that the flavor file cannot request a review platform or notification sink that was not compiled into the binary. Runtime environment variables then provide the live CI context, reviewer pools, CODEOWNERS behavior, GitLab or GitHub credentials, Slack credentials, and dry-run mode.
+The important rule is that the flavor file cannot request a platform connector or notification sink that was not compiled into the binary. Runtime environment variables then provide the live CI context, reviewer pools, CODEOWNERS behavior, GitLab or GitHub credentials, Slack credentials, and dry-run mode.
 
 ## Precedence And Validation
 
@@ -27,7 +27,7 @@ The default runtime path is `mr-milchick.toml`. Override it with `MR_MILCHICK_FL
 ```toml
 notification_policy = "on-applied-action"
 
-[review_platform]
+[platform_connector]
 kind = "gitlab"
 
 [[notifications]]
@@ -92,7 +92,7 @@ update_thread = """Merge request: {{mr_link}}
 Supported TOML fields today:
 
 - `notification_policy`
-- `review_platform.kind`
+- `platform_connector.kind`
 - `[[notifications]].kind`
 - `[[notifications]].enabled`
 - `[slack_app.user_map]`
@@ -110,10 +110,11 @@ Supported TOML fields today:
 Behavior notes:
 
 - `notification_policy` may be `always` or `on-applied-action`.
-- `review_platform.kind` must match the compiled review connector. Today that means `gitlab` or `github`.
+- `platform_connector.kind` must match the compiled platform connector. Today that means `gitlab` or `github`.
 - `[[notifications]]` entries may use `slack-app` and `slack-workflow`.
 - If `enabled` is omitted for a notification entry, it defaults to `true`.
 - If a flavor file is present, only notification entries that are listed and enabled are activated.
+- `review_platform.kind` still parses for backward compatibility, but `platform_connector.kind` is preferred.
 - Template overrides are field-by-field. Missing fields keep the built-in default.
 - Invalid template fields warn and fall back to the built-in default for that field.
 
@@ -285,9 +286,9 @@ If a mapping value is blank, it is ignored. In TOML, quote usernames that contai
 - Slack notifications are optional and do not affect review planning.
 - Notifications only run during real `refine` execution.
 - With `notification_policy = "always"`, enabled sinks receive notifications even if the summary comment is unchanged.
-- With `notification_policy = "on-applied-action"`, enabled sinks only receive notifications when the review connector actually applies the summary upsert.
-- GitLab is the only implemented review connector today.
+- With `notification_policy = "on-applied-action"`, enabled sinks only receive notifications when the platform connector actually applies the summary upsert.
+- GitLab and GitHub are the implemented platform connectors today.
 - Slack app and Slack workflow are the only implemented notification sinks today.
-- Connector templates only affect GitLab and Slack output in this version. CLI output remains unchanged.
+- Platform connector templates only affect GitLab, GitHub, and Slack output in this version. CLI output remains unchanged.
 
 For setup examples, see [ci-quickstart.md](ci-quickstart.md). For capability validation, see [connectors-and-capabilities.md](connectors-and-capabilities.md).

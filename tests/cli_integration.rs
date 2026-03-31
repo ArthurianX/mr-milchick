@@ -7,11 +7,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use mock_server::{MockGitLabServer, PROJECT_ID, borrow_env};
-#[cfg(not(feature = "github"))]
-use mock_server::{MERGE_REQUEST_IID, base_env};
 #[cfg(feature = "github")]
 use mock_server::github_base_env;
+#[cfg(not(feature = "github"))]
+use mock_server::{MERGE_REQUEST_IID, base_env};
+use mock_server::{MockGitLabServer, PROJECT_ID, borrow_env};
 
 fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mr-milchick"));
@@ -24,18 +24,10 @@ fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Outp
         .any(|(key, _)| *key == "MR_MILCHICK_FLAVOR_PATH");
     let default_flavor = (!has_flavor_override).then(|| {
         write_temp_flavor(&format!(
-            r#"[review_platform]
+            r#"[platform_connector]
 kind = "{}"
-
-[[notifications]]
-kind = "slack-app"
-enabled = true
-
-[[notifications]]
-kind = "slack-workflow"
-enabled = true
 "#,
-            compiled_review_platform_kind()
+            compiled_platform_connector_kind()
         ))
     });
 
@@ -65,7 +57,7 @@ fn write_temp_flavor(contents: &str) -> String {
     path.display().to_string()
 }
 
-fn compiled_review_platform_kind() -> &'static str {
+fn compiled_platform_connector_kind() -> &'static str {
     #[cfg(feature = "github")]
     {
         "github"
@@ -242,6 +234,7 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     assert!(stdout.contains("Execution report:"));
     assert!(stdout.contains("[ReviewersAssigned] principal-reviewer, bob"));
     assert!(stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
+    assert!(!stdout.contains("[Notification "));
 
     assert_eq!(
         server.assigned_reviewers(),
@@ -250,6 +243,7 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     assert_eq!(server.note_bodies().len(), 1);
 }
 
+#[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
@@ -292,6 +286,7 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
     );
 }
 
+#[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
@@ -341,12 +336,13 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
     );
 }
 
+#[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_uses_partial_slack_template_override_from_flavor_file() {
     let server = MockGitLabServer::start();
     let flavor_path = write_temp_flavor(
         &r#"
-[review_platform]
+[platform_connector]
 kind = "__PLATFORM__"
 
 [[notifications]]
@@ -356,7 +352,7 @@ enabled = true
 [templates.slack_app]
 update_root = "Template override for {{mr_ref}}"
 "#
-        .replace("__PLATFORM__", compiled_review_platform_kind()),
+        .replace("__PLATFORM__", compiled_platform_connector_kind()),
     );
 
     let mut envs = review_env(&server);
@@ -391,12 +387,13 @@ update_root = "Template override for {{mr_ref}}"
     let _ = fs::remove_file(flavor_path);
 }
 
+#[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_invalid_template_override_falls_back_to_default_output() {
     let server = MockGitLabServer::start();
     let flavor_path = write_temp_flavor(
         &r#"
-[review_platform]
+[platform_connector]
 kind = "__PLATFORM__"
 
 [[notifications]]
@@ -406,7 +403,7 @@ enabled = true
 [templates.slack_app]
 update_root = "Template override for {{unknown_placeholder}}"
 "#
-        .replace("__PLATFORM__", compiled_review_platform_kind()),
+        .replace("__PLATFORM__", compiled_platform_connector_kind()),
     );
 
     let mut envs = review_env(&server);
@@ -427,13 +424,17 @@ update_root = "Template override for {{unknown_placeholder}}"
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
     assert_eq!(bodies.len(), 2);
-    assert!(bodies.iter().all(|body| !body.contains("unknown_placeholder")));
+    assert!(
+        bodies
+            .iter()
+            .all(|body| !body.contains("unknown_placeholder"))
+    );
 
     let _ = fs::remove_file(flavor_path);
 }
 
 #[test]
-fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview() {
+fn observe_mode_supports_fixture_without_ci_env_without_notification_sinks() {
     let output = run_cli(
         "observe",
         &["--fixture", "fixtures/first-notification.toml"],
@@ -449,13 +450,22 @@ fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("If you run `refine`, it would:"));
-    assert!(stdout.contains("Notification previews:"));
-    assert!(stdout.contains("SlackApp"));
-    assert!(stdout.contains("took a first look at"));
+    assert!(stdout.contains("No notification previews were produced."));
 }
 
+#[cfg(feature = "slack-app")]
 #[test]
 fn observe_mode_fixture_variant_override_can_force_update_preview() {
+    let flavor_path = write_temp_flavor(&format!(
+        r#"[platform_connector]
+kind = "{platform}"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+"#,
+        platform = compiled_platform_connector_kind(),
+    ));
     let output = run_cli(
         "observe",
         &[
@@ -464,7 +474,10 @@ fn observe_mode_fixture_variant_override_can_force_update_preview() {
             "--fixture-variant",
             "update",
         ],
-        &[("RUST_LOG", "off")],
+        &[
+            ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
+            ("RUST_LOG", "off"),
+        ],
     );
 
     assert!(
@@ -475,24 +488,65 @@ fn observe_mode_fixture_variant_override_can_force_update_preview() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Notification previews:"));
     assert!(stdout.contains("Mr. Milchick - updates"));
     assert!(!stdout.contains("took a first look at"));
+
+    let _ = fs::remove_file(flavor_path);
 }
 
+#[cfg(feature = "slack-app")]
 #[test]
-fn refine_mode_fixture_sends_slack_notifications_without_gitlab_env() {
-    let server = MockGitLabServer::start();
-    let slack_base_url = server.slack_api_base_url();
+fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview() {
     let flavor_path = write_temp_flavor(&format!(
-        r#"
-[review_platform]
+        r#"[platform_connector]
 kind = "{platform}"
 
 [[notifications]]
 kind = "slack-app"
 enabled = true
 "#,
-        platform = compiled_review_platform_kind(),
+        platform = compiled_platform_connector_kind(),
+    ));
+    let output = run_cli(
+        "observe",
+        &["--fixture", "fixtures/first-notification.toml"],
+        &[
+            ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
+            ("RUST_LOG", "off"),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "observe fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Notification previews:"));
+    assert!(stdout.contains("SlackApp"));
+    assert!(stdout.contains("took a first look at"));
+
+    let _ = fs::remove_file(flavor_path);
+}
+
+#[cfg(feature = "slack-app")]
+#[test]
+fn refine_mode_fixture_sends_slack_notifications_without_gitlab_env() {
+    let server = MockGitLabServer::start();
+    let slack_base_url = server.slack_api_base_url();
+    let flavor_path = write_temp_flavor(&format!(
+        r#"
+[platform_connector]
+kind = "{platform}"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+"#,
+        platform = compiled_platform_connector_kind(),
     ));
 
     let output = run_cli(

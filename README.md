@@ -40,18 +40,18 @@ The tool exists to keep review governance where the decision already happens: in
 
 `observe` runs the planning flow without mutating anything. `refine` executes the same plan for real, including reviewer assignment, summary comment sync, optional Slack delivery, and pipeline failure when blocking policy remains unresolved. `explain` adds deeper routing and CODEOWNERS detail for debugging, while `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
 
-Today the implemented surface is intentionally focused: GitLab and GitHub are the supported review connectors, and Slack app plus Slack workflow are the supported notification sinks.
+Today the implemented surface is intentionally focused: GitLab and GitHub are the supported platform connectors, and Slack app plus Slack workflow are optional notification sinks.
 
 Internally, the repository now ships as a single crate with layered modules:
 
 - `apps/mr-milchick/src/core`: pure policy, routing, CODEOWNERS, rendering, and tone logic
 - `apps/mr-milchick/src/runtime`: execution traits, capability wiring, and reporting
-- `apps/mr-milchick/src/connectors`: GitLab, GitHub, and Slack integrations
+- `apps/mr-milchick/src/connectors`: GitLab, GitHub, and optional Slack integrations
 - `apps/mr-milchick/src/app.rs`: CLI orchestration and command flow
 
 ## Quickstart
 
-The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment and notifications. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
+The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment. If you also want Slack delivery, add the Slack features and notification config explicitly. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
 
 ```yaml
 stages:
@@ -72,7 +72,7 @@ build:milchick:
     - rustup target add x86_64-unknown-linux-musl
     - apt-get update && apt-get install -y musl-tools pkg-config
   script:
-    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
+    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
   artifacts:
@@ -90,7 +90,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. For Slack workflow delivery, also provide `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`. For Slack app delivery, provide `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP` if you want GitLab usernames rewritten to Slack user IDs. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. If you later opt into Slack workflow delivery, also provide `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`. For Slack app delivery, provide `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP` if you want GitLab usernames rewritten to Slack user IDs. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
 

@@ -35,7 +35,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 [features]
-default = ["github", "slack-app", "slack-workflow"]
+default = ["github"]
 gitlab = []
 github = []
 slack-app = []

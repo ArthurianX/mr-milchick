@@ -18,7 +18,9 @@ pub fn build_ci_context_from(raw: RawCiEnv) -> Result<CiContext> {
 
     let pipeline_source = parse_pipeline_source(raw.pipeline_source);
 
-    let review = raw.review_id.map(|id| ReviewContextRef { id: ReviewId(id) });
+    let review = raw
+        .review_id
+        .map(|id| ReviewContextRef { id: ReviewId(id) });
 
     let source_branch = raw
         .source_branch

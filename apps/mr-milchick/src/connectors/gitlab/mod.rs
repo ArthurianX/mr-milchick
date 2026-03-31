@@ -7,7 +7,7 @@ use crate::core::model::{
     ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind, ReviewRef,
     ReviewSnapshot, SkippedReviewAction,
 };
-use crate::runtime::{ConnectorError, ConnectorResult, ReviewConnector};
+use crate::runtime::{ConnectorError, ConnectorResult, PlatformConnector};
 use async_trait::async_trait;
 
 use self::api::{GitLabConfig, GitLabSnapshotData};
@@ -15,7 +15,7 @@ use self::client::GitLabClient;
 
 pub const MR_MILCHICK_MARKER: &str = "<!-- mr-milchick:summary -->";
 
-pub struct GitLabReviewConnector {
+pub struct GitLabPlatformConnector {
     client: GitLabClient,
     project_id: String,
     merge_request_iid: String,
@@ -24,7 +24,7 @@ pub struct GitLabReviewConnector {
     labels: Vec<String>,
 }
 
-impl GitLabReviewConnector {
+impl GitLabPlatformConnector {
     pub fn new(
         config: GitLabConfig,
         project_id: impl Into<String>,
@@ -45,7 +45,7 @@ impl GitLabReviewConnector {
 }
 
 #[async_trait]
-impl ReviewConnector for GitLabReviewConnector {
+impl PlatformConnector for GitLabPlatformConnector {
     fn kind(&self) -> ReviewPlatformKind {
         ReviewPlatformKind::GitLab
     }
@@ -168,6 +168,8 @@ impl ReviewConnector for GitLabReviewConnector {
         Ok(report)
     }
 }
+
+pub type GitLabReviewConnector = GitLabPlatformConnector;
 
 fn map_snapshot(
     data: GitLabSnapshotData,

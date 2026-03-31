@@ -90,7 +90,8 @@ async fn applies_review_actions_idempotently() {
     assert_eq!(server.request_count("POST", &comments_path), 1);
     assert_eq!(server.request_count("GET", &pr_path), 2);
 
-    let reviewer_assignment_bodies = server.request_bodies("POST", &format!("{pr_path}/requested_reviewers"));
+    let reviewer_assignment_bodies =
+        server.request_bodies("POST", &format!("{pr_path}/requested_reviewers"));
     assert_eq!(
         serde_json::from_str::<Value>(&reviewer_assignment_bodies[0])
             .expect("reviewer assignment body should parse"),
@@ -109,6 +110,7 @@ async fn paginates_changed_files() {
         .expect("snapshot should load");
 
     assert_eq!(snapshot.changed_files.len(), 101);
-    let files_path = format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}/files");
+    let files_path =
+        format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}/files");
     assert_eq!(server.request_count_prefix("GET", &files_path), 2);
 }

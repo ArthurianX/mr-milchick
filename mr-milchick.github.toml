@@ -1,33 +1,34 @@
 notification_policy = "always"
 
-[review_platform]
+[platform_connector]
 kind = "github"
 
-[[notifications]]
-kind = "slack-workflow"
-enabled = false
+# Optional Slack notifications:
+# [[notifications]]
+# kind = "slack-workflow"
+# enabled = true
 
-[[notifications]]
-kind = "slack-app"
-enabled = true
+# [[notifications]]
+# kind = "slack-app"
+# enabled = true
 
-[slack_app.user_map]
-"arthur" = "U028DDKDJ4E"
-"principal-reviewer" = "U03D9NN5HB6"
-"bob" = "U028GSCQBUJ"
+# [slack_app.user_map]
+# "arthur" = "U028DDKDJ4E"
+# "principal-reviewer" = "U03D9NN5HB6"
+# "bob" = "U028GSCQBUJ"
 
-[templates.slack_app]
-first_root = ":github: {{notification_subject}} :pepe-review:"
-first_thread = """
-*{{notification_title}}*
-Pull request: {{mr_link}}
-{{reviewers_line}}
-"""
+# [templates.slack_app]
+# first_root = ":github: {{notification_subject}} :pepe-review:"
+# first_thread = """
+# *{{notification_title}}*
+# Pull request: {{mr_link}}
+# {{reviewers_line}}
+# """
 
-update_root = ":github: {{notification_subject}} :thread:"
-update_thread = """
-Pull request: {{mr_link}}
-{{findings_block}}
-{{actions_block}}
-_{{summary_footer}}_
-"""
+# update_root = ":github: {{notification_subject}} :thread:"
+# update_thread = """
+# Pull request: {{mr_link}}
+# {{findings_block}}
+# {{actions_block}}
+# _{{summary_footer}}_
+# """

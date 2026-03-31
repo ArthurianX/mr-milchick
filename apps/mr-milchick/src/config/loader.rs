@@ -402,7 +402,7 @@ mod tests {
         let raw = r#"
 notification_policy = "on-applied-action"
 
-[review_platform]
+[platform_connector]
 kind = "gitlab"
 
 [[notifications]]
@@ -419,6 +419,7 @@ enabled = true
             flavor.notification_policy,
             Some(NotificationPolicy::OnAppliedAction)
         );
+        assert_eq!(flavor.platform_connector.kind, "gitlab");
         let slack_app = flavor.slack_app.expect("slack app config should exist");
 
         assert_eq!(
@@ -434,7 +435,7 @@ enabled = true
     #[test]
     fn parses_flavor_config_templates() {
         let raw = r###"
-[review_platform]
+[platform_connector]
 kind = "gitlab"
 
 [templates.gitlab]
@@ -461,5 +462,18 @@ first_title = "custom title"
             flavor.templates.slack_workflow.first_title.as_deref(),
             Some("custom title")
         );
+    }
+
+    #[test]
+    fn parses_legacy_review_platform_key_for_backward_compatibility() {
+        let raw = r#"
+[review_platform]
+kind = "github"
+"#;
+
+        let flavor =
+            toml::from_str::<FlavorConfig>(raw).expect("legacy flavor config should parse");
+
+        assert_eq!(flavor.platform_connector.kind, "github");
     }
 }

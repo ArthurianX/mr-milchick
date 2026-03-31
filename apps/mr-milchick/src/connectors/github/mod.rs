@@ -7,7 +7,7 @@ use crate::core::model::{
     ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind, ReviewRef,
     ReviewSnapshot, SkippedReviewAction,
 };
-use crate::runtime::{ConnectorError, ConnectorResult, ReviewConnector};
+use crate::runtime::{ConnectorError, ConnectorResult, PlatformConnector};
 use async_trait::async_trait;
 
 use self::api::{GitHubConfig, GitHubSnapshotData};
@@ -15,7 +15,7 @@ use self::client::GitHubClient;
 
 pub const MR_MILCHICK_MARKER: &str = "<!-- mr-milchick:summary -->";
 
-pub struct GitHubReviewConnector {
+pub struct GitHubPlatformConnector {
     client: GitHubClient,
     project_key: String,
     review_id: String,
@@ -24,7 +24,7 @@ pub struct GitHubReviewConnector {
     labels: Vec<String>,
 }
 
-impl GitHubReviewConnector {
+impl GitHubPlatformConnector {
     pub fn new(
         config: GitHubConfig,
         project_key: impl Into<String>,
@@ -45,7 +45,7 @@ impl GitHubReviewConnector {
 }
 
 #[async_trait]
-impl ReviewConnector for GitHubReviewConnector {
+impl PlatformConnector for GitHubPlatformConnector {
     fn kind(&self) -> ReviewPlatformKind {
         ReviewPlatformKind::GitHub
     }
@@ -159,6 +159,8 @@ impl ReviewConnector for GitHubReviewConnector {
         Ok(report)
     }
 }
+
+pub type GitHubReviewConnector = GitHubPlatformConnector;
 
 fn map_snapshot(
     data: GitHubSnapshotData,

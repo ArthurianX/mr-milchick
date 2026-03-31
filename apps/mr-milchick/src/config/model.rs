@@ -36,7 +36,8 @@ pub enum NotificationPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FlavorConfig {
-    pub review_platform: FlavorReviewPlatform,
+    #[serde(alias = "review_platform")]
+    pub platform_connector: FlavorPlatformConnector,
     #[serde(default)]
     pub notification_policy: Option<NotificationPolicy>,
     #[serde(default)]
@@ -48,7 +49,7 @@ pub struct FlavorConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct FlavorReviewPlatform {
+pub struct FlavorPlatformConnector {
     pub kind: String,
 }
 

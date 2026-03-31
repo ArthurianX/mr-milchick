@@ -1,40 +1,32 @@
 # CI Quickstart
 
-This guide shows the shortest path to running Mr Milchick in a GitLab merge request pipeline, then layering on Slack delivery. GitHub connector support and tag-based GitHub Releases now ship from the same repository, but the example below keeps the GitLab CI rollout path because it mirrors the existing pipeline model directly.
+This guide shows the shortest path to running Mr Milchick in a GitLab merge request pipeline, then layering on Slack delivery only if you want it. GitHub connector support and tag-based GitHub Releases now ship from the same repository, but the example below keeps the GitLab CI rollout path because it mirrors the existing pipeline model directly.
 
 ## What You Need
 
-Mr Milchick currently supports two review connectors and two optional notification sinks:
+Mr Milchick currently supports two platform connectors and two optional notification sinks:
 
-- review connectors: GitLab, GitHub
+- platform connectors: GitLab, GitHub
 - notification sinks: Slack workflow, Slack app
 
 The binary expects platform review context at runtime. Real GitLab reads and writes require `GITLAB_TOKEN`; real GitHub reads and writes require `GITHUB_TOKEN`.
 
 ## Minimal Flavor File
 
-The flavor file is optional, but it is the cleanest way to declare which compiled notification sinks should be active in a given environment.
+The flavor file is optional. Use it to declare the platform connector explicitly, and add `[[notifications]]` entries only when you intentionally compile and configure Slack delivery.
 
 ```toml
-[review_platform]
+[platform_connector]
 kind = "gitlab"
-
-[[notifications]]
-kind = "slack-workflow"
-enabled = true
-
-[[notifications]]
-kind = "slack-app"
-enabled = false
 ```
 
-Save that as `mr-milchick.toml` in the repo root, or point `MR_MILCHICK_FLAVOR_PATH` at another file. If you omit the file entirely, compiled notification sinks are treated as enabled by default.
+Save that as `mr-milchick.toml` in the repo root, or point `MR_MILCHICK_FLAVOR_PATH` at another file. If a flavor file is present and omits `[[notifications]]`, no notification sinks are activated. If you omit the file entirely, compiled notification sinks are treated as enabled by default.
 
 For GitHub builds, switch `kind = "gitlab"` to `kind = "github"`.
 
 ## Example GitLab Pipeline
 
-This example builds a Linux artifact with the currently implemented capabilities, verifies the artifact with `version`, and starts with a safe `observe` rollout job.
+This example builds a Linux artifact with only the mandatory GitLab platform connector, verifies the artifact with `version`, and starts with a safe `observe` rollout job.
 
 ```yaml
 stages:
@@ -49,7 +41,6 @@ variables:
      {"username":"carol","areas":["backend"]},
      {"username":"grace","areas":["devops"]}]
   MR_MILCHICK_MAX_REVIEWERS: "2"
-  MR_MILCHICK_SLACK_ENABLED: "true"
 
 build:milchick:
   stage: build
@@ -58,7 +49,7 @@ build:milchick:
     - rustup target add x86_64-unknown-linux-musl
     - apt-get update && apt-get install -y musl-tools pkg-config
   script:
-    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app slack-workflow"
+    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
   artifacts:
@@ -87,7 +78,7 @@ This repository now includes [`.github/workflows/release.yml`](../.github/workfl
 - builds Linux musl artifacts for both `gitlab` and `github`
 - publishes a GitHub Release with both connector-specific binaries and flavor examples
 
-For day-to-day GitHub pull request execution, [`.github/workflows/review.yml`](../.github/workflows/review.yml) starts the connector in `observe` mode on `pull_request` and points `MR_MILCHICK_FLAVOR_PATH` at [`mr-milchick.github.toml`](../mr-milchick.github.toml). Keep that workflow on `observe` until the output matches your expectations, then switch it to `refine` when you are ready for live reviewer assignment and summary upserts.
+For day-to-day GitHub pull request execution, [`.github/workflows/review.yml`](../.github/workflows/review.yml) starts the platform connector in `observe` mode on `pull_request` and points `MR_MILCHICK_FLAVOR_PATH` at [`mr-milchick.github.toml`](../mr-milchick.github.toml). Keep that workflow on `observe` until the output matches your expectations, then switch it to `refine` when you are ready for live reviewer assignment and summary upserts.
 
 ## Required Variables
 
@@ -109,6 +100,12 @@ These GitLab CI variables are read from the pipeline environment:
 
 Slack workflow is the lower-permission option. Compile the binary with `slack-workflow`, enable that sink in `mr-milchick.toml`, and set:
 
+```toml
+[[notifications]]
+kind = "slack-workflow"
+enabled = true
+```
+
 ```bash
 MR_MILCHICK_SLACK_ENABLED=true
 MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
@@ -126,6 +123,12 @@ Your workflow is responsible for posting the compact parent message and the thre
 ## Slack App Setup
 
 Slack app is the richer direct-posting option. Compile the binary with `slack-app`, enable that sink in `mr-milchick.toml`, and set:
+
+```toml
+[[notifications]]
+kind = "slack-app"
+enabled = true
+```
 
 ```bash
 MR_MILCHICK_SLACK_ENABLED=true

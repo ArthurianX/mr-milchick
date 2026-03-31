@@ -41,9 +41,9 @@ jobs:
       matrix:
         include:
           - connector: gitlab
-            features: "gitlab slack-app slack-workflow"
+            features: "gitlab"
           - connector: github
-            features: "github slack-app slack-workflow"
+            features: "github"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
