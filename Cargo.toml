@@ -33,6 +33,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+llama-cpp-2 = { version = "=0.1.141", features = ["sampler"], optional = true }
 
 [features]
 default = ["github"]
@@ -42,3 +43,4 @@ slack-app = []
 slack-workflow = []
 teams = []
 discord = []
+llm-local = ["dep:llama-cpp-2"]

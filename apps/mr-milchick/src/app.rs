@@ -22,6 +22,8 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
+#[cfg(feature = "llm-local")]
+use crate::core::inference::LocalLlamaReviewInferenceEngine;
 use crate::core::inference::{
     NoopReviewInferenceEngine, ReviewInferenceEngine, ReviewInferenceOutcome, analyze_with_timeout,
 };
@@ -214,7 +216,10 @@ pub async fn run_mode(
     let fixture_mode = fixture_path.is_some();
     let mut fixture_notification_variant = fixture_variant.map(map_fixture_variant_arg);
 
-    let (ctx, snapshot, mut outcome);
+    let ctx;
+    let snapshot;
+    let mut outcome;
+    let wiring;
     if let Some(fixture_path) = fixture_path {
         let fixture = load_review_fixture(fixture_path)?;
         fixture_notification_variant =
@@ -222,6 +227,7 @@ pub async fn run_mode(
         ctx = fixture.to_ci_context()?;
         snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
         outcome = fixture.to_rule_outcome()?;
+        wiring = build_fixture_runtime_wiring(&app_config, flavor.as_ref())?;
     } else {
         ctx = build_ci_context()?;
         println!("{}", selector.select(ToneCategory::Observation, &ctx));
@@ -232,14 +238,15 @@ pub async fn run_mode(
             return Ok(());
         }
 
-        let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
-        snapshot = wiring.platform_connector.load_snapshot().await?;
+        let live_wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+        snapshot = live_wiring.platform_connector.load_snapshot().await?;
         outcome = enrich_with_reviewer_assignment(
             evaluate_rules(&ctx),
             &snapshot,
             &app_config.routing_config,
             &app_config.codeowners,
         );
+        wiring = live_wiring;
     }
 
     if fixture_mode {
@@ -247,16 +254,18 @@ pub async fn run_mode(
         print_compiled_capabilities();
     }
 
-    let wiring = if fixture_mode {
-        build_fixture_runtime_wiring(&app_config, flavor.as_ref())?
-    } else {
-        build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?
-    };
     let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
+    let inference_outcome = match wiring.analyze_review(&snapshot).await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            warn!("local review inference failed: {err}");
+            ReviewInferenceOutcome::failed(err.to_string())
+        }
+    };
 
     let summary = render_review_summary(
         &template_catalog,
-        &build_summary_template_context(&outcome, &snapshot, &selector, &ctx),
+        &build_summary_template_context(&outcome, &snapshot, &inference_outcome, &selector, &ctx),
         compiled_platform_kind(),
     );
     outcome.action_plan.push(ReviewAction::UpsertSummary {
@@ -274,6 +283,7 @@ pub async fn run_mode(
                     &template_catalog,
                     &selector,
                     &ctx,
+                    &inference_outcome,
                     &preview_sink_kinds,
                     fixture_notification_variant,
                 );
@@ -298,12 +308,14 @@ pub async fn run_mode(
             }
             println!("---");
             print_snapshot_details(&snapshot);
+            print_inference_details(&inference_outcome);
             let notifications = build_notifications(
                 &outcome,
                 &snapshot,
                 &template_catalog,
                 &selector,
                 &ctx,
+                &inference_outcome,
                 &preview_sink_kinds,
                 fixture_notification_variant,
             );
@@ -333,6 +345,7 @@ pub async fn run_mode(
                 &template_catalog,
                 &selector,
                 &ctx,
+                &inference_outcome,
                 &preview_sink_kinds,
                 fixture_notification_variant,
             );
@@ -542,16 +555,33 @@ fn build_inference_connector(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("LLM review recommendations require a model path"))?;
 
-    Ok((
-        Box::new(ReviewInferenceConnectorAdapter {
-            engine: Box::new(NoopReviewInferenceEngine::unavailable(format!(
-                "LLM backend is not wired yet for model '{}'",
-                model_path
-            ))),
-            timeout,
-        }),
-        false,
-    ))
+    #[cfg(feature = "llm-local")]
+    {
+        return Ok((
+            Box::new(ReviewInferenceConnectorAdapter {
+                engine: Box::new(LocalLlamaReviewInferenceEngine::new(
+                    model_path,
+                    llm.max_patch_bytes,
+                )?),
+                timeout,
+            }),
+            true,
+        ));
+    }
+
+    #[cfg(not(feature = "llm-local"))]
+    {
+        Ok((
+            Box::new(ReviewInferenceConnectorAdapter {
+                engine: Box::new(NoopReviewInferenceEngine::unavailable(format!(
+                    "LLM backend support is not compiled in for model '{}'",
+                    model_path
+                ))),
+                timeout,
+            }),
+            false,
+        ))
+    }
 }
 
 fn resolve_llm_config(
@@ -754,6 +784,7 @@ fn build_notifications(
     template_catalog: &crate::core::message_templates::TemplateCatalog,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
+    inference_outcome: &ReviewInferenceOutcome,
     sink_kinds: &[NotificationSinkKind],
     variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
@@ -767,6 +798,7 @@ fn build_notifications(
     let notification_context = build_notification_template_context(
         outcome,
         snapshot,
+        inference_outcome,
         selector,
         ctx,
         variant,
@@ -920,6 +952,27 @@ fn print_snapshot_details(snapshot: &crate::core::model::ReviewSnapshot) {
     println!("- [ChangedFiles] {}", snapshot.changed_file_count());
 }
 
+fn print_inference_details(inference_outcome: &ReviewInferenceOutcome) {
+    println!("Local review recommendations:");
+    println!("- [Status] {:?}", inference_outcome.status);
+    if let Some(detail) = &inference_outcome.detail {
+        println!("- [Detail] {}", detail);
+    }
+    if let Some(summary) = &inference_outcome.insights.summary {
+        println!("- [Summary] {}", summary);
+    }
+    if inference_outcome.insights.recommendations.is_empty() {
+        println!("- [Recommendations] none");
+    } else {
+        for recommendation in &inference_outcome.insights.recommendations {
+            println!(
+                "- [Recommendation {:?}] {}",
+                recommendation.category, recommendation.message
+            );
+        }
+    }
+}
+
 fn print_codeowners_details(
     snapshot: &crate::core::model::ReviewSnapshot,
     app_config: &AppConfigContext,
@@ -989,6 +1042,9 @@ mod tests {
         BranchInfo, BranchName, CiContext, PipelineInfo, PipelineSource, ProjectKey,
         ReviewContextRef, ReviewId,
     };
+    use crate::core::inference::{
+        RecommendationCategory, ReviewInferenceOutcome, ReviewInsights, ReviewRecommendation,
+    };
     use crate::core::model::{
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
     };
@@ -1055,6 +1111,18 @@ mod tests {
         }
     }
 
+    fn sample_inference_outcome() -> ReviewInferenceOutcome {
+        ReviewInferenceOutcome::ready(ReviewInsights {
+            summary: Some("The change adds advisory local review suggestions.".to_string()),
+            recommendations: vec![ReviewRecommendation {
+                category: RecommendationCategory::Risk,
+                message:
+                    "Double-check that notification sinks render recommendations consistently."
+                        .to_string(),
+            }],
+        })
+    }
+
     #[test]
     fn notification_building_skips_blocking_outcomes() {
         let outcome = RuleOutcome {
@@ -1097,6 +1165,7 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &sample_inference_outcome(),
             &[NotificationSinkKind::SlackApp],
             None,
         );
@@ -1106,6 +1175,11 @@ mod tests {
             notifications[0]
                 .body
                 .contains("_Assigned reviewers_ *@principal-reviewer* *@bob*")
+        );
+        assert!(
+            notifications[0].body.contains(
+                "Double-check that notification sinks render recommendations consistently."
+            )
         );
     }
 
@@ -1122,6 +1196,7 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &sample_inference_outcome(),
             &[NotificationSinkKind::SlackWorkflow],
             None,
         );
@@ -1131,6 +1206,11 @@ mod tests {
         assert!(notifications[0]
             .body
             .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
+        assert!(
+            notifications[0]
+                .body
+                .contains("The change adds advisory local review suggestions.")
+        );
     }
 
     #[test]

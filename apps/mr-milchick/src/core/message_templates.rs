@@ -4,6 +4,7 @@ use tracing::warn;
 
 use crate::config::model::FlavorConfig;
 use crate::context::model::CiContext;
+use crate::core::inference::{RecommendationCategory, ReviewInferenceOutcome};
 use crate::core::model::{NotificationSinkKind, ReviewAction, ReviewPlatformKind, ReviewSnapshot};
 use crate::core::rules::model::{FindingSeverity, RuleOutcome};
 use crate::core::tone::{ToneCategory, ToneSelector};
@@ -14,6 +15,8 @@ const GITLAB_SUMMARY_TEMPLATE: &str = r#"## {{summary_title}}
 
 {{findings_block}}
 
+{{recommendations_block}}
+
 {{actions_block}}
 
 _{{closing_tone_message}}_"#;
@@ -22,20 +25,24 @@ const GITHUB_SUMMARY_TEMPLATE: &str = GITLAB_SUMMARY_TEMPLATE;
 const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_FIRST_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Merge request: {{mr_link}}
-{{reviewers_line}}"#;
+{{reviewers_line}}
+{{recommendations_block}}"#;
 const SLACK_APP_UPDATE_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
+{{recommendations_block}}
 {{actions_block}}
 _{{summary_footer}}_"#;
 
 const SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE: &str = r#"{{notification_title}}
 Merge request: {{mr_link}}
-{{reviewers_line}}"#;
+{{reviewers_line}}
+{{recommendations_block}}"#;
 const SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
+{{recommendations_block}}
 {{actions_block}}
 {{summary_footer}}"#;
 
@@ -54,6 +61,7 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "warning_findings_count",
     "info_findings_count",
     "actions_count",
+    "recommendations_count",
     "reviewers_count",
     "new_reviewers_count",
     "existing_reviewers_count",
@@ -63,6 +71,8 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "existing_reviewers_list",
     "findings_block",
     "actions_block",
+    "llm_summary",
+    "recommendations_block",
     "tone_message",
     "tone_category",
     "summary_title",
@@ -89,6 +99,7 @@ const GITLAB_SUMMARY_PLACEHOLDERS: &[&str] = &[
     "warning_findings_count",
     "info_findings_count",
     "actions_count",
+    "recommendations_count",
     "reviewers_count",
     "new_reviewers_count",
     "existing_reviewers_count",
@@ -98,6 +109,8 @@ const GITLAB_SUMMARY_PLACEHOLDERS: &[&str] = &[
     "existing_reviewers_list",
     "findings_block",
     "actions_block",
+    "llm_summary",
+    "recommendations_block",
     "tone_message",
     "tone_category",
     "summary_title",
@@ -174,6 +187,7 @@ pub struct SummaryTemplateContext {
     snapshot: SnapshotFacts,
     findings: Vec<FindingView>,
     actions: Vec<String>,
+    inference: InferenceTemplateContext,
     tone: SelectedTone,
     closing_tone: SelectedTone,
 }
@@ -183,6 +197,7 @@ pub struct NotificationTemplateContext {
     snapshot: SnapshotFacts,
     findings: Vec<FindingView>,
     actions: Vec<String>,
+    inference: InferenceTemplateContext,
     tone: SelectedTone,
     summary_intro: String,
     summary_footer: String,
@@ -208,6 +223,18 @@ struct SnapshotFacts {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FindingView {
+    label: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct InferenceTemplateContext {
+    summary: Option<String>,
+    recommendations: Vec<RecommendationView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecommendationView {
     label: String,
     message: String,
 }
@@ -342,6 +369,7 @@ pub fn resolve_template_catalog(flavor: Option<&FlavorConfig>) -> TemplateCatalo
 pub fn build_summary_template_context(
     outcome: &RuleOutcome,
     snapshot: &ReviewSnapshot,
+    inference_outcome: &ReviewInferenceOutcome,
     selector: &ToneSelector,
     ctx: &CiContext,
 ) -> SummaryTemplateContext {
@@ -349,6 +377,7 @@ pub fn build_summary_template_context(
         snapshot: SnapshotFacts::from_snapshot(snapshot),
         findings: findings_from_outcome(outcome),
         actions: actions_from_outcome(outcome),
+        inference: inference_from_outcome(inference_outcome),
         tone: SelectedTone {
             category: ToneCategory::Observation,
             message: selector.select(ToneCategory::Observation, ctx).to_string(),
@@ -365,6 +394,7 @@ pub fn build_summary_template_context(
 pub fn build_notification_template_context(
     outcome: &RuleOutcome,
     snapshot: &ReviewSnapshot,
+    inference_outcome: &ReviewInferenceOutcome,
     selector: &ToneSelector,
     ctx: &CiContext,
     variant: NotificationTemplateVariant,
@@ -384,6 +414,7 @@ pub fn build_notification_template_context(
         snapshot: snapshot_facts.clone(),
         findings: findings_from_outcome(outcome),
         actions: actions_from_outcome(outcome),
+        inference: inference_from_outcome(inference_outcome),
         tone: SelectedTone {
             category: notification_tone_category,
             message: selector.select(notification_tone_category, ctx).to_string(),
@@ -611,6 +642,7 @@ impl SummaryTemplateContext {
             &self.snapshot,
             &self.findings,
             &self.actions,
+            &self.inference,
             &[],
             &[],
             &[],
@@ -644,6 +676,7 @@ impl NotificationTemplateContext {
             &self.snapshot,
             &self.findings,
             &self.actions,
+            &self.inference,
             &self.reviewers,
             &self.new_reviewers,
             &self.existing_reviewers,
@@ -694,6 +727,7 @@ fn common_values(
     snapshot: &SnapshotFacts,
     findings: &[FindingView],
     actions: &[String],
+    inference: &InferenceTemplateContext,
     reviewers: &[String],
     new_reviewers: &[String],
     existing_reviewers: &[String],
@@ -739,6 +773,10 @@ fn common_values(
             .to_string(),
     );
     values.insert("actions_count", actions.len().to_string());
+    values.insert(
+        "recommendations_count",
+        inference.recommendations.len().to_string(),
+    );
     values.insert("reviewers_count", reviewers.len().to_string());
     values.insert("new_reviewers_count", new_reviewers.len().to_string());
     values.insert(
@@ -760,6 +798,11 @@ fn common_values(
     );
     values.insert("findings_block", format_findings_block(style, findings));
     values.insert("actions_block", format_actions_block(style, actions));
+    values.insert("llm_summary", inference.summary.clone().unwrap_or_default());
+    values.insert(
+        "recommendations_block",
+        format_recommendations_block(style, inference),
+    );
     values.insert("tone_message", tone.message.clone());
     values.insert(
         "tone_category",
@@ -792,6 +835,21 @@ fn actions_from_outcome(outcome: &RuleOutcome) -> Vec<String> {
         vec!["None".to_string()]
     } else {
         actions
+    }
+}
+
+fn inference_from_outcome(outcome: &ReviewInferenceOutcome) -> InferenceTemplateContext {
+    InferenceTemplateContext {
+        summary: outcome.insights.summary.clone(),
+        recommendations: outcome
+            .insights
+            .recommendations
+            .iter()
+            .map(|recommendation| RecommendationView {
+                label: recommendation_label(recommendation.category).to_string(),
+                message: recommendation.message.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -865,6 +923,47 @@ fn format_actions_block(style: RenderStyle, actions: &[String]) -> String {
         .join("\n")
 }
 
+fn format_recommendations_block(
+    style: RenderStyle,
+    inference: &InferenceTemplateContext,
+) -> String {
+    if inference.summary.is_none() && inference.recommendations.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = Vec::new();
+    match style {
+        RenderStyle::GitLab | RenderStyle::GitHub => {
+            lines.push("### Local review recommendations".to_string())
+        }
+        RenderStyle::SlackApp => lines.push("*Local review recommendations*".to_string()),
+        RenderStyle::SlackWorkflow => lines.push("Local review recommendations".to_string()),
+    }
+
+    if let Some(summary) = &inference.summary {
+        lines.push(summary.clone());
+    }
+
+    lines.extend(
+        inference
+            .recommendations
+            .iter()
+            .map(|recommendation| match style {
+                RenderStyle::GitLab | RenderStyle::GitHub => {
+                    format!("- **{}**: {}", recommendation.label, recommendation.message)
+                }
+                RenderStyle::SlackApp => {
+                    format!("• *{}*: {}", recommendation.label, recommendation.message)
+                }
+                RenderStyle::SlackWorkflow => {
+                    format!("- {}: {}", recommendation.label, recommendation.message)
+                }
+            }),
+    );
+
+    lines.join("\n")
+}
+
 fn format_reviewers_list(style: RenderStyle, reviewers: &[String]) -> String {
     match style {
         RenderStyle::GitLab | RenderStyle::GitHub => reviewers
@@ -882,6 +981,14 @@ fn format_reviewers_list(style: RenderStyle, reviewers: &[String]) -> String {
             .map(|reviewer| format!("@{}", reviewer))
             .collect::<Vec<_>>()
             .join(" "),
+    }
+}
+
+fn recommendation_label(category: RecommendationCategory) -> &'static str {
+    match category {
+        RecommendationCategory::ReviewFocus => "Review focus",
+        RecommendationCategory::Risk => "Risk",
+        RecommendationCategory::TestGap => "Test gap",
     }
 }
 
@@ -953,6 +1060,9 @@ mod tests {
         FlavorTemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
+    use crate::core::inference::{
+        RecommendationCategory, ReviewInferenceOutcome, ReviewInsights, ReviewRecommendation,
+    };
     use crate::core::model::{Actor, ReviewMetadata};
     use crate::core::rules::model::{RuleFinding, RuleOutcome};
 
@@ -1020,6 +1130,22 @@ mod tests {
         }
     }
 
+    fn sample_inference_outcome() -> ReviewInferenceOutcome {
+        ReviewInferenceOutcome::ready(ReviewInsights {
+            summary: Some("The change mostly affects reviewer routing and notification copy.".to_string()),
+            recommendations: vec![
+                ReviewRecommendation {
+                    category: RecommendationCategory::ReviewFocus,
+                    message: "Check that first-time reviewer notifications still fire only when new reviewers are added.".to_string(),
+                },
+                ReviewRecommendation {
+                    category: RecommendationCategory::TestGap,
+                    message: "Add coverage for advisory inference text appearing in summary and Slack output.".to_string(),
+                },
+            ],
+        })
+    }
+
     #[test]
     fn validates_unknown_placeholder() {
         let error = validate_template("{{unknown_placeholder}}", TemplateField::SlackAppFirstRoot)
@@ -1046,6 +1172,7 @@ mod tests {
             &build_summary_template_context(
                 &outcome,
                 &sample_snapshot(),
+                &sample_inference_outcome(),
                 &ToneSelector::default(),
                 &sample_context(),
             ),
@@ -1054,6 +1181,8 @@ mod tests {
 
         assert!(rendered.contains("Mr. Milchick Review Summary"));
         assert!(rendered.contains("Warning"));
+        assert!(rendered.contains("Local review recommendations"));
+        assert!(rendered.contains("Check that first-time reviewer notifications"));
         assert!(rendered.contains("Assigned reviewers: @bob"));
     }
 
@@ -1065,6 +1194,7 @@ mod tests {
             &build_notification_template_context(
                 &outcome,
                 &sample_snapshot(),
+                &sample_inference_outcome(),
                 &ToneSelector::default(),
                 &sample_context(),
                 NotificationTemplateVariant::First,
@@ -1077,6 +1207,8 @@ mod tests {
 
         assert!(subject.contains("took a first look at"));
         assert!(body.contains("Assigned reviewers @principal-reviewer @bob"));
+        assert!(body.contains("Local review recommendations"));
+        assert!(body.contains("advisory inference text appearing in summary"));
         assert!(!body.contains("No findings were produced."));
     }
 
