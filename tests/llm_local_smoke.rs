@@ -3,12 +3,197 @@ mod llm_local_smoke {
     use std::env;
     use std::num::NonZeroU32;
     use std::path::PathBuf;
+    use std::sync::OnceLock;
+    use std::time::Duration;
 
     use llama_cpp_2::context::params::LlamaContextParams;
     use llama_cpp_2::list_llama_ggml_backend_devices;
     use llama_cpp_2::llama_backend::LlamaBackend;
     use llama_cpp_2::model::LlamaModel;
     use llama_cpp_2::model::params::{LlamaModelParams, LlamaSplitMode};
+    use mr_milchick::core::inference::{
+        LocalLlamaReviewInferenceEngine, ReviewInferenceOutcome, ReviewInferenceStatus,
+        analyze_with_timeout,
+    };
+    use mr_milchick::core::model::{
+        Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewPlatformKind,
+        ReviewRef, ReviewSnapshot,
+    };
+
+    const DEFAULT_SMOKE_TIMEOUT_MS: u64 = 120_000;
+    const DEFAULT_SMOKE_PATCH_BUDGET: usize = 2_048;
+
+    static SMOKE_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    fn model_path_from_env() -> PathBuf {
+        PathBuf::from(
+            env::var("MR_MILCHICK_LLM_MODEL_PATH")
+                .expect("set MR_MILCHICK_LLM_MODEL_PATH to a local GGUF file"),
+        )
+    }
+
+    fn smoke_timeout() -> Duration {
+        Duration::from_millis(
+            env::var("MR_MILCHICK_LLM_SMOKE_TIMEOUT_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_SMOKE_TIMEOUT_MS),
+        )
+    }
+
+    fn smoke_patch_budget() -> usize {
+        env::var("MR_MILCHICK_LLM_SMOKE_MAX_PATCH_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_SMOKE_PATCH_BUDGET)
+    }
+
+    fn local_engine() -> LocalLlamaReviewInferenceEngine {
+        LocalLlamaReviewInferenceEngine::new(model_path_from_env(), smoke_patch_budget())
+            .expect("local smoke test engine should initialize from env")
+    }
+
+    fn smoke_test_lock() -> &'static tokio::sync::Mutex<()> {
+        SMOKE_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    fn sample_snapshot(
+        title: &str,
+        description: &str,
+        labels: &[&str],
+        changed_files: Vec<ChangedFile>,
+    ) -> ReviewSnapshot {
+        ReviewSnapshot {
+            review_ref: ReviewRef {
+                platform: ReviewPlatformKind::GitHub,
+                project_key: "ArthurianX/mr-milchick".to_string(),
+                review_id: "3995".to_string(),
+                web_url: Some("https://example.test/pull/3995".to_string()),
+            },
+            repository: RepositoryRef {
+                platform: ReviewPlatformKind::GitHub,
+                namespace: "ArthurianX".to_string(),
+                name: "mr-milchick".to_string(),
+                web_url: Some("https://example.test/ArthurianX/mr-milchick".to_string()),
+            },
+            title: title.to_string(),
+            description: Some(description.to_string()),
+            author: Actor {
+                username: "arthur".to_string(),
+                display_name: Some("Arthur".to_string()),
+            },
+            participants: Vec::new(),
+            changed_files,
+            labels: labels.iter().map(|label| (*label).to_string()).collect(),
+            is_draft: false,
+            default_branch: Some("main".to_string()),
+            metadata: ReviewMetadata {
+                source_branch: Some("feat/local-llm-smoke".to_string()),
+                target_branch: Some("main".to_string()),
+                commit_count: Some(2),
+                approvals_required: Some(1),
+                approvals_given: Some(0),
+            },
+        }
+    }
+
+    fn added_line_count(patch: &str) -> u32 {
+        patch
+            .lines()
+            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+            .count() as u32
+    }
+
+    fn deleted_line_count(patch: &str) -> u32 {
+        patch
+            .lines()
+            .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+            .count() as u32
+    }
+
+    fn changed_file(path: &str, patch: &str) -> ChangedFile {
+        ChangedFile {
+            path: path.to_string(),
+            previous_path: None,
+            change_type: ChangeType::Modified,
+            additions: Some(added_line_count(patch)),
+            deletions: Some(deleted_line_count(patch)),
+            patch: Some(patch.to_string()),
+        }
+    }
+
+    fn deleted_file(path: &str, patch: &str) -> ChangedFile {
+        ChangedFile {
+            path: path.to_string(),
+            previous_path: None,
+            change_type: ChangeType::Deleted,
+            additions: Some(0),
+            deletions: Some(deleted_line_count(patch)),
+            patch: Some(patch.to_string()),
+        }
+    }
+
+    fn report_output(case_name: &str, outcome: &ReviewInferenceOutcome) {
+        eprintln!("case={case_name} status={:?}", outcome.status);
+        if let Some(detail) = &outcome.detail {
+            eprintln!("case={case_name} detail={detail}");
+        }
+        if let Some(summary) = &outcome.insights.summary {
+            eprintln!("case={case_name} summary={summary}");
+        }
+        for recommendation in &outcome.insights.recommendations {
+            eprintln!(
+                "case={case_name} recommendation[{:?}]={}",
+                recommendation.category, recommendation.message
+            );
+        }
+    }
+
+    fn combined_output_text(outcome: &ReviewInferenceOutcome) -> String {
+        let mut output = String::new();
+        if let Some(summary) = &outcome.insights.summary {
+            output.push_str(summary);
+            output.push('\n');
+        }
+        for recommendation in &outcome.insights.recommendations {
+            output.push_str(&recommendation.message);
+            output.push('\n');
+        }
+        output.to_ascii_lowercase()
+    }
+
+    fn assert_contains_any_keyword(output: &str, keywords: &[&str]) {
+        assert!(
+            keywords.iter().any(|keyword| output.contains(keyword)),
+            "expected output to contain one of {:?}, got:\n{}",
+            keywords,
+            output
+        );
+    }
+
+    async fn run_reaction_case(
+        case_name: &str,
+        snapshot: ReviewSnapshot,
+        expected_keywords: &[&str],
+    ) {
+        let _guard = smoke_test_lock().lock().await;
+        let engine = local_engine();
+        let outcome = analyze_with_timeout(&engine, &snapshot, smoke_timeout()).await;
+        report_output(case_name, &outcome);
+
+        assert_eq!(
+            outcome.status,
+            ReviewInferenceStatus::Ready,
+            "expected llama.cpp to return structured recommendations for {case_name}"
+        );
+        assert!(
+            !outcome.insights.is_empty(),
+            "expected non-empty insights for {case_name}"
+        );
+
+        let output = combined_output_text(&outcome);
+        assert_contains_any_keyword(&output, expected_keywords);
+    }
 
     fn probe_contexts(
         backend: &LlamaBackend,
@@ -37,10 +222,8 @@ mod llm_local_smoke {
     #[test]
     #[ignore = "requires MR_MILCHICK_LLM_MODEL_PATH to point at a local GGUF"]
     fn backend_load_and_context_probe() {
-        let model_path = PathBuf::from(
-            env::var("MR_MILCHICK_LLM_MODEL_PATH")
-                .expect("set MR_MILCHICK_LLM_MODEL_PATH to a local GGUF file"),
-        );
+        let _guard = smoke_test_lock().blocking_lock();
+        let model_path = model_path_from_env();
         assert!(
             model_path.is_file(),
             "MR_MILCHICK_LLM_MODEL_PATH must point to an existing file, got '{}'",
@@ -232,5 +415,122 @@ mod llm_local_smoke {
             model_path.display(),
             failed_attempts.join("\n")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MR_MILCHICK_LLM_MODEL_PATH and runs real GGUF inference"]
+    async fn reacts_to_typescript_frontend_changes() {
+        let snapshot = sample_snapshot(
+            "Render raw profile bios from the API payload",
+            "Updates the profile card to render API-provided HTML and removes the old plain-text component test.",
+            &["frontend", "typescript"],
+            vec![
+                changed_file(
+                    "apps/frontend/src/components/ProfileBio.tsx",
+                    r#"@@ -1,11 +1,19 @@
+-import { useMemo } from "react";
++import { useEffect, useState } from "react";
+ 
+ export function ProfileBio({ userId }: { userId: string }) {
+-  const bio = useMemo(() => "Loading...", []);
+-  return <p className="prose">{bio}</p>;
++  const [bioHtml, setBioHtml] = useState("");
++
++  useEffect(() => {
++    fetch(`/api/users/${userId}/bio`)
++      .then((response) => response.text())
++      .then(setBioHtml);
++  }, [userId]);
++
++  return <div className="prose" dangerouslySetInnerHTML={{ __html: bioHtml }} />;
+ }
+"#,
+                ),
+                deleted_file(
+                    "apps/frontend/src/components/ProfileBio.test.tsx",
+                    r#"@@ -1,7 +0,0 @@
+-import { render, screen } from "@testing-library/react";
+-import { ProfileBio } from "./ProfileBio";
+-
+-it("renders plain text bios", () => {
+-  render(<ProfileBio userId="user-1" />);
+-  expect(screen.getByText("Loading...")).toBeInTheDocument();
+-});
+"#,
+                ),
+            ],
+        );
+
+        run_reaction_case(
+            "typescript-frontend",
+            snapshot,
+            &[
+                "react",
+                "sanitize",
+                "xss",
+                "dangerouslysetinnerhtml",
+                "html",
+                "test",
+                "coverage",
+                "component",
+                "render",
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MR_MILCHICK_LLM_MODEL_PATH and runs real GGUF inference"]
+    async fn reacts_to_javascript_backend_changes() {
+        let snapshot = sample_snapshot(
+            "Simplify admin role updates",
+            "Cleans up the admin role endpoint and removes some extra ceremony in the handler.",
+            &["backend", "javascript"],
+            vec![
+                changed_file(
+                    "apps/api/routes/admin.js",
+                    r#"@@ -1,11 +1,9 @@
+ const express = require("express");
+-const requireAdmin = require("../auth/requireAdmin");
+-const validateRoleChange = require("../validation/validateRoleChange");
+ const router = express.Router();
+ 
+-router.post("/users/:id/role", requireAdmin, validateRoleChange, updateRole);
++router.post("/users/:id/role", updateRole);
+ 
+ module.exports = router;
+"#,
+                ),
+                deleted_file(
+                    "apps/api/routes/admin.test.js",
+                    r#"@@ -1,12 +0,0 @@
+-it("rejects non-admin role updates", async () => {
+-  const response = await request(app)
+-    .post("/users/123/role")
+-    .send({ role: "staff" });
+-
+-  expect(response.status).toBe(403);
+-});
+"#,
+                ),
+            ],
+        );
+
+        run_reaction_case(
+            "javascript-backend",
+            snapshot,
+            &[
+                "auth",
+                "authorization",
+                "admin",
+                "permission",
+                "validation",
+                "security",
+                "role",
+                "access",
+                "test",
+            ],
+        )
+        .await;
     }
 }

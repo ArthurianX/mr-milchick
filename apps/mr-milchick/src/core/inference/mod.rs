@@ -282,6 +282,15 @@ fn build_local_inference_prompt(snapshot: &ReviewSnapshot, max_patch_bytes: usiz
     prompt.push_str("Rules:\n");
     prompt.push_str("- Keep the output advisory and recommendation-only.\n");
     prompt.push_str("- Base conclusions only on the supplied snapshot and diff excerpts.\n");
+    prompt.push_str("- Return strict JSON with double-quoted keys and string values.\n");
+    prompt.push_str("- Do not wrap the JSON in markdown fences or commentary.\n");
+    prompt.push_str("- Do not copy placeholder text from the schema like 'string or null'.\n");
+    prompt.push_str(
+        "- Every summary and recommendation must mention a concrete change from the diff.\n",
+    );
+    prompt.push_str(
+        "- Pay extra attention to deleted tests, removed auth or validation checks, and raw HTML rendering changes.\n",
+    );
     prompt.push_str("- Use at most 4 recommendations.\n");
     prompt.push_str("- Keep each recommendation message under 160 characters.\n");
     prompt.push_str("- Use null for summary if nothing useful stands out.\n\n");
@@ -397,15 +406,24 @@ fn format_change_type(change_type: ChangeType) -> &'static str {
 
 #[cfg(any(feature = "llm-local", test))]
 fn parse_local_inference_output(raw: &str) -> Result<ReviewInsights, ReviewInferenceError> {
-    let json_payload = extract_first_json_object(raw).ok_or_else(|| {
-        ReviewInferenceError::Analysis(
-            "local review model did not return a JSON object".to_string(),
-        )
-    })?;
+    let json_payloads = extract_json_objects(raw);
+    if json_payloads.is_empty() {
+        return Err(ReviewInferenceError::Analysis(format!(
+            "local review model did not return a JSON object; raw output preview: {}",
+            preview_inference_output(raw)
+        )));
+    }
 
-    let response: LlmReviewResponse = serde_json::from_str(json_payload).map_err(|err| {
-        ReviewInferenceError::Analysis(format!("local review model returned invalid JSON: {err}"))
-    })?;
+    let response = json_payloads
+        .iter()
+        .find_map(|payload| serde_json::from_str::<LlmReviewResponse>(payload).ok())
+        .ok_or_else(|| {
+            let first_payload = json_payloads.first().copied().unwrap_or(raw);
+            ReviewInferenceError::Analysis(format!(
+                "local review model returned invalid JSON: payload preview: {}",
+                preview_inference_output(first_payload)
+            ))
+        })?;
 
     let summary = normalize_optional_text(response.summary);
     let recommendations = response
@@ -426,35 +444,19 @@ fn parse_local_inference_output(raw: &str) -> Result<ReviewInsights, ReviewInfer
 }
 
 #[cfg(any(feature = "llm-local", test))]
-fn normalize_optional_text(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        let normalized = value.trim();
-        if normalized.is_empty() || normalized.eq_ignore_ascii_case("null") {
-            None
-        } else {
-            Some(normalized.to_string())
-        }
-    })
-}
-
-#[cfg(any(feature = "llm-local", test))]
-fn parse_recommendation_category(raw: &str) -> Option<RecommendationCategory> {
-    let normalized = raw
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase();
-
-    match normalized.as_str() {
-        "reviewfocus" => Some(RecommendationCategory::ReviewFocus),
-        "risk" => Some(RecommendationCategory::Risk),
-        "testgap" => Some(RecommendationCategory::TestGap),
-        _ => None,
+fn preview_inference_output(raw: &str) -> String {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let preview = truncate_utf8(&collapsed, 240);
+    if preview.len() < collapsed.len() {
+        format!("{preview}...")
+    } else {
+        preview
     }
 }
 
 #[cfg(any(feature = "llm-local", test))]
-fn extract_first_json_object(raw: &str) -> Option<&str> {
+fn extract_json_objects(raw: &str) -> Vec<&str> {
+    let mut objects = Vec::new();
     let mut start_index = None;
     let mut depth = 0usize;
     let mut in_string = false;
@@ -486,15 +488,56 @@ fn extract_first_json_object(raw: &str) -> Option<&str> {
             '}' if start_index.is_some() => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
-                    let start = start_index?;
-                    return Some(&raw[start..index + ch.len_utf8()]);
+                    if let Some(start) = start_index.take() {
+                        objects.push(&raw[start..index + ch.len_utf8()]);
+                    }
                 }
             }
             _ => {}
         }
     }
 
-    None
+    objects
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn contains_parseable_review_response(raw: &str) -> bool {
+    extract_json_objects(raw)
+        .into_iter()
+        .any(|payload| serde_json::from_str::<LlmReviewResponse>(payload).is_ok())
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let normalized = value.trim();
+        let lower = normalized.to_ascii_lowercase();
+        if normalized.is_empty()
+            || lower == "null"
+            || lower == "string or null"
+            || lower == "null or string"
+        {
+            None
+        } else {
+            Some(normalized.to_string())
+        }
+    })
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn parse_recommendation_category(raw: &str) -> Option<RecommendationCategory> {
+    let normalized = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "reviewfocus" => Some(RecommendationCategory::ReviewFocus),
+        "risk" => Some(RecommendationCategory::Risk),
+        "testgap" => Some(RecommendationCategory::TestGap),
+        _ => None,
+    }
 }
 
 #[cfg(feature = "llm-local")]
@@ -566,7 +609,7 @@ fn run_local_inference(
 
         sampler.accept(token);
         rendered_output.push_str(&token_to_piece_lossy(&model, token)?);
-        if extract_first_json_object(&rendered_output).is_some() {
+        if contains_parseable_review_response(&rendered_output) {
             break;
         }
 
@@ -831,6 +874,44 @@ mod tests {
             insights.recommendations[0].category,
             RecommendationCategory::ReviewFocus
         );
+    }
+
+    #[test]
+    fn parser_skips_non_schema_braces_before_valid_json() {
+        let insights = parse_local_inference_output(
+            "notes { role } more notes {\"summary\":\"Auth middleware was removed.\",\"recommendations\":[{\"category\":\"Risk\",\"message\":\"Verify the route still enforces admin permissions.\"}]} trailing",
+        )
+        .expect("parser should skip non-schema brace groups");
+
+        assert_eq!(
+            insights.summary.as_deref(),
+            Some("Auth middleware was removed.")
+        );
+        assert_eq!(insights.recommendations.len(), 1);
+        assert_eq!(
+            insights.recommendations[0].category,
+            RecommendationCategory::Risk
+        );
+    }
+
+    #[test]
+    fn parseable_response_detection_ignores_non_schema_braces() {
+        assert!(!contains_parseable_review_response(
+            "prefix { role } suffix"
+        ));
+        assert!(contains_parseable_review_response(
+            "prefix { role } suffix {\"summary\":null,\"recommendations\":[]}"
+        ));
+    }
+
+    #[test]
+    fn parsing_ignores_schema_placeholder_summary_text() {
+        let insights =
+            parse_local_inference_output("{\"summary\":\"string or null\",\"recommendations\":[]}")
+                .expect("output should parse");
+
+        assert!(insights.summary.is_none());
+        assert!(insights.recommendations.is_empty());
     }
 
     #[test]
