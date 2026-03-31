@@ -35,6 +35,8 @@ pub struct PullRequestFileDto {
     pub additions: Option<u32>,
     #[serde(default)]
     pub deletions: Option<u32>,
+    #[serde(default)]
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

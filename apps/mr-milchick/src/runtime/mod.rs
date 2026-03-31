@@ -2,7 +2,7 @@ pub mod executor;
 pub mod runtime;
 
 pub use executor::{
-    ConnectorError, ConnectorResult, ExecutionReport, NotificationSink, PlatformConnector,
-    ReviewConnector,
+    ConnectorError, ConnectorResult, ExecutionReport, InferenceConnector, NotificationSink,
+    PlatformConnector, ReviewConnector, ReviewInferenceConnector,
 };
 pub use runtime::{ExecutionMode, ExecutionStrategy, RuntimeCapabilities, RuntimeWiring};

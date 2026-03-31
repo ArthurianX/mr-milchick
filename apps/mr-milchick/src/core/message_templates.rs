@@ -984,9 +984,11 @@ mod tests {
             }],
             changed_files: vec![crate::core::model::ChangedFile {
                 path: "apps/frontend/button.tsx".to_string(),
+                previous_path: None,
                 change_type: crate::core::model::ChangeType::Modified,
                 additions: None,
                 deletions: None,
+                patch: None,
             }],
             labels: Vec::new(),
             is_draft: false,
@@ -1090,6 +1092,7 @@ mod tests {
                 enabled: true,
             }],
             slack_app: Some(FlavorSlackAppConfig::default()),
+            llm: None,
             templates: FlavorTemplatesConfig {
                 gitlab: FlavorGitLabTemplates::default(),
                 github: crate::config::model::FlavorGitHubTemplates::default(),
@@ -1121,6 +1124,7 @@ mod tests {
             notification_policy: None,
             notifications: Vec::new(),
             slack_app: None,
+            llm: None,
             templates: FlavorTemplatesConfig {
                 gitlab: FlavorGitLabTemplates::default(),
                 github: crate::config::model::FlavorGitHubTemplates::default(),

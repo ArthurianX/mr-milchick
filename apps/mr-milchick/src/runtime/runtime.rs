@@ -1,10 +1,13 @@
 use crate::config::model::NotificationPolicy;
+use crate::core::inference::ReviewInferenceOutcome;
 use crate::core::model::{
     NotificationMessage, NotificationSinkKind, ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
 use anyhow::Result;
 
-use crate::runtime::executor::{ExecutionReport, NotificationSink, PlatformConnector};
+use crate::runtime::executor::{
+    ExecutionReport, NotificationSink, PlatformConnector, ReviewInferenceConnector,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -33,10 +36,12 @@ impl ExecutionStrategy {
 pub struct RuntimeCapabilities {
     pub platform_connector: ReviewPlatformKind,
     pub notification_sinks: Vec<NotificationSinkKind>,
+    pub inference_available: bool,
 }
 
 pub struct RuntimeWiring {
     pub platform_connector: Box<dyn PlatformConnector>,
+    pub inference_connector: Box<dyn ReviewInferenceConnector>,
     pub notification_sinks: Vec<Box<dyn NotificationSink>>,
     pub capabilities: RuntimeCapabilities,
 }
@@ -44,18 +49,29 @@ pub struct RuntimeWiring {
 impl RuntimeWiring {
     pub fn new(
         platform_connector: Box<dyn PlatformConnector>,
+        inference_connector: Box<dyn ReviewInferenceConnector>,
+        inference_available: bool,
         notification_sinks: Vec<Box<dyn NotificationSink>>,
     ) -> Self {
         let capabilities = RuntimeCapabilities {
             platform_connector: platform_connector.kind(),
             notification_sinks: notification_sinks.iter().map(|sink| sink.kind()).collect(),
+            inference_available,
         };
 
         Self {
             platform_connector,
+            inference_connector,
             notification_sinks,
             capabilities,
         }
+    }
+
+    pub async fn analyze_review(
+        &self,
+        snapshot: &crate::core::model::ReviewSnapshot,
+    ) -> Result<ReviewInferenceOutcome> {
+        Ok(self.inference_connector.analyze(snapshot).await?)
     }
 
     pub async fn execute(

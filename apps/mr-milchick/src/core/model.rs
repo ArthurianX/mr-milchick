@@ -99,9 +99,11 @@ pub struct Actor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangedFile {
     pub path: String,
+    pub previous_path: Option<String>,
     pub change_type: ChangeType,
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

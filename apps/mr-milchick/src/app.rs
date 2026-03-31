@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 use tracing::warn;
 
 #[cfg(feature = "github")]
@@ -21,6 +22,9 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
+use crate::core::inference::{
+    NoopReviewInferenceEngine, ReviewInferenceEngine, ReviewInferenceOutcome, analyze_with_timeout,
+};
 use crate::core::message_templates::{
     build_notification_template_context, build_summary_template_context,
     notification_template_variant, render_review_summary, render_slack_app_notification,
@@ -40,7 +44,9 @@ use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_
 use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
 use crate::fixture::load_review_fixture;
-use crate::runtime::{ConnectorError, NotificationSink, PlatformConnector};
+use crate::runtime::{
+    ConnectorError, NotificationSink, PlatformConnector, ReviewInferenceConnector,
+};
 
 #[cfg(all(feature = "gitlab", feature = "github"))]
 compile_error!("Exactly one platform connector feature must be enabled.");
@@ -56,6 +62,22 @@ struct AppConfigContext {
 
 #[derive(Debug)]
 struct FixturePlatformConnector;
+
+const DEFAULT_LLM_TIMEOUT_MS: u64 = 15_000;
+const DEFAULT_LLM_MAX_PATCH_BYTES: usize = 32 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveLlmConfig {
+    enabled: bool,
+    model_path: Option<String>,
+    timeout_ms: u64,
+    max_patch_bytes: usize,
+}
+
+struct ReviewInferenceConnectorAdapter {
+    engine: Box<dyn ReviewInferenceEngine>,
+    timeout: Duration,
+}
 
 fn load_app_config_context() -> Result<AppConfigContext> {
     let runtime = load_config()?;
@@ -118,6 +140,16 @@ impl PlatformConnector for FixturePlatformConnector {
         }
 
         Ok(report)
+    }
+}
+
+#[async_trait::async_trait]
+impl ReviewInferenceConnector for ReviewInferenceConnectorAdapter {
+    async fn analyze(
+        &self,
+        snapshot: &crate::core::model::ReviewSnapshot,
+    ) -> std::result::Result<ReviewInferenceOutcome, ConnectorError> {
+        Ok(analyze_with_timeout(self.engine.as_ref(), snapshot, self.timeout).await)
     }
 }
 
@@ -356,8 +388,13 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     ));
 
+    let (inference_connector, inference_available) =
+        build_inference_connector(&app_config.runtime, flavor)?;
+
     Ok(RuntimeWiring::new(
         platform_connector,
+        inference_connector,
+        inference_available,
         build_notification_sinks(app_config, flavor),
     ))
 }
@@ -367,8 +404,13 @@ fn build_fixture_runtime_wiring(
     flavor: Option<&FlavorConfig>,
 ) -> Result<RuntimeWiring> {
     validate_flavor(flavor)?;
+    let (inference_connector, inference_available) =
+        build_inference_connector(&app_config.runtime, flavor)?;
+
     Ok(RuntimeWiring::new(
         Box::new(FixturePlatformConnector),
+        inference_connector,
+        inference_available,
         build_notification_sinks(app_config, flavor),
     ))
 }
@@ -474,6 +516,72 @@ fn resolve_notification_policy(
         .notification_policy
         .or_else(|| flavor.and_then(|config| config.notification_policy))
         .unwrap_or(NotificationPolicy::Always)
+}
+
+fn build_inference_connector(
+    runtime: &RuntimeConfig,
+    flavor: Option<&FlavorConfig>,
+) -> Result<(Box<dyn ReviewInferenceConnector>, bool)> {
+    let llm = resolve_llm_config(runtime, flavor);
+    let timeout = Duration::from_millis(llm.timeout_ms);
+
+    if !llm.enabled {
+        return Ok((
+            Box::new(ReviewInferenceConnectorAdapter {
+                engine: Box::new(NoopReviewInferenceEngine::disabled(
+                    "LLM review recommendations are disabled",
+                )),
+                timeout,
+            }),
+            false,
+        ));
+    }
+
+    let model_path = llm
+        .model_path
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("LLM review recommendations require a model path"))?;
+
+    Ok((
+        Box::new(ReviewInferenceConnectorAdapter {
+            engine: Box::new(NoopReviewInferenceEngine::unavailable(format!(
+                "LLM backend is not wired yet for model '{}'",
+                model_path
+            ))),
+            timeout,
+        }),
+        false,
+    ))
+}
+
+fn resolve_llm_config(
+    runtime: &RuntimeConfig,
+    flavor: Option<&FlavorConfig>,
+) -> EffectiveLlmConfig {
+    let flavor = flavor.and_then(|config| config.llm.as_ref());
+
+    EffectiveLlmConfig {
+        enabled: runtime
+            .llm
+            .enabled
+            .or_else(|| flavor.and_then(|config| config.enabled))
+            .unwrap_or(false),
+        model_path: runtime
+            .llm
+            .model_path
+            .clone()
+            .or_else(|| flavor.and_then(|config| config.model_path.clone())),
+        timeout_ms: runtime
+            .llm
+            .timeout_ms
+            .or_else(|| flavor.and_then(|config| config.timeout_ms))
+            .unwrap_or(DEFAULT_LLM_TIMEOUT_MS),
+        max_patch_bytes: runtime
+            .llm
+            .max_patch_bytes
+            .or_else(|| flavor.and_then(|config| config.max_patch_bytes))
+            .unwrap_or(DEFAULT_LLM_MAX_PATCH_BYTES),
+    }
 }
 
 #[allow(dead_code)]
@@ -934,9 +1042,11 @@ mod tests {
                 .collect(),
             changed_files: vec![ChangedFile {
                 path: "apps/frontend/button.tsx".to_string(),
+                previous_path: None,
                 change_type: ChangeType::Modified,
                 additions: None,
                 deletions: None,
+                patch: None,
             }],
             labels: vec![],
             is_draft: false,
@@ -1034,6 +1144,12 @@ mod tests {
                 enabled: true,
                 path: None,
             },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+            },
             slack: SlackConfig {
                 enabled: true,
                 base_url: "https://slack.com/api".to_string(),
@@ -1053,6 +1169,7 @@ mod tests {
             slack_app: Some(FlavorSlackAppConfig {
                 user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
             }),
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1071,6 +1188,12 @@ mod tests {
             codeowners: CodeownersConfig {
                 enabled: true,
                 path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1094,6 +1217,7 @@ mod tests {
                     ("bob".to_string(), "".to_string()),
                 ]),
             }),
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1113,6 +1237,12 @@ mod tests {
             codeowners: CodeownersConfig {
                 enabled: true,
                 path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1142,6 +1272,12 @@ mod tests {
                 enabled: true,
                 path: None,
             },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+            },
             slack: SlackConfig {
                 enabled: true,
                 base_url: "https://slack.com/api".to_string(),
@@ -1159,6 +1295,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1179,6 +1316,12 @@ mod tests {
                 enabled: true,
                 path: None,
             },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+            },
             slack: SlackConfig {
                 enabled: true,
                 base_url: "https://slack.com/api".to_string(),
@@ -1196,6 +1339,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1203,5 +1347,107 @@ mod tests {
             resolve_notification_policy(&runtime, Some(&flavor)),
             NotificationPolicy::Always
         );
+    }
+
+    #[test]
+    fn llm_resolution_falls_back_to_flavor_when_runtime_has_no_overrides() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: None,
+        };
+        let flavor = FlavorConfig {
+            platform_connector: FlavorPlatformConnector {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: None,
+            notifications: Vec::new(),
+            slack_app: None,
+            llm: Some(crate::config::model::FlavorLlmConfig {
+                enabled: Some(true),
+                model_path: Some("/models/review.gguf".to_string()),
+                timeout_ms: Some(22_000),
+                max_patch_bytes: Some(48_000),
+            }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
+        };
+
+        let resolved = resolve_llm_config(&runtime, Some(&flavor));
+
+        assert!(resolved.enabled);
+        assert_eq!(resolved.model_path.as_deref(), Some("/models/review.gguf"));
+        assert_eq!(resolved.timeout_ms, 22_000);
+        assert_eq!(resolved.max_patch_bytes, 48_000);
+    }
+
+    #[test]
+    fn llm_resolution_prefers_runtime_overrides_over_flavor_values() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: Some(false),
+                model_path: Some("/env/model.gguf".to_string()),
+                timeout_ms: Some(5_000),
+                max_patch_bytes: Some(16_000),
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: None,
+        };
+        let flavor = FlavorConfig {
+            platform_connector: FlavorPlatformConnector {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: None,
+            notifications: Vec::new(),
+            slack_app: None,
+            llm: Some(crate::config::model::FlavorLlmConfig {
+                enabled: Some(true),
+                model_path: Some("/flavor/model.gguf".to_string()),
+                timeout_ms: Some(22_000),
+                max_patch_bytes: Some(48_000),
+            }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
+        };
+
+        let resolved = resolve_llm_config(&runtime, Some(&flavor));
+
+        assert!(!resolved.enabled);
+        assert_eq!(resolved.model_path.as_deref(), Some("/env/model.gguf"));
+        assert_eq!(resolved.timeout_ms, 5_000);
+        assert_eq!(resolved.max_patch_bytes, 16_000);
     }
 }

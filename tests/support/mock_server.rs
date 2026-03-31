@@ -23,6 +23,7 @@ struct MockGithubFile {
     status: String,
     additions: Option<u32>,
     deletions: Option<u32>,
+    patch: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -355,7 +356,8 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                         "new_path": "apps/frontend/button.tsx",
                         "new_file": false,
                         "renamed_file": false,
-                        "deleted_file": false
+                        "deleted_file": false,
+                        "diff": "@@ -1,2 +1,2 @@"
                     }
                 ]
             })
@@ -396,6 +398,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                         "status": file.status,
                         "additions": file.additions,
                         "deletions": file.deletions,
+                        "patch": file.patch,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -635,6 +638,7 @@ fn github_files(count: usize) -> Vec<MockGithubFile> {
             status: "modified".to_string(),
             additions: Some(10),
             deletions: Some(2),
+            patch: Some("@@ -1,2 +1,2 @@".to_string()),
         })
         .collect()
 }

@@ -34,6 +34,8 @@ pub struct ChangedFileDto {
     pub new_file: bool,
     pub renamed_file: bool,
     pub deleted_file: bool,
+    #[serde(default)]
+    pub diff: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

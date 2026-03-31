@@ -208,19 +208,26 @@ fn map_snapshot(
         changed_files: data
             .changed_files
             .into_iter()
-            .map(|file| ChangedFile {
-                path: file.new_path,
-                change_type: if file.is_new {
-                    ChangeType::Added
-                } else if file.is_deleted {
-                    ChangeType::Deleted
-                } else if file.is_renamed {
-                    ChangeType::Renamed
-                } else {
-                    ChangeType::Modified
-                },
-                additions: None,
-                deletions: None,
+            .map(|file| {
+                let previous_path =
+                    (file.old_path != file.new_path).then_some(file.old_path.clone());
+
+                ChangedFile {
+                    path: file.new_path,
+                    previous_path,
+                    change_type: if file.is_new {
+                        ChangeType::Added
+                    } else if file.is_deleted {
+                        ChangeType::Deleted
+                    } else if file.is_renamed {
+                        ChangeType::Renamed
+                    } else {
+                        ChangeType::Modified
+                    },
+                    additions: None,
+                    deletions: None,
+                    patch: file.patch,
+                }
             })
             .collect(),
         labels: labels.to_vec(),

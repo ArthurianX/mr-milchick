@@ -267,5 +267,6 @@ fn map_changed_file(dto: PullRequestFileDto) -> GitHubChangedFile {
         status: dto.status,
         additions: dto.additions,
         deletions: dto.deletions,
+        patch: dto.patch,
     }
 }

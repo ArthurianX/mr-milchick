@@ -276,5 +276,6 @@ fn map_changed_file(dto: ChangedFileDto) -> GitLabChangedFile {
         is_new: dto.new_file,
         is_renamed: dto.renamed_file,
         is_deleted: dto.deleted_file,
+        patch: dto.diff,
     }
 }
