@@ -40,22 +40,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - artifact_name: gitlab
-            features: "gitlab"
-            include_flavor: true
-            flavor_source: "mr-milchick.toml"
-            flavor_asset: "mr-milchick-gitlab.toml"
-          - artifact_name: github
-            features: "github"
-            include_flavor: true
-            flavor_source: "mr-milchick.github.toml"
-            flavor_asset: "mr-milchick-github.toml"
           - artifact_name: gitlab-slack
             features: "gitlab slack-app slack-workflow"
             include_flavor: false
+            flavor_source: "mr-milchick.toml"
+            flavor_asset: "mr-milchick-gitlab.toml"
           - artifact_name: github-slack
             features: "github slack-app slack-workflow"
             include_flavor: false
+            flavor_source: "mr-milchick.github.toml"
+            flavor_asset: "mr-milchick-github.toml"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
