@@ -7,6 +7,31 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [3.0.0] — 2026-03-31
+
+This release makes Mr. Milchick materially smarter without making it less predictable. Review snapshots now retain patch hunks, the core can run advisory local GGUF inference asynchronously, and generated recommendations can be threaded into MR output and downstream notification sinks while policy enforcement stays deterministic.
+
+### Added
+
+- Advisory local-inference plumbing for external GGUF models, including new runtime configuration for enabling the feature and pointing the binary at a model path outside the repository.
+- An opaque core inference layer that keeps model-specific runtime details out of connectors and execution surfaces.
+- Smoke-test coverage for local model initialization so backend/device issues can be isolated from the rest of the review pipeline.
+
+### Changed
+
+- Review snapshots now preserve diff and patch content instead of reducing changes to file-level counts only.
+- Recommendation generation is now asynchronous and timeout-bounded, which makes it safer to use inside CI even when local CPU inference is slow.
+- Review commentary can now carry AI-generated advisory insights into MR summaries first and notification sinks second.
+
+### Fixed
+
+- Local `llama.cpp` execution is now pinned to the CPU backend where needed, avoiding the backend-selection failures that previously surfaced on macOS during smoke tests.
+- Token sampling now uses the correct decoded position, preventing local inference runs from failing after prompt evaluation.
+
+### Breaking Changes
+
+- The release now formalizes a broader review-analysis runtime with new `llm` configuration surface area and snapshot semantics; for CI automation, that behavioral expansion is treated as a major-version change.
+
 ## [2.0.4] — 2026-03-31
 
 This release fixes the follow-up release packaging changes from `v2.0.3`.
