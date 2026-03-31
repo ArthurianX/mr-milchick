@@ -26,7 +26,7 @@ For GitHub builds, switch `kind = "gitlab"` to `kind = "github"`.
 
 ## Example GitLab Pipeline
 
-This example builds a Linux artifact with only the mandatory GitLab platform connector, verifies the artifact with `version`, and starts with a safe `observe` rollout job.
+This example builds a Linux artifact with the GitLab platform connector plus Slack app support, verifies the artifact with `version`, and starts with a safe `observe` rollout job.
 
 ```yaml
 stages:
@@ -49,7 +49,7 @@ build:milchick:
     - rustup target add x86_64-unknown-linux-musl
     - apt-get update && apt-get install -y musl-tools pkg-config
   script:
-    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab"
+    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
   artifacts:
@@ -75,8 +75,8 @@ This repository now includes [`.github/workflows/release.yml`](../.github/workfl
 
 - verifies the tagged commit is on `master`
 - runs `cargo test --workspace --locked`
-- builds Linux musl artifacts for both `gitlab` and `github`
-- publishes a GitHub Release with both connector-specific binaries and flavor examples
+- builds Linux musl artifacts for `gitlab`, `github`, `gitlab-slack`, and `github-slack`
+- publishes a GitHub Release with all four binaries plus the platform flavor examples
 
 For day-to-day GitHub pull request execution, [`.github/workflows/review.yml`](../.github/workflows/review.yml) starts the platform connector in `observe` mode on `pull_request` and points `MR_MILCHICK_FLAVOR_PATH` at [`mr-milchick.github.toml`](../mr-milchick.github.toml). Keep that workflow on `observe` until the output matches your expectations, then switch it to `refine` when you are ready for live reviewer assignment and summary upserts.
 
@@ -86,6 +86,11 @@ Store these in CI variables or secrets:
 
 - `GITLAB_TOKEN`: required for live GitLab snapshot reads and mutations.
 - `MR_MILCHICK_REVIEWERS`: reviewer pool JSON for area routing, fallback reviewers, and mandatory reviewers.
+
+Add these as well when you enable the Slack app sink in `mr-milchick.toml`:
+
+- `MR_MILCHICK_SLACK_BOT_TOKEN`
+- `MR_MILCHICK_SLACK_CHANNEL`
 
 These GitLab CI variables are read from the pipeline environment:
 

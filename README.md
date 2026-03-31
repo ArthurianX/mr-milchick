@@ -51,7 +51,7 @@ Internally, the repository now ships as a single crate with layered modules:
 
 ## Quickstart
 
-The example below builds the binary in GitLab CI, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment. If you also want Slack delivery, add the Slack features and notification config explicitly. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
+The example below builds the binary in GitLab CI with the GitLab platform connector plus Slack app support, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
 
 ```yaml
 stages:
@@ -72,7 +72,7 @@ build:milchick:
     - rustup target add x86_64-unknown-linux-musl
     - apt-get update && apt-get install -y musl-tools pkg-config
   script:
-    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab"
+    - cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/
   artifacts:
@@ -90,7 +90,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. If you later opt into Slack workflow delivery, also provide `MR_MILCHICK_SLACK_WEBHOOK_URL` and `MR_MILCHICK_SLACK_CHANNEL`. For Slack app delivery, provide `MR_MILCHICK_SLACK_BOT_TOKEN` and `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP` if you want GitLab usernames rewritten to Slack user IDs. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN`, `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP`. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
 
