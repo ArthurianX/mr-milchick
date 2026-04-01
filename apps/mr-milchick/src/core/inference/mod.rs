@@ -33,7 +33,9 @@ use llama_cpp_2::llama_batch::{BatchAddError, LlamaBatch};
 #[cfg(feature = "llm-local")]
 use llama_cpp_2::model::params::{LlamaModelParams, LlamaSplitMode};
 #[cfg(feature = "llm-local")]
-use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
+#[cfg(feature = "llm-local")]
+use llama_cpp_2::openai::OpenAIChatTemplateParams;
 #[cfg(feature = "llm-local")]
 use llama_cpp_2::sampling::LlamaSampler;
 
@@ -43,8 +45,16 @@ const LOCAL_CONTEXT_TOKEN_LIMIT: usize = 4_096;
 const LOCAL_BATCH_CAPACITY: usize = 512;
 #[cfg(feature = "llm-local")]
 const LOCAL_MAX_GENERATION_TOKENS: usize = 384;
+#[cfg(feature = "llm-local")]
+const LOCAL_QWEN_SAMPLER_SEED: u32 = 23_042;
 #[cfg(any(feature = "llm-local", test))]
 const LOCAL_MAX_RECOMMENDATIONS: usize = 4;
+
+#[cfg(feature = "llm-local")]
+struct RenderedPrompt {
+    prompt: String,
+    additional_stops: Vec<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewInferenceStatus {
@@ -736,7 +746,8 @@ fn run_local_inference(
         ))
     })?;
 
-    let prompt = render_prompt_for_model(&model, base_prompt);
+    let rendered_prompt = render_prompt_for_model(&model, base_prompt);
+    let prompt = rendered_prompt.prompt;
 
     let prompt_tokens = model.str_to_token(&prompt, AddBos::Always).map_err(|err| {
         ReviewInferenceError::Analysis(format!("failed to tokenize review prompt: {err}"))
@@ -775,7 +786,7 @@ fn run_local_inference(
 
     decode_prompt_tokens(&mut context, &prompt_tokens, batch_capacity)?;
 
-    let mut sampler = LlamaSampler::greedy();
+    let mut sampler = build_local_sampler(&model);
     sampler.accept_many(prompt_tokens.iter());
 
     let mut rendered_output = String::new();
@@ -789,6 +800,9 @@ fn run_local_inference(
 
         sampler.accept(token);
         rendered_output.push_str(&token_to_piece_lossy(&model, token)?);
+        if trim_stop_sequence_suffix(&mut rendered_output, &rendered_prompt.additional_stops) {
+            break;
+        }
         if first_non_empty_review_response(&rendered_output).is_some() {
             break;
         }
@@ -816,7 +830,24 @@ fn run_local_inference(
 }
 
 #[cfg(feature = "llm-local")]
-fn render_prompt_for_model(model: &LlamaModel, base_prompt: &str) -> String {
+fn render_prompt_for_model(model: &LlamaModel, base_prompt: &str) -> RenderedPrompt {
+    render_prompt_with_model_template(model, base_prompt).unwrap_or_else(|_| {
+        if is_qwen_family_model(model) {
+            RenderedPrompt {
+                prompt: manual_qwen_prompt(base_prompt),
+                additional_stops: Vec::new(),
+            }
+        } else {
+            RenderedPrompt {
+                prompt: base_prompt.to_string(),
+                additional_stops: Vec::new(),
+            }
+        }
+    })
+}
+
+#[cfg(feature = "llm-local")]
+fn is_qwen_family_model(model: &LlamaModel) -> bool {
     let tokenizer_pre = model
         .meta_val_str("tokenizer.ggml.pre")
         .ok()
@@ -828,13 +859,185 @@ fn render_prompt_for_model(model: &LlamaModel, base_prompt: &str) -> String {
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    if tokenizer_pre.contains("qwen") || architecture.contains("qwen") {
-        format!(
-            "<|im_start|>system\nYou are Mr. Milchick, a careful CI code review assistant. Reply with JSON only.<|im_end|>\n<|im_start|>user\n{base_prompt}<|im_end|>\n<|im_start|>assistant\n"
-        )
-    } else {
-        base_prompt.to_string()
+    tokenizer_pre.contains("qwen") || architecture.contains("qwen")
+}
+
+#[cfg(feature = "llm-local")]
+fn render_prompt_with_model_template(
+    model: &LlamaModel,
+    base_prompt: &str,
+) -> Result<RenderedPrompt, ReviewInferenceError> {
+    let template = model.chat_template(None).map_err(|err| {
+        ReviewInferenceError::Analysis(format!(
+            "failed to read model chat template for local inference: {err}"
+        ))
+    })?;
+
+    if let Ok(rendered_prompt) =
+        render_prompt_with_oaicompat_template(model, &template, base_prompt)
+    {
+        return Ok(rendered_prompt);
     }
+
+    render_prompt_with_basic_template(model, &template, base_prompt)
+}
+
+#[cfg(feature = "llm-local")]
+fn render_prompt_with_oaicompat_template(
+    model: &LlamaModel,
+    template: &llama_cpp_2::model::LlamaChatTemplate,
+    base_prompt: &str,
+) -> Result<RenderedPrompt, ReviewInferenceError> {
+    let system_prompt = if is_qwen_family_model(model) {
+        "You are Mr. Milchick, a careful CI code review assistant. Return exactly one compact JSON object. Do not emit <think> tags or reasoning text."
+    } else {
+        "You are Mr. Milchick, a careful CI code review assistant. Return exactly one compact JSON object."
+    };
+
+    let messages_json = serde_json::to_string(&vec![
+        serde_json::json!({
+            "role": "system",
+            "content": system_prompt
+        }),
+        serde_json::json!({
+            "role": "user",
+            "content": base_prompt
+        }),
+    ])
+    .map_err(|err| {
+        ReviewInferenceError::Analysis(format!(
+            "failed to serialize local inference chat messages: {err}"
+        ))
+    })?;
+
+    let template_result = model
+        .apply_chat_template_oaicompat(
+            template,
+            &OpenAIChatTemplateParams {
+                messages_json: &messages_json,
+                tools_json: None,
+                tool_choice: None,
+                json_schema: None,
+                grammar: None,
+                reasoning_format: None,
+                chat_template_kwargs: Some("{\"enable_thinking\":false}"),
+                add_generation_prompt: true,
+                use_jinja: true,
+                parallel_tool_calls: false,
+                enable_thinking: false,
+                add_bos: false,
+                add_eos: false,
+                parse_tool_calls: false,
+            },
+        )
+        .map_err(|err| {
+            ReviewInferenceError::Analysis(format!(
+                "failed to apply model chat template for local inference: {err}"
+            ))
+        })?;
+
+    Ok(RenderedPrompt {
+        prompt: template_result.prompt,
+        additional_stops: template_result.additional_stops,
+    })
+}
+
+#[cfg(feature = "llm-local")]
+fn render_prompt_with_basic_template(
+    model: &LlamaModel,
+    template: &llama_cpp_2::model::LlamaChatTemplate,
+    base_prompt: &str,
+) -> Result<RenderedPrompt, ReviewInferenceError> {
+    let system_prompt = if is_qwen_family_model(model) {
+        "You are Mr. Milchick, a careful CI code review assistant. Return exactly one compact JSON object. Do not emit <think> tags or reasoning text."
+    } else {
+        "You are Mr. Milchick, a careful CI code review assistant. Return exactly one compact JSON object."
+    };
+
+    let messages = vec![
+        LlamaChatMessage::new("system".to_string(), system_prompt.to_string()).map_err(
+            |err| {
+                ReviewInferenceError::Analysis(format!(
+                    "failed to build local inference system message: {err}"
+                ))
+            },
+        )?,
+        LlamaChatMessage::new("user".to_string(), base_prompt.to_string()).map_err(|err| {
+            ReviewInferenceError::Analysis(format!(
+                "failed to build local inference user message: {err}"
+            ))
+        })?,
+    ];
+
+    let prompt = model.apply_chat_template(template, &messages, true).map_err(|err| {
+        ReviewInferenceError::Analysis(format!(
+            "failed to apply basic model chat template for local inference: {err}"
+        ))
+    })?;
+
+    Ok(RenderedPrompt {
+        prompt,
+        additional_stops: Vec::new(),
+    })
+}
+
+#[cfg(feature = "llm-local")]
+fn manual_qwen_prompt(base_prompt: &str) -> String {
+    format!(
+        "<|im_start|>system\nYou are Mr. Milchick, a careful CI code review assistant. Reply with JSON only. Do not emit <think> tags or reasoning text.<|im_end|>\n<|im_start|>user\n{base_prompt}<|im_end|>\n<|im_start|>assistant\n"
+    )
+}
+
+#[cfg(feature = "llm-local")]
+fn trim_stop_sequence_suffix(output: &mut String, stop_sequences: &[String]) -> bool {
+    for stop in stop_sequences {
+        if stop.is_empty() {
+            continue;
+        }
+
+        if output.ends_with(stop) {
+            let trimmed_len = output.len().saturating_sub(stop.len());
+            output.truncate(trimmed_len);
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(feature = "llm-local")]
+fn build_local_sampler(model: &LlamaModel) -> LlamaSampler {
+    if qwen_prefers_stochastic_decoder(model) {
+        // Smaller Qwen-family checkpoints benefited from light stochastic decoding in the
+        // benchmark, while the 4B variants regressed. Keep this repeatable with a fixed seed.
+        LlamaSampler::chain_simple([
+            LlamaSampler::top_k(20),
+            LlamaSampler::top_p(0.95, 1),
+            LlamaSampler::temp(0.6),
+            LlamaSampler::dist(LOCAL_QWEN_SAMPLER_SEED),
+        ])
+    } else {
+        LlamaSampler::greedy()
+    }
+}
+
+#[cfg(feature = "llm-local")]
+fn qwen_prefers_stochastic_decoder(model: &LlamaModel) -> bool {
+    if !is_qwen_family_model(model) {
+        return false;
+    }
+
+    let size_label = model
+        .meta_val_str("general.size_label")
+        .ok()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if size_label.contains("0.8b") || size_label.contains("1b") || size_label.contains("2b") {
+        return true;
+    }
+
+    model.n_params() > 0 && model.n_params() < 3_000_000_000
 }
 
 #[cfg(feature = "llm-local")]
