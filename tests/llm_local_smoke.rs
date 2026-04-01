@@ -12,8 +12,8 @@ mod llm_local_smoke {
     use llama_cpp_2::model::LlamaModel;
     use llama_cpp_2::model::params::{LlamaModelParams, LlamaSplitMode};
     use mr_milchick::core::inference::{
-        LocalLlamaReviewInferenceEngine, ReviewInferenceOutcome, ReviewInferenceStatus,
-        analyze_with_timeout,
+        LocalLlamaReviewInferenceEngine, RecommendationCategory, ReviewInferenceOutcome,
+        ReviewInferenceStatus, analyze_with_timeout,
     };
     use mr_milchick::core::model::{
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewPlatformKind,
@@ -21,7 +21,7 @@ mod llm_local_smoke {
     };
 
     const DEFAULT_SMOKE_TIMEOUT_MS: u64 = 120_000;
-    const DEFAULT_SMOKE_PATCH_BUDGET: usize = 2_048;
+    const DEFAULT_SMOKE_PATCH_BUDGET: usize = 4_096;
 
     static SMOKE_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
@@ -171,10 +171,80 @@ mod llm_local_smoke {
         );
     }
 
+    fn assert_contains_keyword_group(output: &str, groups: &[&[&str]]) {
+        for group in groups {
+            assert!(
+                group.iter().any(|keyword| output.contains(keyword)),
+                "expected output to contain one of {:?}, got:\n{}",
+                group,
+                output
+            );
+        }
+    }
+
+    fn normalized_quality_text(text: &str) -> String {
+        text.chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase()
+    }
+
+    fn assert_no_duplicate_recommendations(outcome: &ReviewInferenceOutcome, case_name: &str) {
+        let mut seen = std::collections::BTreeSet::new();
+        for recommendation in &outcome.insights.recommendations {
+            let normalized = normalized_quality_text(&recommendation.message);
+            assert!(
+                seen.insert(normalized),
+                "expected unique recommendations for {case_name}, got duplicate message:\n{}",
+                recommendation.message
+            );
+        }
+    }
+
+    fn assert_no_prompt_parroting(output: &str, case_name: &str) {
+        for forbidden in [
+            "potential review cues from the diff",
+            "the first character of your reply must be",
+            "if the snapshot includes deleted tests",
+        ] {
+            assert!(
+                !output.contains(forbidden),
+                "expected {case_name} output to avoid parroting prompt instruction '{forbidden}', got:\n{output}"
+            );
+        }
+    }
+
+    fn assert_required_categories(
+        outcome: &ReviewInferenceOutcome,
+        case_name: &str,
+        required_categories: &[RecommendationCategory],
+    ) {
+        for category in required_categories {
+            assert!(
+                outcome
+                    .insights
+                    .recommendations
+                    .iter()
+                    .any(|recommendation| recommendation.category == *category),
+                "expected {case_name} to include category {:?}, got {:?}",
+                category,
+                outcome
+                    .insights
+                    .recommendations
+                    .iter()
+                    .map(|recommendation| recommendation.category)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
     async fn run_reaction_case(
         case_name: &str,
         snapshot: ReviewSnapshot,
         expected_keywords: &[&str],
+        expected_keyword_groups: &[&[&str]],
+        required_categories: &[RecommendationCategory],
+        minimum_recommendations: usize,
     ) {
         let _guard = smoke_test_lock().lock().await;
         let engine = local_engine();
@@ -193,6 +263,21 @@ mod llm_local_smoke {
 
         let output = combined_output_text(&outcome);
         assert_contains_any_keyword(&output, expected_keywords);
+        assert_contains_keyword_group(&output, expected_keyword_groups);
+        assert_no_prompt_parroting(&output, case_name);
+        assert_no_duplicate_recommendations(&outcome, case_name);
+        assert_required_categories(&outcome, case_name, required_categories);
+        assert!(
+            outcome.insights.summary.is_some(),
+            "expected non-empty summary for {case_name}"
+        );
+        assert!(
+            outcome.insights.recommendations.len() >= minimum_recommendations,
+            "expected at least {} recommendations for {}, got {:?}",
+            minimum_recommendations,
+            case_name,
+            outcome.insights.recommendations
+        );
     }
 
     fn probe_contexts(
@@ -422,39 +507,109 @@ mod llm_local_smoke {
     async fn reacts_to_typescript_frontend_changes() {
         let snapshot = sample_snapshot(
             "Render raw profile bios from the API payload",
-            "Updates the profile card to render API-provided HTML and removes the old plain-text component test.",
+            "Updates the profile card to render API-provided HTML, bypasses the sanitizer helper, and removes coverage around safe rendering and loading states.",
             &["frontend", "typescript"],
             vec![
                 changed_file(
                     "apps/frontend/src/components/ProfileBio.tsx",
-                    r#"@@ -1,11 +1,19 @@
+                    r#"@@ -1,15 +1,27 @@
 -import { useMemo } from "react";
 +import { useEffect, useState } from "react";
++import { profileApi } from "../services/profileApi";
  
  export function ProfileBio({ userId }: { userId: string }) {
 -  const bio = useMemo(() => "Loading...", []);
 -  return <p className="prose">{bio}</p>;
-+  const [bioHtml, setBioHtml] = useState("");
++  const [bioHtml, setBioHtml] = useState<string | null>(null);
+ 
+   useEffect(() => {
+-    fetch(`/api/users/${userId}/bio`)
+-      .then((response) => response.text())
+-      .then(setBioHtml);
++    let cancelled = false;
 +
-+  useEffect(() => {
 +    fetch(`/api/users/${userId}/bio`)
 +      .then((response) => response.text())
-+      .then(setBioHtml);
-+  }, [userId]);
++      .then((html) => {
++        if (!cancelled) {
++          setBioHtml(html);
++          profileApi.trackBioView(userId);
++        }
++      });
++
++    return () => {
++      cancelled = true;
++    };
+   }, [userId]);
+ 
+-  return <div className="prose" dangerouslySetInnerHTML={{ __html: bioHtml }} />;
++  if (bioHtml === null) {
++    return <p className="prose">Loading bio...</p>;
++  }
 +
 +  return <div className="prose" dangerouslySetInnerHTML={{ __html: bioHtml }} />;
  }
 "#,
                 ),
+                changed_file(
+                    "apps/frontend/src/app/api/users/[userId]/bio/route.ts",
+                    r#"@@ -1,13 +1,11 @@
+ import { NextResponse } from "next/server";
+ import { getUserProfile } from "@/data/getUserProfile";
+-import { sanitizeBioHtml } from "@/security/sanitizeBioHtml";
+ 
+ export async function GET(
+   _request: Request,
+   { params }: { params: { userId: string } }
+ ) {
+   const profile = await getUserProfile(params.userId);
+-  const safeBio = sanitizeBioHtml(profile.bioHtml ?? "");
+-  return NextResponse.json({ bioHtml: safeBio });
++  return new NextResponse(profile.bioHtml ?? "", {
++    headers: { "content-type": "text/html; charset=utf-8" },
++  });
+ }
+"#,
+                ),
+                deleted_file(
+                    "apps/frontend/src/security/sanitizeBioHtml.ts",
+                    r#"@@ -1,12 +0,0 @@
+-import DOMPurify from "dompurify";
+-
+-export function sanitizeBioHtml(value: string): string {
+-  return DOMPurify.sanitize(value, {
+-    ALLOWED_TAGS: ["b", "i", "em", "strong", "a", "p", "ul", "li", "br"],
+-    ALLOWED_ATTR: ["href", "target", "rel"],
+-  });
+-}
+"#,
+                ),
                 deleted_file(
                     "apps/frontend/src/components/ProfileBio.test.tsx",
-                    r#"@@ -1,7 +0,0 @@
--import { render, screen } from "@testing-library/react";
+                    r#"@@ -1,28 +0,0 @@
+-import { render, screen, waitFor } from "@testing-library/react";
 -import { ProfileBio } from "./ProfileBio";
+-import * as profileApi from "../services/profileApi";
 -
--it("renders plain text bios", () => {
+-beforeEach(() => {
+-  vi.spyOn(window, "fetch").mockResolvedValue({
+-    text: () => Promise.resolve("<script>alert(1)</script><p>Hello</p>"),
+-  } as Response);
+-});
+-
+-it("renders sanitized HTML bios", async () => {
+-  vi.spyOn(profileApi, "trackBioView").mockResolvedValue(undefined);
+-
 -  render(<ProfileBio userId="user-1" />);
--  expect(screen.getByText("Loading...")).toBeInTheDocument();
+-
+-  expect(screen.getByText("Loading bio...")).toBeInTheDocument();
+-
+-  await waitFor(() => {
+-    expect(screen.getByText("Hello")).toBeInTheDocument();
+-  });
+-
+-  expect(screen.queryByText("alert(1)")).not.toBeInTheDocument();
+-  expect(profileApi.trackBioView).toHaveBeenCalledWith("user-1");
 -});
 "#,
                 ),
@@ -465,16 +620,23 @@ mod llm_local_smoke {
             "typescript-frontend",
             snapshot,
             &[
-                "react",
                 "sanitize",
                 "xss",
                 "dangerouslysetinnerhtml",
                 "html",
                 "test",
                 "coverage",
-                "component",
-                "render",
+                "loading",
             ],
+            &[
+                &["sanitize", "xss", "dangerouslysetinnerhtml", "html"],
+                &["test", "coverage", "loading", "assert"],
+            ],
+            &[
+                RecommendationCategory::Risk,
+                RecommendationCategory::TestGap,
+            ],
+            2,
         )
         .await;
     }
@@ -484,32 +646,73 @@ mod llm_local_smoke {
     async fn reacts_to_javascript_backend_changes() {
         let snapshot = sample_snapshot(
             "Simplify admin role updates",
-            "Cleans up the admin role endpoint and removes some extra ceremony in the handler.",
+            "Cleans up the admin role endpoint, inlines the role mutation path, and removes authorization and validation coverage that used to guard the route.",
             &["backend", "javascript"],
             vec![
                 changed_file(
                     "apps/api/routes/admin.js",
-                    r#"@@ -1,11 +1,9 @@
+                    r#"@@ -1,19 +1,16 @@
  const express = require("express");
 -const requireAdmin = require("../auth/requireAdmin");
 -const validateRoleChange = require("../validation/validateRoleChange");
++const { auditRoleChange } = require("../services/auditRoleChange");
++const { changeUserRole } = require("../services/changeUserRole");
  const router = express.Router();
  
 -router.post("/users/:id/role", requireAdmin, validateRoleChange, updateRole);
-+router.post("/users/:id/role", updateRole);
++router.post("/users/:id/role", async (req, res, next) => {
++  try {
++    const updatedUser = await changeUserRole(req.params.id, req.body.role);
++    await auditRoleChange(req.user.id, updatedUser.id, req.body.role);
++    res.json({ ok: true, user: updatedUser });
++  } catch (error) {
++    next(error);
++  }
++});
  
  module.exports = router;
 "#,
                 ),
+                changed_file(
+                    "apps/api/services/changeUserRole.js",
+                    r#"@@ -1,17 +1,11 @@
+ const { userRepository } = require("../repositories/userRepository");
+-const { ensureAllowedRole } = require("../validation/ensureAllowedRole");
+-const { forbidProtectedUserMutation } = require("../auth/forbidProtectedUserMutation");
+ 
+ async function changeUserRole(userId, role) {
+-  ensureAllowedRole(role);
+   const user = await userRepository.findById(userId);
+-  forbidProtectedUserMutation(user);
+-  return userRepository.updateRole(user.id, role);
++  return userRepository.updateRole(user.id, role);
+ }
+ 
+ module.exports = {
+   changeUserRole,
+ };
+"#,
+                ),
                 deleted_file(
                     "apps/api/routes/admin.test.js",
-                    r#"@@ -1,12 +0,0 @@
+                    r#"@@ -1,28 +0,0 @@
 -it("rejects non-admin role updates", async () => {
 -  const response = await request(app)
 -    .post("/users/123/role")
+-    .set("x-user-role", "viewer")
 -    .send({ role: "staff" });
 -
 -  expect(response.status).toBe(403);
+-});
+-
+-it("rejects invalid roles", async () => {
+-  const response = await request(app)
+-    .post("/users/123/role")
+-    .set("x-user-role", "admin")
+-    .send({ role: "godmode" });
+-
+-  expect(response.status).toBe(400);
+-  expect(response.body.error).toContain("invalid role");
 -});
 "#,
                 ),
@@ -530,6 +733,16 @@ mod llm_local_smoke {
                 "access",
                 "test",
             ],
+            &[
+                &["auth", "authorization", "admin", "permission", "access"],
+                &["validation", "invalid", "role"],
+                &["test", "coverage", "assert"],
+            ],
+            &[
+                RecommendationCategory::Risk,
+                RecommendationCategory::TestGap,
+            ],
+            2,
         )
         .await;
     }

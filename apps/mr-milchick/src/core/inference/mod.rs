@@ -237,17 +237,42 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
         &self,
         snapshot: &ReviewSnapshot,
     ) -> Result<ReviewInferenceOutcome, ReviewInferenceError> {
-        let prompt = build_local_inference_prompt(snapshot, self.max_patch_bytes);
         let model_path = self.model_path.clone();
+        let primary_prompt =
+            build_local_inference_prompt(snapshot, self.max_patch_bytes, LocalPromptStyle::Primary);
+        let retry_prompt = build_local_inference_prompt(
+            snapshot,
+            self.max_patch_bytes,
+            LocalPromptStyle::StrictRetry,
+        );
 
         task::spawn_blocking(move || {
-            run_local_inference(model_path.as_path(), &prompt).map(ReviewInferenceOutcome::ready)
+            match run_local_inference(model_path.as_path(), &primary_prompt) {
+                Ok(insights) if !insights.is_empty() => Ok(ReviewInferenceOutcome::ready(insights)),
+                Ok(_) => run_local_inference(model_path.as_path(), &retry_prompt)
+                    .map(ReviewInferenceOutcome::ready),
+                Err(err) if should_retry_local_inference(&err) => {
+                    run_local_inference(model_path.as_path(), &retry_prompt)
+                        .map(ReviewInferenceOutcome::ready)
+                }
+                Err(err) => Err(err),
+            }
         })
         .await
         .map_err(|err| {
             ReviewInferenceError::Analysis(format!("local inference task failed: {err}"))
         })?
     }
+}
+
+#[cfg(feature = "llm-local")]
+fn should_retry_local_inference(err: &ReviewInferenceError) -> bool {
+    matches!(
+        err,
+        ReviewInferenceError::Analysis(message)
+            if message.contains("did not return a JSON object")
+                || message.contains("returned invalid JSON")
+    )
 }
 
 #[cfg(any(feature = "llm-local", test))]
@@ -267,12 +292,24 @@ struct LlmReviewRecommendation {
 }
 
 #[cfg(any(feature = "llm-local", test))]
-fn build_local_inference_prompt(snapshot: &ReviewSnapshot, max_patch_bytes: usize) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalPromptStyle {
+    Primary,
+    StrictRetry,
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn build_local_inference_prompt(
+    snapshot: &ReviewSnapshot,
+    max_patch_bytes: usize,
+    style: LocalPromptStyle,
+) -> String {
     let labels = if snapshot.labels.is_empty() {
         "none".to_string()
     } else {
         snapshot.labels.join(", ")
     };
+    let review_cues = infer_review_cues(snapshot);
     let mut prompt = String::new();
     prompt.push_str("You are Mr. Milchick, a careful code review assistant running inside CI.\n");
     prompt.push_str("Analyze the review snapshot and return JSON only.\n");
@@ -293,6 +330,7 @@ fn build_local_inference_prompt(snapshot: &ReviewSnapshot, max_patch_bytes: usiz
     );
     prompt.push_str("- Use at most 4 recommendations.\n");
     prompt.push_str("- Keep each recommendation message under 160 characters.\n");
+    prompt.push_str("- If the diff shows an obvious risk, do not return an empty recommendations array.\n");
     prompt.push_str("- Use null for summary if nothing useful stands out.\n\n");
     prompt.push_str("Review snapshot:\n");
     prompt.push_str(&format!("Title: {}\n", snapshot.title));
@@ -328,6 +366,15 @@ fn build_local_inference_prompt(snapshot: &ReviewSnapshot, max_patch_bytes: usiz
         prompt.push_str("Description:\n");
         prompt.push_str(description);
         prompt.push('\n');
+    }
+
+    if !review_cues.is_empty() {
+        prompt.push_str("\nPotential review cues from the diff:\n");
+        for cue in &review_cues {
+            prompt.push_str("- ");
+            prompt.push_str(cue);
+            prompt.push('\n');
+        }
     }
 
     prompt.push_str("\nChanged files detail:\n");
@@ -376,6 +423,18 @@ fn build_local_inference_prompt(snapshot: &ReviewSnapshot, max_patch_bytes: usiz
         }
     }
 
+    if matches!(style, LocalPromptStyle::StrictRetry) {
+        prompt.push_str("\nReturn exactly one JSON object.\n");
+        prompt.push_str("The first character of your reply must be { and the last character must be }.\n");
+        prompt.push_str("Do not echo diff lines, code snippets, or brace fragments from the patch.\n");
+        prompt.push_str(
+            "If the snapshot includes deleted tests, removed auth or validation checks, or dangerous HTML rendering, include at least one recommendation.\n",
+        );
+        prompt.push_str(
+            "Example valid reply: {\"summary\":\"Route lost admin enforcement.\",\"recommendations\":[{\"category\":\"Risk\",\"message\":\"Restore the admin guard on the role update route.\"}]}\n",
+        );
+    }
+
     prompt
 }
 
@@ -405,6 +464,110 @@ fn format_change_type(change_type: ChangeType) -> &'static str {
 }
 
 #[cfg(any(feature = "llm-local", test))]
+fn infer_review_cues(snapshot: &ReviewSnapshot) -> Vec<String> {
+    let mut cues = Vec::new();
+
+    let deleted_test_file = snapshot.changed_files.iter().any(|file| {
+        matches!(file.change_type, ChangeType::Deleted) && looks_like_test_path(&file.path)
+    });
+    if deleted_test_file {
+        cues.push("A test file was deleted in this change.".to_string());
+    }
+
+    let removed_test_assertion = snapshot.changed_files.iter().any(|file| {
+        file.patch
+            .as_deref()
+            .map(|patch| {
+                patch.lines().any(|line| {
+                    line.starts_with('-')
+                        && !line.starts_with("---")
+                        && (line.contains("expect(")
+                            || line.contains("assert")
+                            || line.contains("toBe(")
+                            || line.contains("toEqual("))
+                })
+            })
+            .unwrap_or(false)
+    });
+    if removed_test_assertion {
+        cues.push("The diff removes an assertion or test expectation.".to_string());
+    }
+
+    let removed_auth_or_validation = snapshot.changed_files.iter().any(|file| {
+        file.patch
+            .as_deref()
+            .map(|patch| {
+                patch.lines().any(|line| {
+                    line.starts_with('-')
+                        && !line.starts_with("---")
+                        && contains_any_ascii_case_insensitive(
+                            line,
+                            &[
+                                "requireadmin",
+                                "validate",
+                                "authorization",
+                                "permission",
+                                "auth",
+                                "guard",
+                                "forbid",
+                            ],
+                        )
+                })
+            })
+            .unwrap_or(false)
+    });
+    if removed_auth_or_validation {
+        cues.push(
+            "The diff removes code that looks like auth, permission, or validation logic."
+                .to_string(),
+        );
+    }
+
+    let dangerous_html_rendering = snapshot.changed_files.iter().any(|file| {
+        file.patch
+            .as_deref()
+            .map(|patch| {
+                contains_any_ascii_case_insensitive(
+                    patch,
+                    &["dangerouslysetinnerhtml", "innerhtml", "setinnerhtml"],
+                )
+            })
+            .unwrap_or(false)
+    });
+    if dangerous_html_rendering {
+        cues.push("The diff introduces raw HTML rendering.".to_string());
+    }
+
+    cues
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn looks_like_test_path(path: &str) -> bool {
+    let normalized = path.to_ascii_lowercase();
+    normalized.contains("/test")
+        || normalized.contains("/tests/")
+        || normalized.ends_with(".test.ts")
+        || normalized.ends_with(".test.tsx")
+        || normalized.ends_with(".test.js")
+        || normalized.ends_with(".test.jsx")
+        || normalized.ends_with(".spec.ts")
+        || normalized.ends_with(".spec.tsx")
+        || normalized.ends_with(".spec.js")
+        || normalized.ends_with(".spec.jsx")
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn contains_any_ascii_case_insensitive(haystack: &str, needles: &[&str]) -> bool {
+    let normalized = haystack
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    needles.iter().any(|needle| normalized.contains(needle))
+}
+
+#[cfg(any(feature = "llm-local", test))]
 fn parse_local_inference_output(raw: &str) -> Result<ReviewInsights, ReviewInferenceError> {
     let json_payloads = extract_json_objects(raw);
     if json_payloads.is_empty() {
@@ -425,22 +588,16 @@ fn parse_local_inference_output(raw: &str) -> Result<ReviewInsights, ReviewInfer
             ))
         })?;
 
-    let summary = normalize_optional_text(response.summary);
-    let recommendations = response
-        .recommendations
-        .into_iter()
-        .filter_map(|recommendation| {
-            let category = parse_recommendation_category(&recommendation.category)?;
-            let message = normalize_optional_text(Some(recommendation.message))?;
-            Some(ReviewRecommendation { category, message })
-        })
-        .take(LOCAL_MAX_RECOMMENDATIONS)
-        .collect();
+    Ok(llm_response_to_review_insights(response))
+}
 
-    Ok(ReviewInsights {
-        summary,
-        recommendations,
-    })
+#[cfg(any(feature = "llm-local", test))]
+fn first_non_empty_review_response(raw: &str) -> Option<ReviewInsights> {
+    extract_json_objects(raw)
+        .into_iter()
+        .filter_map(|payload| serde_json::from_str::<LlmReviewResponse>(payload).ok())
+        .map(llm_response_to_review_insights)
+        .find(|insights| !insights.is_empty())
 }
 
 #[cfg(any(feature = "llm-local", test))]
@@ -501,10 +658,31 @@ fn extract_json_objects(raw: &str) -> Vec<&str> {
 }
 
 #[cfg(any(feature = "llm-local", test))]
+#[cfg(test)]
 fn contains_parseable_review_response(raw: &str) -> bool {
     extract_json_objects(raw)
         .into_iter()
         .any(|payload| serde_json::from_str::<LlmReviewResponse>(payload).is_ok())
+}
+
+#[cfg(any(feature = "llm-local", test))]
+fn llm_response_to_review_insights(response: LlmReviewResponse) -> ReviewInsights {
+    let summary = normalize_optional_text(response.summary);
+    let recommendations = response
+        .recommendations
+        .into_iter()
+        .filter_map(|recommendation| {
+            let category = parse_recommendation_category(&recommendation.category)?;
+            let message = normalize_optional_text(Some(recommendation.message))?;
+            Some(ReviewRecommendation { category, message })
+        })
+        .take(LOCAL_MAX_RECOMMENDATIONS)
+        .collect();
+
+    ReviewInsights {
+        summary,
+        recommendations,
+    }
 }
 
 #[cfg(any(feature = "llm-local", test))]
@@ -543,7 +721,7 @@ fn parse_recommendation_category(raw: &str) -> Option<RecommendationCategory> {
 #[cfg(feature = "llm-local")]
 fn run_local_inference(
     model_path: &Path,
-    prompt: &str,
+    base_prompt: &str,
 ) -> Result<ReviewInsights, ReviewInferenceError> {
     let mut backend = LlamaBackend::init().map_err(|err| {
         ReviewInferenceError::Analysis(format!("failed to initialize llama backend: {err}"))
@@ -558,7 +736,9 @@ fn run_local_inference(
         ))
     })?;
 
-    let prompt_tokens = model.str_to_token(prompt, AddBos::Always).map_err(|err| {
+    let prompt = render_prompt_for_model(&model, base_prompt);
+
+    let prompt_tokens = model.str_to_token(&prompt, AddBos::Always).map_err(|err| {
         ReviewInferenceError::Analysis(format!("failed to tokenize review prompt: {err}"))
     })?;
 
@@ -609,7 +789,7 @@ fn run_local_inference(
 
         sampler.accept(token);
         rendered_output.push_str(&token_to_piece_lossy(&model, token)?);
-        if contains_parseable_review_response(&rendered_output) {
+        if first_non_empty_review_response(&rendered_output).is_some() {
             break;
         }
 
@@ -633,6 +813,28 @@ fn run_local_inference(
     }
 
     parse_local_inference_output(&rendered_output)
+}
+
+#[cfg(feature = "llm-local")]
+fn render_prompt_for_model(model: &LlamaModel, base_prompt: &str) -> String {
+    let tokenizer_pre = model
+        .meta_val_str("tokenizer.ggml.pre")
+        .ok()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let architecture = model
+        .meta_val_str("general.architecture")
+        .ok()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if tokenizer_pre.contains("qwen") || architecture.contains("qwen") {
+        format!(
+            "<|im_start|>system\nYou are Mr. Milchick, a careful CI code review assistant. Reply with JSON only.<|im_end|>\n<|im_start|>user\n{base_prompt}<|im_end|>\n<|im_start|>assistant\n"
+        )
+    } else {
+        base_prompt.to_string()
+    }
 }
 
 #[cfg(feature = "llm-local")]
@@ -850,7 +1052,7 @@ mod tests {
             patch: Some("second patch".to_string()),
         });
 
-        let prompt = build_local_inference_prompt(&snapshot, 8);
+        let prompt = build_local_inference_prompt(&snapshot, 8, LocalPromptStyle::Primary);
 
         assert!(prompt.contains("File: src/lib.rs [Modified]"));
         assert!(prompt.contains("[patch truncated to fit configured patch budget]"));
@@ -902,6 +1104,83 @@ mod tests {
         assert!(contains_parseable_review_response(
             "prefix { role } suffix {\"summary\":null,\"recommendations\":[]}"
         ));
+    }
+
+    #[test]
+    fn first_non_empty_review_response_skips_empty_json_objects() {
+        let insights = first_non_empty_review_response(
+            "{\"summary\":null,\"recommendations\":[]} trailing {\"summary\":\"Auth middleware was removed.\",\"recommendations\":[{\"category\":\"Risk\",\"message\":\"Restore the admin guard.\"}]}",
+        )
+        .expect("should find the later non-empty response");
+
+        assert_eq!(
+            insights.summary.as_deref(),
+            Some("Auth middleware was removed.")
+        );
+        assert_eq!(insights.recommendations.len(), 1);
+    }
+
+    #[test]
+    fn prompt_builder_surfaces_inferred_review_cues() {
+        let snapshot = ReviewSnapshot {
+            review_ref: ReviewRef {
+                platform: ReviewPlatformKind::GitHub,
+                project_key: "ArthurianX/mr-milchick".to_string(),
+                review_id: "42".to_string(),
+                web_url: None,
+            },
+            repository: RepositoryRef {
+                platform: ReviewPlatformKind::GitHub,
+                namespace: "ArthurianX".to_string(),
+                name: "mr-milchick".to_string(),
+                web_url: None,
+            },
+            title: "Test".to_string(),
+            description: None,
+            author: Actor {
+                username: "alice".to_string(),
+                display_name: None,
+            },
+            participants: Vec::new(),
+            changed_files: vec![
+                ChangedFile {
+                    path: "apps/api/routes/admin.js".to_string(),
+                    previous_path: None,
+                    change_type: ChangeType::Modified,
+                    additions: Some(0),
+                    deletions: Some(2),
+                    patch: Some("-const requireAdmin = require(\"../auth/requireAdmin\");\n-router.post(\"/users/:id/role\", requireAdmin, updateRole);".to_string()),
+                },
+                ChangedFile {
+                    path: "apps/frontend/src/ProfileBio.tsx".to_string(),
+                    previous_path: None,
+                    change_type: ChangeType::Modified,
+                    additions: Some(1),
+                    deletions: Some(0),
+                    patch: Some("+return <div dangerouslySetInnerHTML={{ __html: bioHtml }} />;".to_string()),
+                },
+                ChangedFile {
+                    path: "apps/frontend/src/ProfileBio.test.tsx".to_string(),
+                    previous_path: None,
+                    change_type: ChangeType::Deleted,
+                    additions: Some(0),
+                    deletions: Some(1),
+                    patch: Some("-expect(screen.getByText(\"Loading...\")).toBeInTheDocument();".to_string()),
+                },
+            ],
+            labels: Vec::new(),
+            is_draft: false,
+            default_branch: Some("main".to_string()),
+            metadata: ReviewMetadata::default(),
+        };
+
+        let prompt = build_local_inference_prompt(&snapshot, 4_096, LocalPromptStyle::StrictRetry);
+
+        assert!(prompt.contains("Potential review cues from the diff:"));
+        assert!(prompt.contains("A test file was deleted"));
+        assert!(prompt.contains("auth, permission, or validation logic"));
+        assert!(prompt.contains("raw HTML rendering"));
+        assert!(prompt.contains("The first character of your reply must be {"));
     }
 
     #[test]
