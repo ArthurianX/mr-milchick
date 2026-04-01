@@ -193,6 +193,8 @@ Expected result:
 
 ## Benchmark Local GGUF Models
 
+For the full local-LLM setup, runtime variables, CI model-repo pattern, smoke tests, and benchmark scoring notes, see [local-llm.md](local-llm.md).
+
 If you keep multiple local GGUF files under `test-models`, use the repeatable benchmark script to compare load reliability, smoke-test coverage, and runtime across models.
 
 ```bash
