@@ -44,7 +44,7 @@ build_release_binary:
     - apt-get update
     - apt-get install -y musl-tools pkg-config
   script:
-    - cargo build -p mr-milchick --release --locked --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app"
+    - cargo build -p mr-milchick --release --locked --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app llm-local"
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/mr-milchick
     - cp mr-milchick.toml dist/mr-milchick.toml
