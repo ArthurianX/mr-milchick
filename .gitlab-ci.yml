@@ -40,16 +40,15 @@ test:
 
 build_release_binary:
   stage: build
-  image: ghcr.io/rust-cross/rust-musl-cross:x86_64-musl
   needs: ["test"]
   before_script:
     - apt-get update
     - apt-get install -y -o Dpkg::Options::=--force-confold --no-install-recommends clang cmake libclang-dev llvm-dev pkg-config tzdata
     - export LIBCLANG_PATH="$(llvm-config --libdir)"
   script:
-    - ./scripts/build_linux_release.sh -p mr-milchick --no-default-features --features gitlab slack-app llm-local
+    - cargo build -p mr-milchick --release --locked --no-default-features --features "gitlab slack-app llm-local"
     - mkdir -p dist
-    - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/mr-milchick
+    - cp target/release/mr-milchick dist/mr-milchick
     - cp mr-milchick.toml dist/mr-milchick.toml
     - chmod +x dist/mr-milchick
   artifacts:
@@ -79,7 +78,7 @@ release_binary:
     description: "Release $CI_COMMIT_TAG"
     assets:
       links:
-        - name: "mr-milchick (linux x86_64 musl)"
+        - name: "mr-milchick (linux x86_64 gnu)"
           url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/raw/dist/mr-milchick"
         - name: "mr-milchick.toml"
           url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/raw/dist/mr-milchick.toml"
