@@ -44,7 +44,7 @@ build_release_binary:
   needs: ["test"]
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends clang cmake libclang-dev llvm-dev musl-tools pkg-config tzdata
+    - apt-get install -y -o Dpkg::Options::=--force-confold --no-install-recommends clang cmake libclang-dev llvm-dev pkg-config tzdata
     - export LIBCLANG_PATH="$(llvm-config --libdir)"
   script:
     - ./scripts/build_linux_release.sh -p mr-milchick --no-default-features --features gitlab slack-app llm-local
