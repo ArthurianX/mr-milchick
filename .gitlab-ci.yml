@@ -38,14 +38,14 @@ test:
 
 build_release_binary:
   stage: build
+  image: ghcr.io/cross-rs/x86_64-unknown-linux-musl:edge
   needs: ["test"]
   before_script:
-    - rustup target add x86_64-unknown-linux-musl
     - apt-get update
     - apt-get install -y --no-install-recommends clang cmake libclang-dev llvm-dev musl-tools pkg-config
     - export LIBCLANG_PATH="$(llvm-config --libdir)"
   script:
-    - cargo build -p mr-milchick --release --locked --target x86_64-unknown-linux-musl --no-default-features --features "gitlab slack-app llm-local"
+    - ./scripts/build_linux_release.sh -p mr-milchick --no-default-features --features gitlab slack-app llm-local
     - mkdir -p dist
     - cp target/x86_64-unknown-linux-musl/release/mr-milchick dist/mr-milchick
     - cp mr-milchick.toml dist/mr-milchick.toml
