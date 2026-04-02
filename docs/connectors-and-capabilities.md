@@ -80,6 +80,20 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
+For local Linux-musl builds, prefer the repo helper so target installation and cross-toolchain checks happen in one place:
+
+```bash
+./scripts/build_linux_release.sh --no-default-features --features gitlab
+```
+
+The helper supports three local paths:
+
+- `x86_64-linux-musl-gcc`
+- `cross`
+- `cargo-zigbuild` plus `zig`
+
+Without one of those available, crates with native code such as `ring` can still fail later even after the Rust target itself has been added.
+
 ## Capability Rules
 
 The runtime enforces these invariants:

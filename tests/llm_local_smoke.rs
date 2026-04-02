@@ -22,6 +22,7 @@ mod llm_local_smoke {
 
     const DEFAULT_SMOKE_TIMEOUT_MS: u64 = 120_000;
     const DEFAULT_SMOKE_PATCH_BUDGET: usize = 4_096;
+    const DEFAULT_SMOKE_CONTEXT_TOKENS: usize = 4_096;
 
     static SMOKE_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
@@ -48,8 +49,19 @@ mod llm_local_smoke {
             .unwrap_or(DEFAULT_SMOKE_PATCH_BUDGET)
     }
 
+    fn smoke_context_tokens() -> usize {
+        env::var("MR_MILCHICK_LLM_SMOKE_CONTEXT_TOKENS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_SMOKE_CONTEXT_TOKENS)
+    }
+
     fn local_engine() -> LocalLlamaReviewInferenceEngine {
-        LocalLlamaReviewInferenceEngine::new(model_path_from_env(), smoke_patch_budget())
+        LocalLlamaReviewInferenceEngine::new(
+            model_path_from_env(),
+            smoke_patch_budget(),
+            smoke_context_tokens(),
+        )
             .expect("local smoke test engine should initialize from env")
     }
 

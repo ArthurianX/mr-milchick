@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
-use tracing::warn;
+use tracing::{info, warn};
 
 #[cfg(feature = "github")]
 use crate::connectors::github::{GitHubPlatformConnector, render_github_markdown};
@@ -67,6 +67,7 @@ struct FixturePlatformConnector;
 
 const DEFAULT_LLM_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_LLM_MAX_PATCH_BYTES: usize = 32 * 1024;
+const DEFAULT_LLM_CONTEXT_TOKENS: usize = 4_096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EffectiveLlmConfig {
@@ -74,6 +75,7 @@ struct EffectiveLlmConfig {
     model_path: Option<String>,
     timeout_ms: u64,
     max_patch_bytes: usize,
+    context_tokens: usize,
 }
 
 struct ReviewInferenceConnectorAdapter {
@@ -255,6 +257,11 @@ pub async fn run_mode(
     }
 
     let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
+    info!(
+        inference_available = wiring.capabilities.inference_available,
+        changed_files = snapshot.changed_file_count(),
+        "starting advisory local review analysis"
+    );
     let inference_outcome = match wiring.analyze_review(&snapshot).await {
         Ok(outcome) => outcome,
         Err(err) => {
@@ -262,6 +269,23 @@ pub async fn run_mode(
             ReviewInferenceOutcome::failed(err.to_string())
         }
     };
+    if inference_outcome.insights.is_empty() {
+        info!(
+            status = ?inference_outcome.status,
+            detail = inference_outcome.detail.as_deref().unwrap_or(""),
+            "advisory local review finished without structured suggestions"
+        );
+    } else {
+        info!(
+            status = ?inference_outcome.status,
+            summary_present = inference_outcome.insights.summary.is_some(),
+            recommendation_count = inference_outcome.insights.recommendations.len(),
+            "advisory local review produced structured suggestions"
+        );
+    }
+    if llm_trace_enabled() {
+        print_inference_details(&inference_outcome);
+    }
 
     let summary = render_review_summary(
         &template_catalog,
@@ -538,7 +562,17 @@ fn build_inference_connector(
     let llm = resolve_llm_config(runtime, flavor);
     let timeout = Duration::from_millis(llm.timeout_ms);
 
+    info!(
+        llm_enabled = llm.enabled,
+        llm_model_path = llm.model_path.as_deref().unwrap_or(""),
+        llm_timeout_ms = llm.timeout_ms,
+        llm_max_patch_bytes = llm.max_patch_bytes,
+        llm_context_tokens = llm.context_tokens,
+        "resolved advisory local review configuration"
+    );
+
     if !llm.enabled {
+        info!("advisory local review is disabled by configuration");
         return Ok((
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(NoopReviewInferenceEngine::disabled(
@@ -557,11 +591,13 @@ fn build_inference_connector(
 
     #[cfg(feature = "llm-local")]
     {
+        info!("using compiled llama.cpp local review backend");
         return Ok((
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(LocalLlamaReviewInferenceEngine::new(
                     model_path,
                     llm.max_patch_bytes,
+                    llm.context_tokens,
                 )?),
                 timeout,
             }),
@@ -571,6 +607,7 @@ fn build_inference_connector(
 
     #[cfg(not(feature = "llm-local"))]
     {
+        warn!("LLM review was configured but local backend support is not compiled into this binary");
         Ok((
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(NoopReviewInferenceEngine::unavailable(format!(
@@ -611,6 +648,11 @@ fn resolve_llm_config(
             .max_patch_bytes
             .or_else(|| flavor.and_then(|config| config.max_patch_bytes))
             .unwrap_or(DEFAULT_LLM_MAX_PATCH_BYTES),
+        context_tokens: runtime
+            .llm
+            .context_tokens
+            .or_else(|| flavor.and_then(|config| config.context_tokens))
+            .unwrap_or(DEFAULT_LLM_CONTEXT_TOKENS),
     }
 }
 
@@ -650,6 +692,10 @@ fn print_compiled_capabilities() {
         "- platform connector: {}",
         compiled_platform_kind().as_str()
     );
+    #[cfg(feature = "llm-local")]
+    println!("- advisory local review: llama.cpp");
+    #[cfg(not(feature = "llm-local"))]
+    println!("- advisory local review: not compiled");
     #[allow(unused_mut)]
     let mut sinks: Vec<&str> = Vec::new();
     #[cfg(feature = "slack-app")]
@@ -973,6 +1019,12 @@ fn print_inference_details(inference_outcome: &ReviewInferenceOutcome) {
     }
 }
 
+fn llm_trace_enabled() -> bool {
+    std::env::var("MR_MILCHICK_LLM_TRACE")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
 fn print_codeowners_details(
     snapshot: &crate::core::model::ReviewSnapshot,
     app_config: &AppConfigContext,
@@ -1229,6 +1281,7 @@ mod tests {
                 model_path: None,
                 timeout_ms: None,
                 max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1274,6 +1327,7 @@ mod tests {
                 model_path: None,
                 timeout_ms: None,
                 max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1323,6 +1377,7 @@ mod tests {
                 model_path: None,
                 timeout_ms: None,
                 max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1357,6 +1412,7 @@ mod tests {
                 model_path: None,
                 timeout_ms: None,
                 max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1401,6 +1457,7 @@ mod tests {
                 model_path: None,
                 timeout_ms: None,
                 max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1445,6 +1502,7 @@ mod tests {
                 model_path: None,
                 timeout_ms: None,
                 max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1468,6 +1526,7 @@ mod tests {
                 model_path: Some("/models/review.gguf".to_string()),
                 timeout_ms: Some(22_000),
                 max_patch_bytes: Some(48_000),
+                context_tokens: Some(8_192),
             }),
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
@@ -1478,6 +1537,7 @@ mod tests {
         assert_eq!(resolved.model_path.as_deref(), Some("/models/review.gguf"));
         assert_eq!(resolved.timeout_ms, 22_000);
         assert_eq!(resolved.max_patch_bytes, 48_000);
+        assert_eq!(resolved.context_tokens, 8_192);
     }
 
     #[test]
@@ -1496,6 +1556,7 @@ mod tests {
                 model_path: Some("/env/model.gguf".to_string()),
                 timeout_ms: Some(5_000),
                 max_patch_bytes: Some(16_000),
+                context_tokens: Some(12_288),
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1519,6 +1580,7 @@ mod tests {
                 model_path: Some("/flavor/model.gguf".to_string()),
                 timeout_ms: Some(22_000),
                 max_patch_bytes: Some(48_000),
+                context_tokens: Some(8_192),
             }),
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
@@ -1529,5 +1591,6 @@ mod tests {
         assert_eq!(resolved.model_path.as_deref(), Some("/env/model.gguf"));
         assert_eq!(resolved.timeout_ms, 5_000);
         assert_eq!(resolved.max_patch_bytes, 16_000);
+        assert_eq!(resolved.context_tokens, 12_288);
     }
 }

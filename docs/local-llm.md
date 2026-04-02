@@ -57,6 +57,7 @@ These variables affect the optional advisory model pass:
 | `MR_MILCHICK_LLM_MODEL_PATH` | Yes for local review | Absolute or relative path to the GGUF file Milchick should load. |
 | `MR_MILCHICK_LLM_TIMEOUT_MS` | No | Timeout for the full advisory inference pass in milliseconds. |
 | `MR_MILCHICK_LLM_MAX_PATCH_BYTES` | No | Caps how many diff bytes are included in the local prompt across all changed files. |
+| `MR_MILCHICK_LLM_CONTEXT_TOKENS` | No | Caps the llama.cpp context window Milchick requests for local review. Raise this for large MRs when the prompt no longer fits in the default window. |
 
 ### Smoke-Test And Benchmark Variables
 
@@ -67,6 +68,7 @@ These variables are used by the local smoke-test workflow:
 | `MR_MILCHICK_LLM_MODEL_PATH` | Yes | Points the smoke test at a local GGUF file. |
 | `MR_MILCHICK_LLM_SMOKE_TIMEOUT_MS` | No | Overrides the smoke test timeout. |
 | `MR_MILCHICK_LLM_SMOKE_MAX_PATCH_BYTES` | No | Overrides the smoke test patch budget. |
+| `MR_MILCHICK_LLM_SMOKE_CONTEXT_TOKENS` | No | Overrides the smoke test context window. |
 
 ## Usage
 
@@ -77,6 +79,7 @@ MR_MILCHICK_LLM_ENABLED=true \
 MR_MILCHICK_LLM_MODEL_PATH=test-models/fieldmouse/QWEN-QWEN3.5-2B-Q4_K_M.gguf \
 MR_MILCHICK_LLM_TIMEOUT_MS=120000 \
 MR_MILCHICK_LLM_MAX_PATCH_BYTES=4096 \
+MR_MILCHICK_LLM_CONTEXT_TOKENS=8192 \
 CI_PROJECT_ID=412 \
 CI_MERGE_REQUEST_IID=3995 \
 CI_PIPELINE_SOURCE=merge_request_event \
@@ -93,9 +96,10 @@ These are good starting points:
 
 - `MR_MILCHICK_LLM_TIMEOUT_MS=120000`
 - `MR_MILCHICK_LLM_MAX_PATCH_BYTES=4096`
+- `MR_MILCHICK_LLM_CONTEXT_TOKENS=8192`
 - keep one primary model path in CI and use a second model only for manual fallback or benchmarks
 
-Raise `MR_MILCHICK_LLM_MAX_PATCH_BYTES` when your review cases rely on multi-file context. Lower it if you want stricter latency or memory bounds.
+Raise `MR_MILCHICK_LLM_MAX_PATCH_BYTES` when your review cases rely on multi-file context. Raise `MR_MILCHICK_LLM_CONTEXT_TOKENS` when the prompt still overflows after patch budgeting. Lower either knob if you want stricter latency or memory bounds.
 
 ## CI Shape
 

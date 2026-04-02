@@ -4,6 +4,8 @@ use async_trait::async_trait;
 #[cfg(any(feature = "llm-local", test))]
 use serde::Deserialize;
 use tokio::time::timeout;
+#[cfg(feature = "llm-local")]
+use tracing::{debug, info, warn};
 
 #[cfg(any(feature = "llm-local", test))]
 use crate::core::model::ChangeType;
@@ -40,7 +42,6 @@ use llama_cpp_2::openai::OpenAIChatTemplateParams;
 use llama_cpp_2::sampling::LlamaSampler;
 
 #[cfg(feature = "llm-local")]
-const LOCAL_CONTEXT_TOKEN_LIMIT: usize = 4_096;
 #[cfg(feature = "llm-local")]
 const LOCAL_BATCH_CAPACITY: usize = 512;
 #[cfg(feature = "llm-local")]
@@ -210,6 +211,7 @@ pub async fn analyze_with_timeout(
 pub struct LocalLlamaReviewInferenceEngine {
     model_path: PathBuf,
     max_patch_bytes: usize,
+    context_token_limit: usize,
 }
 
 #[cfg(feature = "llm-local")]
@@ -217,6 +219,7 @@ impl LocalLlamaReviewInferenceEngine {
     pub fn new(
         model_path: impl Into<PathBuf>,
         max_patch_bytes: usize,
+        context_token_limit: usize,
     ) -> Result<Self, ReviewInferenceError> {
         let model_path = model_path.into();
 
@@ -236,6 +239,7 @@ impl LocalLlamaReviewInferenceEngine {
         Ok(Self {
             model_path,
             max_patch_bytes,
+            context_token_limit: context_token_limit.max(1_024),
         })
     }
 }
@@ -248,6 +252,9 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
         snapshot: &ReviewSnapshot,
     ) -> Result<ReviewInferenceOutcome, ReviewInferenceError> {
         let model_path = self.model_path.clone();
+        let max_patch_bytes = self.max_patch_bytes;
+        let context_token_limit = self.context_token_limit;
+        let changed_files = snapshot.changed_files.len();
         let primary_prompt =
             build_local_inference_prompt(snapshot, self.max_patch_bytes, LocalPromptStyle::Primary);
         let retry_prompt = build_local_inference_prompt(
@@ -257,15 +264,62 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
         );
 
         task::spawn_blocking(move || {
-            match run_local_inference(model_path.as_path(), &primary_prompt) {
-                Ok(insights) if !insights.is_empty() => Ok(ReviewInferenceOutcome::ready(insights)),
-                Ok(_) => run_local_inference(model_path.as_path(), &retry_prompt)
-                    .map(ReviewInferenceOutcome::ready),
-                Err(err) if should_retry_local_inference(&err) => {
-                    run_local_inference(model_path.as_path(), &retry_prompt)
-                        .map(ReviewInferenceOutcome::ready)
+            info!(
+                model_path = %model_path.display(),
+                changed_files,
+                max_patch_bytes,
+                context_token_limit,
+                "starting llama.cpp advisory review run"
+            );
+            match run_local_inference(model_path.as_path(), &primary_prompt, context_token_limit) {
+                Ok(insights) if !insights.is_empty() => {
+                    info!(
+                        summary_present = insights.summary.is_some(),
+                        recommendation_count = insights.recommendations.len(),
+                        "llama.cpp primary advisory review produced structured suggestions"
+                    );
+                    Ok(ReviewInferenceOutcome::ready(insights))
                 }
-                Err(err) => Err(err),
+                Ok(_) => {
+                    warn!(
+                        "llama.cpp primary advisory review returned empty structured output; retrying with strict prompt"
+                    );
+                    let insights =
+                        run_local_inference(model_path.as_path(), &retry_prompt, context_token_limit)?;
+                    if insights.is_empty() {
+                        warn!(
+                            "llama.cpp strict retry also returned empty structured output"
+                        );
+                    } else {
+                        info!(
+                            summary_present = insights.summary.is_some(),
+                            recommendation_count = insights.recommendations.len(),
+                            "llama.cpp strict retry produced structured suggestions"
+                        );
+                    }
+                    Ok(ReviewInferenceOutcome::ready(insights))
+                }
+                Err(err) if should_retry_local_inference(&err) => {
+                    warn!(error = %err, "llama.cpp primary advisory review failed in a retryable way; retrying with strict prompt");
+                    let insights =
+                        run_local_inference(model_path.as_path(), &retry_prompt, context_token_limit)?;
+                    if insights.is_empty() {
+                        warn!(
+                            "llama.cpp strict retry finished but still returned empty structured output"
+                        );
+                    } else {
+                        info!(
+                            summary_present = insights.summary.is_some(),
+                            recommendation_count = insights.recommendations.len(),
+                            "llama.cpp strict retry recovered and produced structured suggestions"
+                        );
+                    }
+                    Ok(ReviewInferenceOutcome::ready(insights))
+                }
+                Err(err) => {
+                    warn!(error = %err, "llama.cpp advisory review failed without retry");
+                    Err(err)
+                }
             }
         })
         .await
@@ -732,6 +786,7 @@ fn parse_recommendation_category(raw: &str) -> Option<RecommendationCategory> {
 fn run_local_inference(
     model_path: &Path,
     base_prompt: &str,
+    requested_context_token_limit: usize,
 ) -> Result<ReviewInsights, ReviewInferenceError> {
     let mut backend = LlamaBackend::init().map_err(|err| {
         ReviewInferenceError::Analysis(format!("failed to initialize llama backend: {err}"))
@@ -759,8 +814,24 @@ fn run_local_inference(
         ));
     }
 
-    let context_token_limit = requested_context_size(prompt_tokens.len());
+    let context_token_limit = requested_context_size(prompt_tokens.len(), requested_context_token_limit);
     let batch_capacity = prompt_tokens.len().clamp(1, LOCAL_BATCH_CAPACITY);
+    debug!(
+        model_path = %model_path.display(),
+        prompt_token_count = prompt_tokens.len(),
+        context_token_limit,
+        batch_capacity,
+        "prepared llama.cpp prompt for advisory review"
+    );
+    let threads = recommended_thread_count();
+    info!(
+        model_path = %model_path.display(),
+        llama_threads = threads,
+        llama_threads_batch = threads,
+        prompt_token_count = prompt_tokens.len(),
+        context_token_limit,
+        "configuring llama.cpp thread usage for advisory review"
+    );
     let available_prompt_tokens = context_token_limit
         .checked_sub(LOCAL_MAX_GENERATION_TOKENS)
         .expect("context limit should exceed generation limit");
@@ -772,7 +843,6 @@ fn run_local_inference(
         )));
     }
 
-    let threads = recommended_thread_count();
     let context_params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(context_token_limit as u32))
         .with_n_batch(batch_capacity as u32)
@@ -1150,13 +1220,16 @@ fn recommended_thread_count() -> i32 {
 }
 
 #[cfg(feature = "llm-local")]
-fn requested_context_size(prompt_token_count: usize) -> usize {
+fn requested_context_size(
+    prompt_token_count: usize,
+    requested_context_token_limit: usize,
+) -> usize {
     let requested = prompt_token_count
         .saturating_add(LOCAL_MAX_GENERATION_TOKENS)
         .saturating_add(64);
     requested
         .next_power_of_two()
-        .clamp(1_024, LOCAL_CONTEXT_TOKEN_LIMIT)
+        .clamp(1_024, requested_context_token_limit.max(1_024))
 }
 
 #[cfg(test)]
@@ -1460,7 +1533,7 @@ mod tests {
     #[cfg(feature = "llm-local")]
     #[test]
     fn local_engine_requires_existing_model_file() {
-        let err = LocalLlamaReviewInferenceEngine::new("/tmp/does-not-exist.gguf", 1024)
+        let err = LocalLlamaReviewInferenceEngine::new("/tmp/does-not-exist.gguf", 1024, 4096)
             .expect_err("missing GGUF path should fail");
 
         assert!(err.to_string().contains("does not point to a GGUF file"));

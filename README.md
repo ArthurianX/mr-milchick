@@ -94,6 +94,20 @@ milchick:review:
 
 To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN`, `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP`. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
+For a local Linux-musl artifact, use the checked-in helper instead of calling the target directly:
+
+```bash
+./scripts/build_linux_release.sh --no-default-features --features "gitlab slack-app"
+```
+
+The helper installs the Rust target when needed, then uses the first available build path on the host:
+
+- `x86_64-linux-musl-gcc`
+- `cross`
+- `cargo-zigbuild` plus `zig`
+
+If none of those are available, it stops with a clearer toolchain error instead of the opaque `can't find crate for core` failure.
+
 You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
 
 ## Local LLM Review
@@ -106,6 +120,7 @@ The main runtime knobs are:
 - `MR_MILCHICK_LLM_MODEL_PATH`
 - `MR_MILCHICK_LLM_TIMEOUT_MS`
 - `MR_MILCHICK_LLM_MAX_PATCH_BYTES`
+- `MR_MILCHICK_LLM_CONTEXT_TOKENS`
 
 The full setup, CI shape, model repo pattern, smoke testing, and benchmark workflow live in [docs/local-llm.md](docs/local-llm.md).
 

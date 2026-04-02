@@ -18,6 +18,7 @@ const LLM_ENABLED_ENV: &str = "MR_MILCHICK_LLM_ENABLED";
 const LLM_MODEL_PATH_ENV: &str = "MR_MILCHICK_LLM_MODEL_PATH";
 const LLM_TIMEOUT_MS_ENV: &str = "MR_MILCHICK_LLM_TIMEOUT_MS";
 const LLM_MAX_PATCH_BYTES_ENV: &str = "MR_MILCHICK_LLM_MAX_PATCH_BYTES";
+const LLM_CONTEXT_TOKENS_ENV: &str = "MR_MILCHICK_LLM_CONTEXT_TOKENS";
 const SLACK_ENABLED_ENV: &str = "MR_MILCHICK_SLACK_ENABLED";
 const SLACK_BASE_URL_ENV: &str = "MR_MILCHICK_SLACK_BASE_URL";
 const SLACK_BOT_TOKEN_ENV: &str = "MR_MILCHICK_SLACK_BOT_TOKEN";
@@ -183,12 +184,19 @@ fn load_llm_config() -> Result<LlmConfig> {
         }
         _ => None,
     };
+    let context_tokens = match std::env::var(LLM_CONTEXT_TOKENS_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => {
+            Some(parse_non_zero_usize(LLM_CONTEXT_TOKENS_ENV, &raw)?)
+        }
+        _ => None,
+    };
 
     Ok(LlmConfig {
         enabled,
         model_path,
         timeout_ms,
         max_patch_bytes,
+        context_tokens,
     })
 }
 

@@ -24,6 +24,7 @@ pub struct LlmConfig {
     pub model_path: Option<String>,
     pub timeout_ms: Option<u64>,
     pub max_patch_bytes: Option<usize>,
+    pub context_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +88,8 @@ pub struct FlavorLlmConfig {
     pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub max_patch_bytes: Option<usize>,
+    #[serde(default)]
+    pub context_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
