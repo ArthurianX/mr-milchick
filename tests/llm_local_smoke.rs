@@ -61,6 +61,7 @@ mod llm_local_smoke {
             model_path_from_env(),
             smoke_patch_budget(),
             smoke_context_tokens(),
+            smoke_timeout(),
         )
             .expect("local smoke test engine should initialize from env")
     }

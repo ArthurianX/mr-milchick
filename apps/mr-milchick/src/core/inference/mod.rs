@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 #[cfg(any(feature = "llm-local", test))]
@@ -155,6 +155,9 @@ pub enum ReviewInferenceError {
 
     #[error("analysis failed: {0}")]
     Analysis(String),
+
+    #[error("timed out after {} ms", .0.as_millis())]
+    TimedOut(Duration),
 }
 
 #[async_trait]
@@ -163,6 +166,10 @@ pub trait ReviewInferenceEngine: Send + Sync {
         &self,
         snapshot: &ReviewSnapshot,
     ) -> Result<ReviewInferenceOutcome, ReviewInferenceError>;
+
+    fn handles_internal_timeout(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -199,10 +206,21 @@ pub async fn analyze_with_timeout(
     snapshot: &ReviewSnapshot,
     timeout_duration: Duration,
 ) -> ReviewInferenceOutcome {
-    match timeout(timeout_duration, engine.analyze(snapshot)).await {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(err)) => ReviewInferenceOutcome::failed(err.to_string()),
-        Err(_) => ReviewInferenceOutcome::timed_out(timeout_duration),
+    if engine.handles_internal_timeout() {
+        match engine.analyze(snapshot).await {
+            Ok(outcome) => outcome,
+            Err(ReviewInferenceError::TimedOut(timeout)) => ReviewInferenceOutcome::timed_out(timeout),
+            Err(err) => ReviewInferenceOutcome::failed(err.to_string()),
+        }
+    } else {
+        match timeout(timeout_duration, engine.analyze(snapshot)).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(ReviewInferenceError::TimedOut(timeout))) => {
+                ReviewInferenceOutcome::timed_out(timeout)
+            }
+            Ok(Err(err)) => ReviewInferenceOutcome::failed(err.to_string()),
+            Err(_) => ReviewInferenceOutcome::timed_out(timeout_duration),
+        }
     }
 }
 
@@ -212,6 +230,7 @@ pub struct LocalLlamaReviewInferenceEngine {
     model_path: PathBuf,
     max_patch_bytes: usize,
     context_token_limit: usize,
+    timeout: Duration,
 }
 
 #[cfg(feature = "llm-local")]
@@ -220,6 +239,7 @@ impl LocalLlamaReviewInferenceEngine {
         model_path: impl Into<PathBuf>,
         max_patch_bytes: usize,
         context_token_limit: usize,
+        timeout: Duration,
     ) -> Result<Self, ReviewInferenceError> {
         let model_path = model_path.into();
 
@@ -240,6 +260,7 @@ impl LocalLlamaReviewInferenceEngine {
             model_path,
             max_patch_bytes,
             context_token_limit: context_token_limit.max(1_024),
+            timeout,
         })
     }
 }
@@ -254,6 +275,7 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
         let model_path = self.model_path.clone();
         let max_patch_bytes = self.max_patch_bytes;
         let context_token_limit = self.context_token_limit;
+        let timeout = self.timeout;
         let changed_files = snapshot.changed_files.len();
         let primary_prompt =
             build_local_inference_prompt(snapshot, self.max_patch_bytes, LocalPromptStyle::Primary);
@@ -264,14 +286,22 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
         );
 
         task::spawn_blocking(move || {
+            let deadline = Instant::now() + timeout;
             info!(
                 model_path = %model_path.display(),
                 changed_files,
                 max_patch_bytes,
-                context_token_limit,
+                configured_context_token_limit = context_token_limit,
+                timeout_ms = timeout.as_millis() as u64,
                 "starting llama.cpp advisory review run"
             );
-            match run_local_inference(model_path.as_path(), &primary_prompt, context_token_limit) {
+            match run_local_inference(
+                model_path.as_path(),
+                &primary_prompt,
+                context_token_limit,
+                deadline,
+                timeout,
+            ) {
                 Ok(insights) if !insights.is_empty() => {
                     info!(
                         summary_present = insights.summary.is_some(),
@@ -284,8 +314,13 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
                     warn!(
                         "llama.cpp primary advisory review returned empty structured output; retrying with strict prompt"
                     );
-                    let insights =
-                        run_local_inference(model_path.as_path(), &retry_prompt, context_token_limit)?;
+                    let insights = run_local_inference(
+                        model_path.as_path(),
+                        &retry_prompt,
+                        context_token_limit,
+                        deadline,
+                        timeout,
+                    )?;
                     if insights.is_empty() {
                         warn!(
                             "llama.cpp strict retry also returned empty structured output"
@@ -301,8 +336,13 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
                 }
                 Err(err) if should_retry_local_inference(&err) => {
                     warn!(error = %err, "llama.cpp primary advisory review failed in a retryable way; retrying with strict prompt");
-                    let insights =
-                        run_local_inference(model_path.as_path(), &retry_prompt, context_token_limit)?;
+                    let insights = run_local_inference(
+                        model_path.as_path(),
+                        &retry_prompt,
+                        context_token_limit,
+                        deadline,
+                        timeout,
+                    )?;
                     if insights.is_empty() {
                         warn!(
                             "llama.cpp strict retry finished but still returned empty structured output"
@@ -326,6 +366,10 @@ impl ReviewInferenceEngine for LocalLlamaReviewInferenceEngine {
         .map_err(|err| {
             ReviewInferenceError::Analysis(format!("local inference task failed: {err}"))
         })?
+    }
+
+    fn handles_internal_timeout(&self) -> bool {
+        true
     }
 }
 
@@ -787,12 +831,16 @@ fn run_local_inference(
     model_path: &Path,
     base_prompt: &str,
     requested_context_token_limit: usize,
+    deadline: Instant,
+    timeout: Duration,
 ) -> Result<ReviewInsights, ReviewInferenceError> {
+    ensure_within_deadline(deadline, timeout)?;
     let mut backend = LlamaBackend::init().map_err(|err| {
         ReviewInferenceError::Analysis(format!("failed to initialize llama backend: {err}"))
     })?;
     backend.void_logs();
 
+    ensure_within_deadline(deadline, timeout)?;
     let model_params = build_local_model_params()?;
     let model = LlamaModel::load_from_file(&backend, model_path, &model_params).map_err(|err| {
         ReviewInferenceError::Analysis(format!(
@@ -801,6 +849,7 @@ fn run_local_inference(
         ))
     })?;
 
+    ensure_within_deadline(deadline, timeout)?;
     let rendered_prompt = render_prompt_for_model(&model, base_prompt);
     let prompt = rendered_prompt.prompt;
 
@@ -854,7 +903,7 @@ fn run_local_inference(
         ReviewInferenceError::Analysis(format!("failed to create llama context: {err}"))
     })?;
 
-    decode_prompt_tokens(&mut context, &prompt_tokens, batch_capacity)?;
+    decode_prompt_tokens(&mut context, &prompt_tokens, batch_capacity, deadline, timeout)?;
 
     let mut sampler = build_local_sampler(&model);
     sampler.accept_many(prompt_tokens.iter());
@@ -863,6 +912,7 @@ fn run_local_inference(
     let mut position = prompt_tokens.len();
 
     for _ in 0..LOCAL_MAX_GENERATION_TOKENS {
+        ensure_within_deadline(deadline, timeout)?;
         let token = sampler.sample(&context, -1);
         if model.is_eog_token(token) {
             break;
@@ -1149,11 +1199,14 @@ fn decode_prompt_tokens(
     context: &mut LlamaContext<'_>,
     prompt_tokens: &[llama_cpp_2::token::LlamaToken],
     batch_capacity: usize,
+    deadline: Instant,
+    timeout: Duration,
 ) -> Result<(), ReviewInferenceError> {
     let total_chunks = prompt_tokens.chunks(batch_capacity).len();
     let mut absolute_position = 0usize;
 
     for (chunk_index, chunk) in prompt_tokens.chunks(batch_capacity).enumerate() {
+        ensure_within_deadline(deadline, timeout)?;
         let is_last_chunk = chunk_index + 1 == total_chunks;
         let mut batch = LlamaBatch::new(chunk.len(), 1);
 
@@ -1176,6 +1229,18 @@ fn decode_prompt_tokens(
     }
 
     Ok(())
+}
+
+#[cfg(feature = "llm-local")]
+fn ensure_within_deadline(
+    deadline: Instant,
+    timeout: Duration,
+) -> Result<(), ReviewInferenceError> {
+    if Instant::now() >= deadline {
+        Err(ReviewInferenceError::TimedOut(timeout))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(feature = "llm-local")]
@@ -1533,8 +1598,13 @@ mod tests {
     #[cfg(feature = "llm-local")]
     #[test]
     fn local_engine_requires_existing_model_file() {
-        let err = LocalLlamaReviewInferenceEngine::new("/tmp/does-not-exist.gguf", 1024, 4096)
-            .expect_err("missing GGUF path should fail");
+        let err = LocalLlamaReviewInferenceEngine::new(
+            "/tmp/does-not-exist.gguf",
+            1024,
+            4096,
+            Duration::from_secs(1),
+        )
+        .expect_err("missing GGUF path should fail");
 
         assert!(err.to_string().contains("does not point to a GGUF file"));
     }

@@ -598,6 +598,7 @@ fn build_inference_connector(
                     model_path,
                     llm.max_patch_bytes,
                     llm.context_tokens,
+                    timeout,
                 )?),
                 timeout,
             }),
