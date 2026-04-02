@@ -38,14 +38,13 @@ if ((${#feature_args[@]} > 0)); then
   cargo_args+=(--features "${feature_args[*]}")
 fi
 
-if ! command -v rustup >/dev/null 2>&1; then
-  echo "error: rustup is required to install the ${target} standard library" >&2
-  exit 1
-fi
-
-if ! rustup target list --installed | grep -qx "${target}"; then
-  echo "info: installing Rust target ${target}" >&2
-  rustup target add "${target}"
+if command -v rustup >/dev/null 2>&1; then
+  if ! rustup target list --installed | grep -qx "${target}"; then
+    echo "info: installing Rust target ${target}" >&2
+    rustup target add "${target}"
+  fi
+else
+  echo "info: rustup not found; assuming ${target} support is already present" >&2
 fi
 
 if command -v x86_64-linux-musl-gcc >/dev/null 2>&1 \
