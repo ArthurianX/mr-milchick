@@ -33,7 +33,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-llama-cpp-2 = { version = "=0.1.141", features = ["sampler"], optional = true }
+llama-cpp-2 = { version = "=0.1.141", default-features = false, features = ["sampler"], optional = true }
 
 [features]
 default = ["github"]

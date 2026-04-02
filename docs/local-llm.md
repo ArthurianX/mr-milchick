@@ -27,6 +27,8 @@ The current local inference path also includes a few protective behaviors:
 
 ## Build And Runtime Requirements
 
+Local LLM builds need a native toolchain in addition to Rust because `llama-cpp-sys-2` runs `bindgen` and builds `llama.cpp` from source. On Debian-based CI runners that usually means `clang`, `libclang-dev`, `llvm-dev`, `cmake`, `pkg-config`, and any target toolchain packages such as `musl-tools`.
+
 Build the binary with `llm-local` enabled:
 
 ```bash
