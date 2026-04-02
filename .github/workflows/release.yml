@@ -41,12 +41,12 @@ jobs:
       matrix:
         include:
           - artifact_name: gitlab-slack
-            features: "gitlab slack-app slack-workflow"
+            features: "gitlab slack-app slack-workflow llm-local"
             include_flavor: true
             flavor_source: "mr-milchick.toml"
             flavor_asset: "mr-milchick-gitlab.toml"
           - artifact_name: github-slack
-            features: "github slack-app slack-workflow"
+            features: "github slack-app slack-workflow llm-local"
             include_flavor: true
             flavor_source: "mr-milchick.github.toml"
             flavor_asset: "mr-milchick-github.toml"
