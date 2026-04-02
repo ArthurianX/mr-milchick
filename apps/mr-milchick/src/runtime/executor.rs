@@ -1,3 +1,4 @@
+use crate::core::inference::ReviewInferenceOutcome;
 use crate::core::model::{
     NotificationDeliveryReport, NotificationMessage, ReviewAction, ReviewActionReport,
     ReviewPlatformKind,
@@ -42,6 +43,14 @@ pub trait PlatformConnector: Send + Sync {
 }
 
 #[async_trait]
+pub trait ReviewInferenceConnector: Send + Sync {
+    async fn analyze(
+        &self,
+        snapshot: &crate::core::model::ReviewSnapshot,
+    ) -> ConnectorResult<ReviewInferenceOutcome>;
+}
+
+#[async_trait]
 pub trait NotificationSink: Send + Sync {
     fn kind(&self) -> crate::core::model::NotificationSinkKind;
 
@@ -52,6 +61,7 @@ pub trait NotificationSink: Send + Sync {
 }
 
 pub use PlatformConnector as ReviewConnector;
+pub use ReviewInferenceConnector as InferenceConnector;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionReport {

@@ -38,6 +38,7 @@ pub struct GitHubChangedFile {
     pub status: String,
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

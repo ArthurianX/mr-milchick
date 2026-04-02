@@ -167,9 +167,11 @@ mod tests {
                 .collect(),
             changed_files: vec![ChangedFile {
                 path: "apps/frontend/button.tsx".to_string(),
+                previous_path: None,
                 change_type: ChangeType::Modified,
                 additions: None,
                 deletions: None,
+                patch: None,
             }],
             labels: vec![],
             is_draft,

@@ -260,9 +260,11 @@ mod tests {
                 .iter()
                 .map(|path| ChangedFile {
                     path: path.to_string(),
+                    previous_path: None,
                     change_type: ChangeType::Modified,
                     additions: None,
                     deletions: None,
+                    patch: None,
                 })
                 .collect(),
             labels: vec![],

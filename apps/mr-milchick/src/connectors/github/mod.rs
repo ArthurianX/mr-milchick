@@ -200,9 +200,11 @@ fn map_snapshot(
             .into_iter()
             .map(|file| ChangedFile {
                 path: file.path,
+                previous_path: file.previous_path,
                 change_type: github_change_type(&file.status),
                 additions: file.additions,
                 deletions: file.deletions,
+                patch: file.patch,
             })
             .collect(),
         labels: if labels.is_empty() {

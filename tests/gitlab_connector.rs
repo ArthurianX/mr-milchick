@@ -39,6 +39,14 @@ async fn loads_neutral_snapshot_from_gitlab() {
     assert_eq!(snapshot.author.username, "arthur");
     assert_eq!(snapshot.changed_files.len(), 1);
     assert_eq!(snapshot.changed_files[0].path, "apps/frontend/button.tsx");
+    assert_eq!(
+        snapshot.changed_files[0].previous_path.as_deref(),
+        Some("apps/frontend/button_old.tsx")
+    );
+    assert_eq!(
+        snapshot.changed_files[0].patch.as_deref(),
+        Some("@@ -1,2 +1,2 @@")
+    );
 }
 
 #[tokio::test]

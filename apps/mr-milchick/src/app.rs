@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::warn;
+use std::time::Duration;
+use tracing::{info, warn};
 
 #[cfg(feature = "github")]
 use crate::connectors::github::{GitHubPlatformConnector, render_github_markdown};
@@ -21,6 +22,11 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
+#[cfg(feature = "llm-local")]
+use crate::core::inference::LocalLlamaReviewInferenceEngine;
+use crate::core::inference::{
+    NoopReviewInferenceEngine, ReviewInferenceEngine, ReviewInferenceOutcome, analyze_with_timeout,
+};
 use crate::core::message_templates::{
     build_notification_template_context, build_summary_template_context,
     notification_template_variant, render_review_summary, render_slack_app_notification,
@@ -40,7 +46,9 @@ use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_
 use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
 use crate::context::builder::build_ci_context;
 use crate::fixture::load_review_fixture;
-use crate::runtime::{ConnectorError, NotificationSink, PlatformConnector};
+use crate::runtime::{
+    ConnectorError, NotificationSink, PlatformConnector, ReviewInferenceConnector,
+};
 
 #[cfg(all(feature = "gitlab", feature = "github"))]
 compile_error!("Exactly one platform connector feature must be enabled.");
@@ -56,6 +64,24 @@ struct AppConfigContext {
 
 #[derive(Debug)]
 struct FixturePlatformConnector;
+
+const DEFAULT_LLM_TIMEOUT_MS: u64 = 15_000;
+const DEFAULT_LLM_MAX_PATCH_BYTES: usize = 32 * 1024;
+const DEFAULT_LLM_CONTEXT_TOKENS: usize = 4_096;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveLlmConfig {
+    enabled: bool,
+    model_path: Option<String>,
+    timeout_ms: u64,
+    max_patch_bytes: usize,
+    context_tokens: usize,
+}
+
+struct ReviewInferenceConnectorAdapter {
+    engine: Box<dyn ReviewInferenceEngine>,
+    timeout: Duration,
+}
 
 fn load_app_config_context() -> Result<AppConfigContext> {
     let runtime = load_config()?;
@@ -121,6 +147,16 @@ impl PlatformConnector for FixturePlatformConnector {
     }
 }
 
+#[async_trait::async_trait]
+impl ReviewInferenceConnector for ReviewInferenceConnectorAdapter {
+    async fn analyze(
+        &self,
+        snapshot: &crate::core::model::ReviewSnapshot,
+    ) -> std::result::Result<ReviewInferenceOutcome, ConnectorError> {
+        Ok(analyze_with_timeout(self.engine.as_ref(), snapshot, self.timeout).await)
+    }
+}
+
 fn compiled_platform_kind() -> ReviewPlatformKind {
     #[cfg(feature = "gitlab")]
     {
@@ -182,7 +218,10 @@ pub async fn run_mode(
     let fixture_mode = fixture_path.is_some();
     let mut fixture_notification_variant = fixture_variant.map(map_fixture_variant_arg);
 
-    let (ctx, snapshot, mut outcome);
+    let ctx;
+    let snapshot;
+    let mut outcome;
+    let wiring;
     if let Some(fixture_path) = fixture_path {
         let fixture = load_review_fixture(fixture_path)?;
         fixture_notification_variant =
@@ -190,6 +229,7 @@ pub async fn run_mode(
         ctx = fixture.to_ci_context()?;
         snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
         outcome = fixture.to_rule_outcome()?;
+        wiring = build_fixture_runtime_wiring(&app_config, flavor.as_ref())?;
     } else {
         ctx = build_ci_context()?;
         println!("{}", selector.select(ToneCategory::Observation, &ctx));
@@ -200,14 +240,15 @@ pub async fn run_mode(
             return Ok(());
         }
 
-        let wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
-        snapshot = wiring.platform_connector.load_snapshot().await?;
+        let live_wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+        snapshot = live_wiring.platform_connector.load_snapshot().await?;
         outcome = enrich_with_reviewer_assignment(
             evaluate_rules(&ctx),
             &snapshot,
             &app_config.routing_config,
             &app_config.codeowners,
         );
+        wiring = live_wiring;
     }
 
     if fixture_mode {
@@ -215,16 +256,40 @@ pub async fn run_mode(
         print_compiled_capabilities();
     }
 
-    let wiring = if fixture_mode {
-        build_fixture_runtime_wiring(&app_config, flavor.as_ref())?
-    } else {
-        build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?
-    };
     let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
+    info!(
+        inference_available = wiring.capabilities.inference_available,
+        changed_files = snapshot.changed_file_count(),
+        "starting advisory local review analysis"
+    );
+    let inference_outcome = match wiring.analyze_review(&snapshot).await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            warn!("local review inference failed: {err}");
+            ReviewInferenceOutcome::failed(err.to_string())
+        }
+    };
+    if inference_outcome.insights.is_empty() {
+        info!(
+            status = ?inference_outcome.status,
+            detail = inference_outcome.detail.as_deref().unwrap_or(""),
+            "advisory local review finished without structured suggestions"
+        );
+    } else {
+        info!(
+            status = ?inference_outcome.status,
+            summary_present = inference_outcome.insights.summary.is_some(),
+            recommendation_count = inference_outcome.insights.recommendations.len(),
+            "advisory local review produced structured suggestions"
+        );
+    }
+    if llm_trace_enabled() {
+        print_inference_details(&inference_outcome);
+    }
 
     let summary = render_review_summary(
         &template_catalog,
-        &build_summary_template_context(&outcome, &snapshot, &selector, &ctx),
+        &build_summary_template_context(&outcome, &snapshot, &inference_outcome, &selector, &ctx),
         compiled_platform_kind(),
     );
     outcome.action_plan.push(ReviewAction::UpsertSummary {
@@ -242,6 +307,7 @@ pub async fn run_mode(
                     &template_catalog,
                     &selector,
                     &ctx,
+                    &inference_outcome,
                     &preview_sink_kinds,
                     fixture_notification_variant,
                 );
@@ -266,12 +332,14 @@ pub async fn run_mode(
             }
             println!("---");
             print_snapshot_details(&snapshot);
+            print_inference_details(&inference_outcome);
             let notifications = build_notifications(
                 &outcome,
                 &snapshot,
                 &template_catalog,
                 &selector,
                 &ctx,
+                &inference_outcome,
                 &preview_sink_kinds,
                 fixture_notification_variant,
             );
@@ -301,6 +369,7 @@ pub async fn run_mode(
                 &template_catalog,
                 &selector,
                 &ctx,
+                &inference_outcome,
                 &preview_sink_kinds,
                 fixture_notification_variant,
             );
@@ -356,8 +425,13 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     ));
 
+    let (inference_connector, inference_available) =
+        build_inference_connector(&app_config.runtime, flavor)?;
+
     Ok(RuntimeWiring::new(
         platform_connector,
+        inference_connector,
+        inference_available,
         build_notification_sinks(app_config, flavor),
     ))
 }
@@ -367,8 +441,13 @@ fn build_fixture_runtime_wiring(
     flavor: Option<&FlavorConfig>,
 ) -> Result<RuntimeWiring> {
     validate_flavor(flavor)?;
+    let (inference_connector, inference_available) =
+        build_inference_connector(&app_config.runtime, flavor)?;
+
     Ok(RuntimeWiring::new(
         Box::new(FixturePlatformConnector),
+        inference_connector,
+        inference_available,
         build_notification_sinks(app_config, flavor),
     ))
 }
@@ -476,6 +555,107 @@ fn resolve_notification_policy(
         .unwrap_or(NotificationPolicy::Always)
 }
 
+fn build_inference_connector(
+    runtime: &RuntimeConfig,
+    flavor: Option<&FlavorConfig>,
+) -> Result<(Box<dyn ReviewInferenceConnector>, bool)> {
+    let llm = resolve_llm_config(runtime, flavor);
+    let timeout = Duration::from_millis(llm.timeout_ms);
+
+    info!(
+        llm_enabled = llm.enabled,
+        llm_model_path = llm.model_path.as_deref().unwrap_or(""),
+        llm_timeout_ms = llm.timeout_ms,
+        llm_max_patch_bytes = llm.max_patch_bytes,
+        llm_context_tokens = llm.context_tokens,
+        "resolved advisory local review configuration"
+    );
+
+    if !llm.enabled {
+        info!("advisory local review is disabled by configuration");
+        return Ok((
+            Box::new(ReviewInferenceConnectorAdapter {
+                engine: Box::new(NoopReviewInferenceEngine::disabled(
+                    "LLM review recommendations are disabled",
+                )),
+                timeout,
+            }),
+            false,
+        ));
+    }
+
+    let model_path = llm
+        .model_path
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("LLM review recommendations require a model path"))?;
+
+    #[cfg(feature = "llm-local")]
+    {
+        info!("using compiled llama.cpp local review backend");
+        return Ok((
+            Box::new(ReviewInferenceConnectorAdapter {
+                engine: Box::new(LocalLlamaReviewInferenceEngine::new(
+                    model_path,
+                    llm.max_patch_bytes,
+                    llm.context_tokens,
+                )?),
+                timeout,
+            }),
+            true,
+        ));
+    }
+
+    #[cfg(not(feature = "llm-local"))]
+    {
+        warn!("LLM review was configured but local backend support is not compiled into this binary");
+        Ok((
+            Box::new(ReviewInferenceConnectorAdapter {
+                engine: Box::new(NoopReviewInferenceEngine::unavailable(format!(
+                    "LLM backend support is not compiled in for model '{}'",
+                    model_path
+                ))),
+                timeout,
+            }),
+            false,
+        ))
+    }
+}
+
+fn resolve_llm_config(
+    runtime: &RuntimeConfig,
+    flavor: Option<&FlavorConfig>,
+) -> EffectiveLlmConfig {
+    let flavor = flavor.and_then(|config| config.llm.as_ref());
+
+    EffectiveLlmConfig {
+        enabled: runtime
+            .llm
+            .enabled
+            .or_else(|| flavor.and_then(|config| config.enabled))
+            .unwrap_or(false),
+        model_path: runtime
+            .llm
+            .model_path
+            .clone()
+            .or_else(|| flavor.and_then(|config| config.model_path.clone())),
+        timeout_ms: runtime
+            .llm
+            .timeout_ms
+            .or_else(|| flavor.and_then(|config| config.timeout_ms))
+            .unwrap_or(DEFAULT_LLM_TIMEOUT_MS),
+        max_patch_bytes: runtime
+            .llm
+            .max_patch_bytes
+            .or_else(|| flavor.and_then(|config| config.max_patch_bytes))
+            .unwrap_or(DEFAULT_LLM_MAX_PATCH_BYTES),
+        context_tokens: runtime
+            .llm
+            .context_tokens
+            .or_else(|| flavor.and_then(|config| config.context_tokens))
+            .unwrap_or(DEFAULT_LLM_CONTEXT_TOKENS),
+    }
+}
+
 #[allow(dead_code)]
 fn resolve_slack_app_user_map(
     runtime: &RuntimeConfig,
@@ -512,6 +692,10 @@ fn print_compiled_capabilities() {
         "- platform connector: {}",
         compiled_platform_kind().as_str()
     );
+    #[cfg(feature = "llm-local")]
+    println!("- advisory local review: llama.cpp");
+    #[cfg(not(feature = "llm-local"))]
+    println!("- advisory local review: not compiled");
     #[allow(unused_mut)]
     let mut sinks: Vec<&str> = Vec::new();
     #[cfg(feature = "slack-app")]
@@ -646,6 +830,7 @@ fn build_notifications(
     template_catalog: &crate::core::message_templates::TemplateCatalog,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
+    inference_outcome: &ReviewInferenceOutcome,
     sink_kinds: &[NotificationSinkKind],
     variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
@@ -659,6 +844,7 @@ fn build_notifications(
     let notification_context = build_notification_template_context(
         outcome,
         snapshot,
+        inference_outcome,
         selector,
         ctx,
         variant,
@@ -812,6 +998,33 @@ fn print_snapshot_details(snapshot: &crate::core::model::ReviewSnapshot) {
     println!("- [ChangedFiles] {}", snapshot.changed_file_count());
 }
 
+fn print_inference_details(inference_outcome: &ReviewInferenceOutcome) {
+    println!("Local review recommendations:");
+    println!("- [Status] {:?}", inference_outcome.status);
+    if let Some(detail) = &inference_outcome.detail {
+        println!("- [Detail] {}", detail);
+    }
+    if let Some(summary) = &inference_outcome.insights.summary {
+        println!("- [Summary] {}", summary);
+    }
+    if inference_outcome.insights.recommendations.is_empty() {
+        println!("- [Recommendations] none");
+    } else {
+        for recommendation in &inference_outcome.insights.recommendations {
+            println!(
+                "- [Recommendation {:?}] {}",
+                recommendation.category, recommendation.message
+            );
+        }
+    }
+}
+
+fn llm_trace_enabled() -> bool {
+    std::env::var("MR_MILCHICK_LLM_TRACE")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
 fn print_codeowners_details(
     snapshot: &crate::core::model::ReviewSnapshot,
     app_config: &AppConfigContext,
@@ -881,6 +1094,9 @@ mod tests {
         BranchInfo, BranchName, CiContext, PipelineInfo, PipelineSource, ProjectKey,
         ReviewContextRef, ReviewId,
     };
+    use crate::core::inference::{
+        RecommendationCategory, ReviewInferenceOutcome, ReviewInsights, ReviewRecommendation,
+    };
     use crate::core::model::{
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
     };
@@ -934,15 +1150,29 @@ mod tests {
                 .collect(),
             changed_files: vec![ChangedFile {
                 path: "apps/frontend/button.tsx".to_string(),
+                previous_path: None,
                 change_type: ChangeType::Modified,
                 additions: None,
                 deletions: None,
+                patch: None,
             }],
             labels: vec![],
             is_draft: false,
             default_branch: Some("develop".to_string()),
             metadata: ReviewMetadata::default(),
         }
+    }
+
+    fn sample_inference_outcome() -> ReviewInferenceOutcome {
+        ReviewInferenceOutcome::ready(ReviewInsights {
+            summary: Some("The change adds advisory local review suggestions.".to_string()),
+            recommendations: vec![ReviewRecommendation {
+                category: RecommendationCategory::Risk,
+                message:
+                    "Double-check that notification sinks render recommendations consistently."
+                        .to_string(),
+            }],
+        })
     }
 
     #[test]
@@ -987,6 +1217,7 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &sample_inference_outcome(),
             &[NotificationSinkKind::SlackApp],
             None,
         );
@@ -996,6 +1227,11 @@ mod tests {
             notifications[0]
                 .body
                 .contains("_Assigned reviewers_ *@principal-reviewer* *@bob*")
+        );
+        assert!(
+            notifications[0].body.contains(
+                "Double-check that notification sinks render recommendations consistently."
+            )
         );
     }
 
@@ -1012,6 +1248,7 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
+            &sample_inference_outcome(),
             &[NotificationSinkKind::SlackWorkflow],
             None,
         );
@@ -1021,6 +1258,11 @@ mod tests {
         assert!(notifications[0]
             .body
             .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
+        assert!(
+            notifications[0]
+                .body
+                .contains("The change adds advisory local review suggestions.")
+        );
     }
 
     #[test]
@@ -1033,6 +1275,13 @@ mod tests {
             codeowners: CodeownersConfig {
                 enabled: true,
                 path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1053,6 +1302,7 @@ mod tests {
             slack_app: Some(FlavorSlackAppConfig {
                 user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
             }),
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1071,6 +1321,13 @@ mod tests {
             codeowners: CodeownersConfig {
                 enabled: true,
                 path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1094,6 +1351,7 @@ mod tests {
                     ("bob".to_string(), "".to_string()),
                 ]),
             }),
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1113,6 +1371,13 @@ mod tests {
             codeowners: CodeownersConfig {
                 enabled: true,
                 path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+                context_tokens: None,
             },
             slack: SlackConfig {
                 enabled: true,
@@ -1142,6 +1407,13 @@ mod tests {
                 enabled: true,
                 path: None,
             },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+                context_tokens: None,
+            },
             slack: SlackConfig {
                 enabled: true,
                 base_url: "https://slack.com/api".to_string(),
@@ -1159,6 +1431,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1179,6 +1452,13 @@ mod tests {
                 enabled: true,
                 path: None,
             },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+                context_tokens: None,
+            },
             slack: SlackConfig {
                 enabled: true,
                 base_url: "https://slack.com/api".to_string(),
@@ -1196,6 +1476,7 @@ mod tests {
             notification_policy: Some(NotificationPolicy::OnAppliedAction),
             notifications: Vec::new(),
             slack_app: None,
+            llm: None,
             templates: crate::config::model::FlavorTemplatesConfig::default(),
         };
 
@@ -1203,5 +1484,113 @@ mod tests {
             resolve_notification_policy(&runtime, Some(&flavor)),
             NotificationPolicy::Always
         );
+    }
+
+    #[test]
+    fn llm_resolution_falls_back_to_flavor_when_runtime_has_no_overrides() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: None,
+                model_path: None,
+                timeout_ms: None,
+                max_patch_bytes: None,
+                context_tokens: None,
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: None,
+        };
+        let flavor = FlavorConfig {
+            platform_connector: FlavorPlatformConnector {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: None,
+            notifications: Vec::new(),
+            slack_app: None,
+            llm: Some(crate::config::model::FlavorLlmConfig {
+                enabled: Some(true),
+                model_path: Some("/models/review.gguf".to_string()),
+                timeout_ms: Some(22_000),
+                max_patch_bytes: Some(48_000),
+                context_tokens: Some(8_192),
+            }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
+        };
+
+        let resolved = resolve_llm_config(&runtime, Some(&flavor));
+
+        assert!(resolved.enabled);
+        assert_eq!(resolved.model_path.as_deref(), Some("/models/review.gguf"));
+        assert_eq!(resolved.timeout_ms, 22_000);
+        assert_eq!(resolved.max_patch_bytes, 48_000);
+        assert_eq!(resolved.context_tokens, 8_192);
+    }
+
+    #[test]
+    fn llm_resolution_prefers_runtime_overrides_over_flavor_values() {
+        let runtime = RuntimeConfig {
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            llm: crate::config::model::LlmConfig {
+                enabled: Some(false),
+                model_path: Some("/env/model.gguf".to_string()),
+                timeout_ms: Some(5_000),
+                max_patch_bytes: Some(16_000),
+                context_tokens: Some(12_288),
+            },
+            slack: SlackConfig {
+                enabled: true,
+                base_url: "https://slack.com/api".to_string(),
+                bot_token: None,
+                webhook_url: None,
+                channel: None,
+                user_map: BTreeMap::new(),
+            },
+            notification_policy: None,
+        };
+        let flavor = FlavorConfig {
+            platform_connector: FlavorPlatformConnector {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: None,
+            notifications: Vec::new(),
+            slack_app: None,
+            llm: Some(crate::config::model::FlavorLlmConfig {
+                enabled: Some(true),
+                model_path: Some("/flavor/model.gguf".to_string()),
+                timeout_ms: Some(22_000),
+                max_patch_bytes: Some(48_000),
+                context_tokens: Some(8_192),
+            }),
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
+        };
+
+        let resolved = resolve_llm_config(&runtime, Some(&flavor));
+
+        assert!(!resolved.enabled);
+        assert_eq!(resolved.model_path.as_deref(), Some("/env/model.gguf"));
+        assert_eq!(resolved.timeout_ms, 5_000);
+        assert_eq!(resolved.max_patch_bytes, 16_000);
+        assert_eq!(resolved.context_tokens, 12_288);
     }
 }

@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub struct RuntimeConfig {
     pub reviewers: ReviewerConfig,
     pub codeowners: CodeownersConfig,
+    pub llm: LlmConfig,
     pub slack: SlackConfig,
     pub notification_policy: Option<NotificationPolicy>,
 }
@@ -15,6 +16,15 @@ pub struct RuntimeConfig {
 pub struct CodeownersConfig {
     pub enabled: bool,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmConfig {
+    pub enabled: Option<bool>,
+    pub model_path: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub max_patch_bytes: Option<usize>,
+    pub context_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +55,8 @@ pub struct FlavorConfig {
     #[serde(default)]
     pub slack_app: Option<FlavorSlackAppConfig>,
     #[serde(default)]
+    pub llm: Option<FlavorLlmConfig>,
+    #[serde(default)]
     pub templates: FlavorTemplatesConfig,
 }
 
@@ -64,6 +76,20 @@ pub struct FlavorNotification {
 pub struct FlavorSlackAppConfig {
     #[serde(default)]
     pub user_map: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct FlavorLlmConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub max_patch_bytes: Option<usize>,
+    #[serde(default)]
+    pub context_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

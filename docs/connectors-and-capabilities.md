@@ -80,6 +80,20 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
+For local Linux-musl builds, prefer the repo helper so target installation and cross-toolchain checks happen in one place:
+
+```bash
+./scripts/build_linux_release.sh --no-default-features --features gitlab
+```
+
+The helper supports three local paths:
+
+- `x86_64-linux-musl-gcc`
+- `cross`
+- `cargo-zigbuild` plus `zig`
+
+Without one of those available, crates with native code such as `ring` can still fail later even after the Rust target itself has been added.
+
 ## Capability Rules
 
 The runtime enforces these invariants:
@@ -117,7 +131,7 @@ Use the version command in CI logs:
 Platform-only output shape:
 
 ```text
-mr-milchick 2.0.4 (<git-sha> <build-date>)
+mr-milchick 3.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - notification sinks: none
@@ -126,7 +140,7 @@ Compiled capabilities:
 GitHub default build shape:
 
 ```text
-mr-milchick 2.0.4 (<git-sha> <build-date>)
+mr-milchick 3.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: github
 - notification sinks: none
@@ -135,7 +149,7 @@ Compiled capabilities:
 GitLab plus Slack output shape:
 
 ```text
-mr-milchick 2.0.4 (<git-sha> <build-date>)
+mr-milchick 3.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - notification sinks: slack-app, slack-workflow

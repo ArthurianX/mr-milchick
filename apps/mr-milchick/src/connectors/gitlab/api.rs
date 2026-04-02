@@ -37,6 +37,7 @@ pub struct GitLabChangedFile {
     pub is_new: bool,
     pub is_renamed: bool,
     pub is_deleted: bool,
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

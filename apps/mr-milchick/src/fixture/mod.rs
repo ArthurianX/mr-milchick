@@ -60,12 +60,16 @@ pub struct FixtureMergeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FixtureChangedFile {
     pub path: String,
+    #[serde(default)]
+    pub previous_path: Option<String>,
     #[serde(default = "default_change_type")]
     pub change_type: String,
     #[serde(default)]
     pub additions: Option<u32>,
     #[serde(default)]
     pub deletions: Option<u32>,
+    #[serde(default)]
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -199,9 +203,11 @@ impl FixtureChangedFile {
     fn to_changed_file(&self) -> Result<ChangedFile> {
         Ok(ChangedFile {
             path: self.path.clone(),
+            previous_path: self.previous_path.clone(),
             change_type: parse_change_type(&self.change_type)?,
             additions: self.additions,
             deletions: self.deletions,
+            patch: self.patch.clone(),
         })
     }
 }
@@ -337,6 +343,8 @@ existing_reviewers = ["principal-reviewer"]
 
 [[merge_request.changed_files]]
 path = "apps/frontend/button.tsx"
+previous_path = "apps/frontend/button_old.tsx"
+patch = "@@ -1,2 +1,2 @@"
 
 [[findings]]
 severity = "warning"
@@ -358,6 +366,14 @@ reviewers = ["bob"]
         assert!(ctx.is_review_pipeline());
         assert_eq!(snapshot.review_ref.review_id, "3995");
         assert_eq!(snapshot.changed_files.len(), 1);
+        assert_eq!(
+            snapshot.changed_files[0].previous_path.as_deref(),
+            Some("apps/frontend/button_old.tsx")
+        );
+        assert_eq!(
+            snapshot.changed_files[0].patch.as_deref(),
+            Some("@@ -1,2 +1,2 @@")
+        );
         assert_eq!(outcome.findings.len(), 1);
         assert_eq!(outcome.action_plan.actions.len(), 1);
         assert_eq!(

@@ -39,6 +39,11 @@ async fn loads_neutral_snapshot_from_github() {
     assert_eq!(snapshot.author.username, "arthur");
     assert_eq!(snapshot.changed_files.len(), 1);
     assert_eq!(snapshot.changed_files[0].path, "apps/frontend/button.tsx");
+    assert_eq!(snapshot.changed_files[0].previous_path, None);
+    assert_eq!(
+        snapshot.changed_files[0].patch.as_deref(),
+        Some("@@ -1,2 +1,2 @@")
+    );
     assert_eq!(snapshot.labels, vec!["frontend".to_string()]);
 }
 

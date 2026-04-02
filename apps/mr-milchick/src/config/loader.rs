@@ -4,8 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::config::model::{
-    CodeownersConfig, FlavorConfig, NotificationPolicy, ReviewerConfig, ReviewerDefinition,
-    RuntimeConfig, SlackConfig,
+    CodeownersConfig, FlavorConfig, LlmConfig, NotificationPolicy, ReviewerConfig,
+    ReviewerDefinition, RuntimeConfig, SlackConfig,
 };
 use crate::core::domain::code_area::CodeArea;
 
@@ -14,6 +14,11 @@ const REVIEWERS_ENV: &str = "MR_MILCHICK_REVIEWERS";
 const MAX_REVIEWERS_ENV: &str = "MR_MILCHICK_MAX_REVIEWERS";
 const CODEOWNERS_ENABLED_ENV: &str = "MR_MILCHICK_CODEOWNERS_ENABLED";
 const CODEOWNERS_PATH_ENV: &str = "MR_MILCHICK_CODEOWNERS_PATH";
+const LLM_ENABLED_ENV: &str = "MR_MILCHICK_LLM_ENABLED";
+const LLM_MODEL_PATH_ENV: &str = "MR_MILCHICK_LLM_MODEL_PATH";
+const LLM_TIMEOUT_MS_ENV: &str = "MR_MILCHICK_LLM_TIMEOUT_MS";
+const LLM_MAX_PATCH_BYTES_ENV: &str = "MR_MILCHICK_LLM_MAX_PATCH_BYTES";
+const LLM_CONTEXT_TOKENS_ENV: &str = "MR_MILCHICK_LLM_CONTEXT_TOKENS";
 const SLACK_ENABLED_ENV: &str = "MR_MILCHICK_SLACK_ENABLED";
 const SLACK_BASE_URL_ENV: &str = "MR_MILCHICK_SLACK_BASE_URL";
 const SLACK_BOT_TOKEN_ENV: &str = "MR_MILCHICK_SLACK_BOT_TOKEN";
@@ -45,6 +50,7 @@ pub fn load_config() -> Result<RuntimeConfig> {
     Ok(RuntimeConfig {
         reviewers: load_reviewers_config()?,
         codeowners: load_codeowners_config()?,
+        llm: load_llm_config()?,
         slack: load_slack_config()?,
         notification_policy: load_notification_policy_override()?,
     })
@@ -157,6 +163,43 @@ fn load_slack_config() -> Result<SlackConfig> {
     })
 }
 
+fn load_llm_config() -> Result<LlmConfig> {
+    let enabled = match std::env::var(LLM_ENABLED_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => Some(parse_bool_flag(LLM_ENABLED_ENV, &raw)?),
+        _ => None,
+    };
+
+    let model_path = std::env::var(LLM_MODEL_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let timeout_ms = match std::env::var(LLM_TIMEOUT_MS_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => Some(parse_non_zero_u64(LLM_TIMEOUT_MS_ENV, &raw)?),
+        _ => None,
+    };
+    let max_patch_bytes = match std::env::var(LLM_MAX_PATCH_BYTES_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => {
+            Some(parse_non_zero_usize(LLM_MAX_PATCH_BYTES_ENV, &raw)?)
+        }
+        _ => None,
+    };
+    let context_tokens = match std::env::var(LLM_CONTEXT_TOKENS_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => {
+            Some(parse_non_zero_usize(LLM_CONTEXT_TOKENS_ENV, &raw)?)
+        }
+        _ => None,
+    };
+
+    Ok(LlmConfig {
+        enabled,
+        model_path,
+        timeout_ms,
+        max_patch_bytes,
+        context_tokens,
+    })
+}
+
 fn load_slack_user_map() -> Result<BTreeMap<String, String>> {
     match std::env::var(SLACK_USER_MAP_ENV) {
         Ok(raw) if !raw.trim().is_empty() => parse_slack_user_map(&raw),
@@ -221,21 +264,7 @@ fn parse_reviewer_definitions(raw: &str) -> Result<Vec<ReviewerDefinition>> {
 }
 
 fn parse_max_reviewers() -> Result<usize> {
-    match std::env::var(MAX_REVIEWERS_ENV) {
-        Ok(raw) if !raw.trim().is_empty() => {
-            let value = raw
-                .trim()
-                .parse::<usize>()
-                .with_context(|| format!("'{}' must be a positive integer", MAX_REVIEWERS_ENV))?;
-
-            if value == 0 {
-                bail!("'{}' must be greater than zero", MAX_REVIEWERS_ENV);
-            }
-
-            Ok(value)
-        }
-        _ => Ok(DEFAULT_MAX_REVIEWERS),
-    }
+    parse_usize_env(MAX_REVIEWERS_ENV, DEFAULT_MAX_REVIEWERS)
 }
 
 fn parse_slack_user_map(raw: &str) -> Result<BTreeMap<String, String>> {
@@ -282,6 +311,39 @@ fn parse_notification_policy(name: &str, raw: &str) -> Result<NotificationPolicy
         "on-applied-action" => Ok(NotificationPolicy::OnAppliedAction),
         _ => bail!("'{}' must be either 'always' or 'on-applied-action'", name),
     }
+}
+
+fn parse_usize_env(name: &str, default: usize) -> Result<usize> {
+    match std::env::var(name) {
+        Ok(raw) if !raw.trim().is_empty() => parse_non_zero_usize(name, &raw),
+        _ => Ok(default),
+    }
+}
+
+fn parse_non_zero_usize(name: &str, raw: &str) -> Result<usize> {
+    let value = raw
+        .trim()
+        .parse::<usize>()
+        .with_context(|| format!("'{}' must be a positive integer", name))?;
+
+    if value == 0 {
+        bail!("'{}' must be greater than zero", name);
+    }
+
+    Ok(value)
+}
+
+fn parse_non_zero_u64(name: &str, raw: &str) -> Result<u64> {
+    let value = raw
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("'{}' must be a positive integer", name))?;
+
+    if value == 0 {
+        bail!("'{}' must be greater than zero", name);
+    }
+
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -350,6 +412,16 @@ mod tests {
         assert_eq!(config.webhook_url, None);
         assert_eq!(config.channel, None);
         assert!(config.user_map.is_empty());
+    }
+
+    #[test]
+    fn llm_config_defaults_to_disabled_without_values() {
+        let config = load_llm_config().expect("llm config should load");
+
+        assert_eq!(config.enabled, None);
+        assert_eq!(config.model_path, None);
+        assert_eq!(config.timeout_ms, None);
+        assert_eq!(config.max_patch_bytes, None);
     }
 
     #[test]
@@ -433,6 +505,28 @@ enabled = true
     }
 
     #[test]
+    fn parses_flavor_config_llm_block() {
+        let raw = r#"
+[platform_connector]
+kind = "gitlab"
+
+[llm]
+enabled = true
+model_path = "/models/review.gguf"
+timeout_ms = 25000
+max_patch_bytes = 48000
+"#;
+
+        let flavor = toml::from_str::<FlavorConfig>(raw).expect("flavor config should parse");
+        let llm = flavor.llm.expect("llm config should exist");
+
+        assert_eq!(llm.enabled, Some(true));
+        assert_eq!(llm.model_path.as_deref(), Some("/models/review.gguf"));
+        assert_eq!(llm.timeout_ms, Some(25_000));
+        assert_eq!(llm.max_patch_bytes, Some(48_000));
+    }
+
+    #[test]
     fn parses_flavor_config_templates() {
         let raw = r###"
 [platform_connector]
@@ -475,5 +569,17 @@ kind = "github"
             toml::from_str::<FlavorConfig>(raw).expect("legacy flavor config should parse");
 
         assert_eq!(flavor.platform_connector.kind, "github");
+    }
+
+    #[test]
+    fn parses_positive_integer_llm_values() {
+        assert_eq!(
+            parse_non_zero_u64(LLM_TIMEOUT_MS_ENV, "2500").unwrap(),
+            2_500
+        );
+        assert_eq!(
+            parse_non_zero_usize(LLM_MAX_PATCH_BYTES_ENV, "4096").unwrap(),
+            4_096
+        );
     }
 }

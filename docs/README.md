@@ -15,6 +15,7 @@ This directory holds the detailed docs that used to live in the root README. Sta
 
 - [Connectors and capabilities](connectors-and-capabilities.md): what is implemented today, how platform connector and notification features map to runtime behavior, and how to verify the compiled artifact.
 - [Architecture](architecture.md): crate boundaries, execution flow, command behavior, and idempotent GitLab summary handling.
+- [Local LLM review](local-llm.md): optional GGUF-backed advisory review, environment variables, CI model distribution, smoke tests, and repeatable benchmarks.
 
 ## Output And Tone
 

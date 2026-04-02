@@ -190,3 +190,26 @@ Expected result:
 - `MR_MILCHICK_SLACK_BASE_URL` is available for local mocks and connector tests; the production default is `https://slack.com/api`.
 - Use `--fixture` whenever you want to iterate on templates and notifications before testing against a real merge request.
 - Use `--fixture-variant first|update` when you want to compare both notification template paths without changing the fixture file.
+
+## Benchmark Local GGUF Models
+
+For the full local-LLM setup, runtime variables, CI model-repo pattern, smoke tests, and benchmark scoring notes, see [local-llm.md](local-llm.md).
+
+If you keep multiple local GGUF files under `test-models`, use the repeatable benchmark script to compare load reliability, smoke-test coverage, and runtime across models.
+
+```bash
+scripts/benchmark_llm_smoke.sh
+```
+
+Useful variants:
+
+```bash
+scripts/benchmark_llm_smoke.sh --models-dir test-models --output-dir /tmp/milchick-llm-bench
+scripts/benchmark_llm_smoke.sh --smoke-timeout-ms 240000 --patch-budget 4096
+```
+
+The script runs each ignored `llm-local` smoke case separately with `--test-threads=1`, then writes:
+
+- `summary.md` for a ranked human-readable scoreboard
+- `summary.csv` for spreadsheet or plotting work
+- per-model logs under `logs/` for failure details such as invalid JSON, timeouts, or empty insights

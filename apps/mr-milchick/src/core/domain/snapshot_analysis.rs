@@ -49,15 +49,19 @@ mod tests {
             changed_files: vec![
                 ChangedFile {
                     path: "apps/frontend/button.tsx".into(),
+                    previous_path: None,
                     change_type: ChangeType::Modified,
                     additions: None,
                     deletions: None,
+                    patch: None,
                 },
                 ChangedFile {
                     path: "services/api/main.rs".into(),
+                    previous_path: None,
                     change_type: ChangeType::Modified,
                     additions: None,
                     deletions: None,
+                    patch: None,
                 },
             ],
         }
