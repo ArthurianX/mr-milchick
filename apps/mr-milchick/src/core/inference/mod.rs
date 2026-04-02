@@ -1,9 +1,11 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 #[cfg(any(feature = "llm-local", test))]
 use serde::Deserialize;
 use tokio::time::timeout;
+#[cfg(feature = "llm-local")]
+use std::time::Instant;
 #[cfg(feature = "llm-local")]
 use tracing::{debug, info, warn};
 
