@@ -7,6 +7,23 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [3.1.0] — 2026-04-02
+
+This release trims Slack channel noise during follow-up review passes and makes the sink behavior easier to understand from the docs.
+
+### Added
+
+- Fixture coverage for a threaded Slack app notification flow, including a pair of fixture scenarios that exercise a first MR notification followed by an update for the same MR.
+
+### Changed
+
+- Slack app update notifications now try to post into the existing thread for the same `MR #...` instead of always creating a fresh channel-level root message.
+- Fixture-backed CLI coverage now verifies that a later Slack app update for the same merge request reuses the original thread when it exists.
+
+### Docs
+
+- README now calls out that same-thread update reuse currently applies only to the Slack app sink; Slack workflow delivery keeps its own workflow-driven message behavior.
+
 ## [3.0.0] — 2026-03-31
 
 This release makes Mr. Milchick materially smarter without making it less predictable. Review snapshots now retain patch hunks, the core can run advisory local GGUF inference asynchronously, and generated recommendations can be threaded into MR output and downstream notification sinks while policy enforcement stays deterministic.

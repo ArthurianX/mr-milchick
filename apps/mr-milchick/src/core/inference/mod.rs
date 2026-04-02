@@ -3,9 +3,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 #[cfg(any(feature = "llm-local", test))]
 use serde::Deserialize;
-use tokio::time::timeout;
 #[cfg(feature = "llm-local")]
 use std::time::Instant;
+use tokio::time::timeout;
 #[cfg(feature = "llm-local")]
 use tracing::{debug, info, warn};
 
@@ -211,7 +211,9 @@ pub async fn analyze_with_timeout(
     if engine.handles_internal_timeout() {
         match engine.analyze(snapshot).await {
             Ok(outcome) => outcome,
-            Err(ReviewInferenceError::TimedOut(timeout)) => ReviewInferenceOutcome::timed_out(timeout),
+            Err(ReviewInferenceError::TimedOut(timeout)) => {
+                ReviewInferenceOutcome::timed_out(timeout)
+            }
             Err(err) => ReviewInferenceOutcome::failed(err.to_string()),
         }
     } else {
@@ -440,7 +442,9 @@ fn build_local_inference_prompt(
     );
     prompt.push_str("- Use at most 4 recommendations.\n");
     prompt.push_str("- Keep each recommendation message under 160 characters.\n");
-    prompt.push_str("- If the diff shows an obvious risk, do not return an empty recommendations array.\n");
+    prompt.push_str(
+        "- If the diff shows an obvious risk, do not return an empty recommendations array.\n",
+    );
     prompt.push_str("- Use null for summary if nothing useful stands out.\n\n");
     prompt.push_str("Review snapshot:\n");
     prompt.push_str(&format!("Title: {}\n", snapshot.title));
@@ -535,8 +539,12 @@ fn build_local_inference_prompt(
 
     if matches!(style, LocalPromptStyle::StrictRetry) {
         prompt.push_str("\nReturn exactly one JSON object.\n");
-        prompt.push_str("The first character of your reply must be { and the last character must be }.\n");
-        prompt.push_str("Do not echo diff lines, code snippets, or brace fragments from the patch.\n");
+        prompt.push_str(
+            "The first character of your reply must be { and the last character must be }.\n",
+        );
+        prompt.push_str(
+            "Do not echo diff lines, code snippets, or brace fragments from the patch.\n",
+        );
         prompt.push_str(
             "If the snapshot includes deleted tests, removed auth or validation checks, or dangerous HTML rendering, include at least one recommendation.\n",
         );
@@ -865,7 +873,8 @@ fn run_local_inference(
         ));
     }
 
-    let context_token_limit = requested_context_size(prompt_tokens.len(), requested_context_token_limit);
+    let context_token_limit =
+        requested_context_size(prompt_tokens.len(), requested_context_token_limit);
     let batch_capacity = prompt_tokens.len().clamp(1, LOCAL_BATCH_CAPACITY);
     debug!(
         model_path = %model_path.display(),
@@ -905,7 +914,13 @@ fn run_local_inference(
         ReviewInferenceError::Analysis(format!("failed to create llama context: {err}"))
     })?;
 
-    decode_prompt_tokens(&mut context, &prompt_tokens, batch_capacity, deadline, timeout)?;
+    decode_prompt_tokens(
+        &mut context,
+        &prompt_tokens,
+        batch_capacity,
+        deadline,
+        timeout,
+    )?;
 
     let mut sampler = build_local_sampler(&model);
     sampler.accept_many(prompt_tokens.iter());
@@ -1077,13 +1092,11 @@ fn render_prompt_with_basic_template(
     };
 
     let messages = vec![
-        LlamaChatMessage::new("system".to_string(), system_prompt.to_string()).map_err(
-            |err| {
-                ReviewInferenceError::Analysis(format!(
-                    "failed to build local inference system message: {err}"
-                ))
-            },
-        )?,
+        LlamaChatMessage::new("system".to_string(), system_prompt.to_string()).map_err(|err| {
+            ReviewInferenceError::Analysis(format!(
+                "failed to build local inference system message: {err}"
+            ))
+        })?,
         LlamaChatMessage::new("user".to_string(), base_prompt.to_string()).map_err(|err| {
             ReviewInferenceError::Analysis(format!(
                 "failed to build local inference user message: {err}"
@@ -1091,11 +1104,13 @@ fn render_prompt_with_basic_template(
         })?,
     ];
 
-    let prompt = model.apply_chat_template(template, &messages, true).map_err(|err| {
-        ReviewInferenceError::Analysis(format!(
-            "failed to apply basic model chat template for local inference: {err}"
-        ))
-    })?;
+    let prompt = model
+        .apply_chat_template(template, &messages, true)
+        .map_err(|err| {
+            ReviewInferenceError::Analysis(format!(
+                "failed to apply basic model chat template for local inference: {err}"
+            ))
+        })?;
 
     Ok(RenderedPrompt {
         prompt,

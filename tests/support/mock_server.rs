@@ -39,10 +39,19 @@ struct MockNote {
     body: String,
 }
 
+#[derive(Debug, Clone)]
+struct MockSlackMessage {
+    channel: String,
+    text: String,
+    ts: String,
+    thread_ts: Option<String>,
+}
+
 #[derive(Debug)]
 struct ServerState {
     reviewers: Vec<String>,
     notes: Vec<MockNote>,
+    slack_messages: Vec<MockSlackMessage>,
     github_files: Vec<MockGithubFile>,
     request_log: Vec<RequestRecord>,
     next_note_id: u64,
@@ -84,6 +93,7 @@ impl MockGitLabServer {
                 .map(|value| value.to_string())
                 .collect(),
             notes: Vec::new(),
+            slack_messages: Vec::new(),
             github_files: github_files(file_count),
             request_log: Vec::new(),
             next_note_id: 1,
@@ -331,6 +341,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let issue_comments_path =
         format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
     let slack_post_message_path = "/slack/api/chat.postMessage";
+    let slack_history_path = "/slack/api/conversations.history";
 
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == mr_path => HttpResponse {
@@ -590,8 +601,22 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             }
         }
         ("POST", path) if path == slack_post_message_path => {
+            let body: Value =
+                serde_json::from_str(&request.body).expect("Slack post should be JSON");
             let ts = format!("1700000000.{:06}", state.next_slack_ts);
             state.next_slack_ts += 1;
+            state.slack_messages.push(MockSlackMessage {
+                channel: body["channel"]
+                    .as_str()
+                    .expect("Slack channel should be a string")
+                    .to_string(),
+                text: body["text"]
+                    .as_str()
+                    .expect("Slack text should be a string")
+                    .to_string(),
+                ts: ts.clone(),
+                thread_ts: body["thread_ts"].as_str().map(ToString::to_string),
+            });
 
             HttpResponse {
                 status_code: 200,
@@ -601,6 +626,40 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     "ts": ts,
                     "message": {
                         "text": "posted"
+                    }
+                })
+                .to_string(),
+            }
+        }
+        ("GET", path) if path.starts_with(slack_history_path) => {
+            let channel = query_param(path, "channel").unwrap_or_default();
+            let messages = state
+                .slack_messages
+                .iter()
+                .rev()
+                .filter(|message| message.channel == channel)
+                .map(|message| {
+                    let mut payload = json!({
+                        "type": "message",
+                        "text": message.text,
+                        "ts": message.ts,
+                    });
+
+                    if let Some(thread_ts) = &message.thread_ts {
+                        payload["thread_ts"] = json!(thread_ts);
+                    }
+
+                    payload
+                })
+                .collect::<Vec<_>>();
+
+            HttpResponse {
+                status_code: 200,
+                body: json!({
+                    "ok": true,
+                    "messages": messages,
+                    "response_metadata": {
+                        "next_cursor": ""
                     }
                 })
                 .to_string(),

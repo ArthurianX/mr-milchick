@@ -256,7 +256,7 @@ pub async fn run_mode(
         print_compiled_capabilities();
     }
 
-    let preview_sink_kinds = configured_notification_sink_kinds(flavor.as_ref());
+    let preview_sink_kinds = configured_notification_sink_kinds(&app_config, flavor.as_ref());
     info!(
         inference_available = wiring.capabilities.inference_available,
         changed_files = snapshot.changed_file_count(),
@@ -488,18 +488,43 @@ fn build_notification_sinks(
     sinks
 }
 
-fn configured_notification_sink_kinds(_flavor: Option<&FlavorConfig>) -> Vec<NotificationSinkKind> {
+fn configured_notification_sink_kinds(
+    _app_config: &AppConfigContext,
+    _flavor: Option<&FlavorConfig>,
+) -> Vec<NotificationSinkKind> {
     #[allow(unused_mut)]
     let mut sinks = Vec::new();
 
     #[cfg(feature = "slack-app")]
-    if notification_enabled_by_flavor(_flavor, "slack-app") {
-        sinks.push(NotificationSinkKind::SlackApp);
+    {
+        let sink = SlackAppSink::new(SlackAppConfig {
+            enabled: _app_config.runtime.slack.enabled,
+            base_url: _app_config.runtime.slack.base_url.clone(),
+            bot_token: _app_config.runtime.slack.bot_token.clone(),
+            channel: _app_config.runtime.slack.channel.clone(),
+            user_map: resolve_slack_app_user_map(&_app_config.runtime, _flavor),
+        });
+        if notification_enabled_by_flavor(_flavor, "slack-app")
+            && (notification_explicitly_enabled_in_flavor(_flavor, "slack-app")
+                || sink.is_enabled())
+        {
+            sinks.push(NotificationSinkKind::SlackApp);
+        }
     }
 
     #[cfg(feature = "slack-workflow")]
-    if notification_enabled_by_flavor(_flavor, "slack-workflow") {
-        sinks.push(NotificationSinkKind::SlackWorkflow);
+    {
+        let sink = SlackWorkflowSink::new(SlackWorkflowConfig {
+            enabled: _app_config.runtime.slack.enabled,
+            webhook_url: _app_config.runtime.slack.webhook_url.clone(),
+            channel: _app_config.runtime.slack.channel.clone(),
+        });
+        if notification_enabled_by_flavor(_flavor, "slack-workflow")
+            && (notification_explicitly_enabled_in_flavor(_flavor, "slack-workflow")
+                || sink.is_enabled())
+        {
+            sinks.push(NotificationSinkKind::SlackWorkflow);
+        }
     }
 
     sinks
@@ -537,12 +562,27 @@ fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
 fn notification_enabled_by_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> bool {
     flavor
         .map(|flavor| {
+            if flavor.notifications.is_empty() {
+                return true;
+            }
+
             flavor
                 .notifications
                 .iter()
                 .any(|notification| notification.kind == kind && notification.enabled)
         })
         .unwrap_or(true)
+}
+
+fn notification_explicitly_enabled_in_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> bool {
+    flavor
+        .and_then(|flavor| {
+            flavor
+                .notifications
+                .iter()
+                .find(|notification| notification.kind == kind)
+        })
+        .is_some_and(|notification| notification.enabled)
 }
 
 fn resolve_notification_policy(
@@ -608,7 +648,9 @@ fn build_inference_connector(
 
     #[cfg(not(feature = "llm-local"))]
     {
-        warn!("LLM review was configured but local backend support is not compiled into this binary");
+        warn!(
+            "LLM review was configured but local backend support is not compiled into this binary"
+        );
         Ok((
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(NoopReviewInferenceEngine::unavailable(format!(
@@ -866,6 +908,11 @@ fn build_notifications(
                     body,
                     audience: NotificationAudience::Default,
                     severity: NotificationSeverity::Info,
+                    thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
+                    prefer_thread_reply: matches!(
+                        variant,
+                        crate::core::message_templates::NotificationTemplateVariant::Update
+                    ),
                 })
             }
             NotificationSinkKind::SlackWorkflow => {
@@ -880,6 +927,8 @@ fn build_notifications(
                     body,
                     audience: NotificationAudience::Default,
                     severity: NotificationSeverity::Info,
+                    thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
+                    prefer_thread_reply: false,
                 })
             }
             _ => None,
@@ -1395,6 +1444,49 @@ mod tests {
             resolve_notification_policy(&runtime, None),
             NotificationPolicy::Always
         );
+    }
+
+    #[test]
+    fn notification_sinks_default_to_enabled_when_flavor_has_no_entries() {
+        let flavor = FlavorConfig {
+            platform_connector: FlavorPlatformConnector {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: None,
+            notifications: Vec::new(),
+            slack_app: None,
+            llm: None,
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
+        };
+
+        assert!(notification_enabled_by_flavor(Some(&flavor), "slack-app"));
+        assert!(notification_enabled_by_flavor(
+            Some(&flavor),
+            "slack-workflow"
+        ));
+    }
+
+    #[test]
+    fn notification_sinks_honor_explicit_flavor_entries() {
+        let flavor = FlavorConfig {
+            platform_connector: FlavorPlatformConnector {
+                kind: "gitlab".to_string(),
+            },
+            notification_policy: None,
+            notifications: vec![crate::config::model::FlavorNotification {
+                kind: "slack-app".to_string(),
+                enabled: false,
+            }],
+            slack_app: None,
+            llm: None,
+            templates: crate::config::model::FlavorTemplatesConfig::default(),
+        };
+
+        assert!(!notification_enabled_by_flavor(Some(&flavor), "slack-app"));
+        assert!(!notification_enabled_by_flavor(
+            Some(&flavor),
+            "slack-workflow"
+        ));
     }
 
     #[test]

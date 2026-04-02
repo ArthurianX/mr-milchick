@@ -1,6 +1,6 @@
 [package]
 name = "mr-milchick"
-version = "3.0.1"
+version = "3.1.0"
 edition = "2024"
 license = "MIT"
 description = "CLI for merge request governance in GitLab CI pipelines"
@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 llama-cpp-2 = { version = "=0.1.141", default-features = false, features = ["sampler"], optional = true }
 
 [features]
-default = ["github"]
+default = ["gitlab", "slack-app"]
 gitlab = []
 github = []
 slack-app = []

@@ -263,8 +263,14 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
     );
 
     let first_stdout = String::from_utf8_lossy(&first.stdout);
-    assert!(first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
-    assert!(first_stdout.contains("[Notification SlackApp] delivered=true sent"));
+    assert!(
+        first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"),
+        "stdout was:\n{first_stdout}"
+    );
+    assert!(
+        first_stdout.contains("[Notification SlackApp] delivered=true sent"),
+        "stdout was:\n{first_stdout}"
+    );
 
     let second = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
@@ -275,14 +281,20 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
     );
 
     let second_stdout = String::from_utf8_lossy(&second.stdout);
-    assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
-    assert!(second_stdout.contains("[Notification SlackApp] delivered=true sent"));
+    assert!(
+        second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"),
+        "stdout was:\n{second_stdout}"
+    );
+    assert!(
+        second_stdout.contains("[Notification SlackApp] delivered=true sent"),
+        "stdout was:\n{second_stdout}"
+    );
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        4
+        3
     );
 }
 
@@ -310,8 +322,14 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
     );
 
     let first_stdout = String::from_utf8_lossy(&first.stdout);
-    assert!(first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"));
-    assert!(first_stdout.contains("[Notification SlackApp] delivered=true sent"));
+    assert!(
+        first_stdout.contains("[CommentPosted] Mr. Milchick summary comment"),
+        "stdout was:\n{first_stdout}"
+    );
+    assert!(
+        first_stdout.contains("[Notification SlackApp] delivered=true sent"),
+        "stdout was:\n{first_stdout}"
+    );
 
     let second = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
@@ -589,6 +607,89 @@ enabled = true
         0,
         "fixture mode should not talk to GitHub"
     );
+
+    let _ = fs::remove_file(flavor_path);
+}
+
+#[cfg(feature = "slack-app")]
+#[test]
+fn refine_mode_fixture_update_reuses_existing_slack_thread_for_same_mr() {
+    let server = MockGitLabServer::start();
+    let slack_base_url = server.slack_api_base_url();
+    let flavor_path = write_temp_flavor(&format!(
+        r#"
+[platform_connector]
+kind = "{platform}"
+
+[[notifications]]
+kind = "slack-app"
+enabled = true
+"#,
+        platform = compiled_platform_connector_kind(),
+    ));
+
+    let common_env = [
+        ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
+        ("MR_MILCHICK_SLACK_ENABLED", "true"),
+        ("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test"),
+        ("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X"),
+        ("MR_MILCHICK_SLACK_BASE_URL", slack_base_url.as_str()),
+        ("RUST_LOG", "off"),
+    ];
+
+    let first = run_cli(
+        "refine",
+        &[
+            "--fixture",
+            "fixtures/threaded-first-notification.toml",
+            "--send-notifications",
+        ],
+        &common_env,
+    );
+    assert!(
+        first.status.success(),
+        "first threaded fixture failed: {}\n{}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&first.stdout)
+    );
+
+    let update = run_cli(
+        "refine",
+        &[
+            "--fixture",
+            "fixtures/threaded-update-notification.toml",
+            "--send-notifications",
+        ],
+        &common_env,
+    );
+    assert!(
+        update.status.success(),
+        "update threaded fixture failed: {}\n{}",
+        String::from_utf8_lossy(&update.stderr),
+        String::from_utf8_lossy(&update.stdout)
+    );
+
+    assert_eq!(
+        server.request_count_prefix("GET", "/slack/api/conversations.history"),
+        1
+    );
+
+    let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(bodies.len(), 3);
+
+    let update_payload: serde_json::Value =
+        serde_json::from_str(&bodies[2]).expect("update Slack payload should parse");
+    assert_eq!(
+        update_payload["thread_ts"],
+        serde_json::json!("1700000000.000001")
+    );
+
+    let update_text = update_payload["text"]
+        .as_str()
+        .expect("update text should be a string");
+    assert!(update_text.contains("Mr. Milchick - updates on"));
+    assert!(update_text.contains("MR #3997"));
+    assert!(update_text.contains("Button spacing changed near the CTA"));
 
     let _ = fs::remove_file(flavor_path);
 }

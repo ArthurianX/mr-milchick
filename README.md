@@ -42,6 +42,8 @@ The tool exists to keep review governance where the decision already happens: in
 
 Today the implemented surface is intentionally focused: GitLab and GitHub are the supported platform connectors, and Slack app plus Slack workflow are optional notification sinks.
 
+One notification detail is intentionally sink-specific: Slack app update notifications try to reuse the existing thread for the same MR, while Slack workflow notifications do not do same-thread lookup and keep their workflow-driven delivery shape.
+
 Optional local review suggestions can also be enabled when the binary is built with the `llm-local` feature and pointed at a local GGUF model. In that mode, Milchick runs a local `llama.cpp`-backed advisory pass alongside the normal review flow and adds structured review hints without introducing a hosted model dependency.
 
 Internally, the repository now ships as a single crate with layered modules:
@@ -92,7 +94,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN`, `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP`. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN`, `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP`. With the Slack app sink, follow-up update notifications try to land in the original MR thread for the same `MR #...`; Slack workflow delivery does not currently do that thread reuse. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 For a local Linux-musl artifact, use the checked-in helper instead of calling the target directly:
 

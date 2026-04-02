@@ -1,0 +1,29 @@
+project_id = "412"
+merge_request_iid = "3997"
+notification_variant = "update"
+
+[merge_request]
+title = "Frontend adjustments"
+url = "https://gitlab.example.com/group/project/-/merge_requests/3997"
+author = "arthur"
+description = "Refresh the UI flow"
+source_branch = "feat/intentional-cleanup"
+target_branch = "develop"
+labels = ["frontend"]
+existing_reviewers = []
+is_draft = false
+default_branch = "develop"
+
+[[merge_request.changed_files]]
+path = "apps/frontend/button.tsx"
+change_type = "modified"
+additions = 6
+deletions = 2
+
+[[findings]]
+severity = "warning"
+message = "Button spacing changed near the CTA; verify mobile overflow."
+
+[[actions]]
+kind = "add-labels"
+labels = ["ux-review"]

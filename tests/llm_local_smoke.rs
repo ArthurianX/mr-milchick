@@ -63,7 +63,7 @@ mod llm_local_smoke {
             smoke_context_tokens(),
             smoke_timeout(),
         )
-            .expect("local smoke test engine should initialize from env")
+        .expect("local smoke test engine should initialize from env")
     }
 
     fn smoke_test_lock() -> &'static tokio::sync::Mutex<()> {

@@ -161,6 +161,8 @@ pub struct NotificationMessage {
     pub body: String,
     pub audience: NotificationAudience,
     pub severity: NotificationSeverity,
+    pub thread_key: Option<String>,
+    pub prefer_thread_reply: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -147,6 +147,8 @@ mod tests {
             body: "MR #12\nAssigned reviewers @alice\nOpen MR (https://example.test)".to_string(),
             audience: NotificationAudience::Default,
             severity: NotificationSeverity::Info,
+            thread_key: None,
+            prefer_thread_reply: false,
         };
 
         let rendered = message.body.clone();

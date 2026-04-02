@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use tracing::warn;
 
 use crate::core::model::{
     NotificationAudience, NotificationDeliveryReport, NotificationMessage, NotificationSinkKind,
@@ -38,6 +39,27 @@ struct SlackPostMessageResponse {
     error: Option<String>,
     channel: Option<String>,
     ts: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackConversationsHistoryResponse {
+    ok: bool,
+    error: Option<String>,
+    #[serde(default)]
+    messages: Vec<SlackConversationMessage>,
+    response_metadata: Option<SlackResponseMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackConversationMessage {
+    text: Option<String>,
+    ts: Option<String>,
+    thread_ts: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackResponseMetadata {
+    next_cursor: Option<String>,
 }
 
 impl SlackAppSink {
@@ -87,12 +109,54 @@ impl NotificationSink for SlackAppSink {
 
         let subject = replace_gitlab_mentions(&notification.subject, &self.config.user_map);
         let text = replace_gitlab_mentions(&notification.body, &self.config.user_map);
+        let base_url = self.config.base_url.trim_end_matches('/');
+        let post_message_endpoint = format!("{base_url}/chat.postMessage");
+
+        if notification.prefer_thread_reply {
+            if let Some(thread_key) = notification.thread_key.as_deref() {
+                match find_existing_thread_root_ts(
+                    &self.http,
+                    &format!("{base_url}/conversations.history"),
+                    Some(bot_token),
+                    channel,
+                    thread_key,
+                )
+                .await
+                {
+                    Ok(Some(root_ts)) => {
+                        let reply_text = combine_subject_and_body(&subject, &text);
+                        let reply_ts = post_message(
+                            &self.http,
+                            &post_message_endpoint,
+                            Some(bot_token),
+                            channel,
+                            &reply_text,
+                            Some(&root_ts),
+                        )
+                        .await
+                        .map_err(|err| ConnectorError::Request(err.to_string()))?;
+
+                        return Ok(NotificationDeliveryReport {
+                            sink: self.kind(),
+                            delivered: true,
+                            destination: reply_ts.or(Some(root_ts)),
+                            detail: Some("sent".to_string()),
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(err) => warn!(
+                        channel,
+                        thread_key,
+                        error = %err,
+                        "failed to resolve existing Slack thread; falling back to root post"
+                    ),
+                }
+            }
+        }
+
         let root_ts = post_message(
             &self.http,
-            &format!(
-                "{}/chat.postMessage",
-                self.config.base_url.trim_end_matches('/')
-            ),
+            &post_message_endpoint,
             Some(bot_token),
             channel,
             &subject,
@@ -104,10 +168,7 @@ impl NotificationSink for SlackAppSink {
         if !text.trim().is_empty() {
             post_message(
                 &self.http,
-                &format!(
-                    "{}/chat.postMessage",
-                    self.config.base_url.trim_end_matches('/')
-                ),
+                &post_message_endpoint,
                 Some(bot_token),
                 channel,
                 &text,
@@ -172,6 +233,95 @@ async fn post_message(
     Ok(payload.ts.or(payload.channel))
 }
 
+async fn find_existing_thread_root_ts(
+    http: &Client,
+    endpoint: &str,
+    bearer_token: Option<&str>,
+    channel: &str,
+    thread_key: &str,
+) -> Result<Option<String>> {
+    let mut cursor: Option<String> = None;
+    let mut fallback_match: Option<String> = None;
+
+    loop {
+        let mut request = http
+            .get(endpoint)
+            .query(&[("channel", channel), ("limit", "200")]);
+
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+
+        if let Some(next_cursor) = cursor.as_deref() {
+            request = request.query(&[("cursor", next_cursor)]);
+        }
+
+        let response = request
+            .send()
+            .await
+            .context("failed to send Slack conversations.history request")?;
+
+        let response = response
+            .error_for_status()
+            .context("Slack conversations.history returned an error status")?;
+
+        let payload = response
+            .json::<SlackConversationsHistoryResponse>()
+            .await
+            .context("failed to deserialize Slack conversations.history response")?;
+
+        if !payload.ok {
+            bail!(
+                "Slack conversations.history failed: {}",
+                payload.error.unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+
+        for message in payload.messages {
+            let Some(ts) = message.ts.as_deref() else {
+                continue;
+            };
+
+            if !is_root_message(&message, ts) {
+                continue;
+            }
+
+            let text = message.text.as_deref().unwrap_or_default();
+            if !text.contains(thread_key) {
+                continue;
+            }
+
+            fallback_match = Some(ts.to_string());
+            if is_first_look_message(text) {
+                return Ok(Some(ts.to_string()));
+            }
+        }
+
+        let next_cursor = payload
+            .response_metadata
+            .and_then(|metadata| metadata.next_cursor)
+            .filter(|value| !value.trim().is_empty());
+
+        if next_cursor.is_none() {
+            return Ok(fallback_match);
+        }
+
+        cursor = next_cursor;
+    }
+}
+
+fn combine_subject_and_body(subject: &str, body: &str) -> String {
+    let subject = subject.trim();
+    let body = body.trim();
+
+    match (subject.is_empty(), body.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => subject.to_string(),
+        (true, false) => body.to_string(),
+        (false, false) => format!("{subject}\n\n{body}"),
+    }
+}
+
 fn replace_gitlab_mentions(text: &str, user_map: &BTreeMap<String, String>) -> String {
     let mut rendered = String::with_capacity(text.len());
     let chars = text.chars().collect::<Vec<_>>();
@@ -232,6 +382,17 @@ fn is_gitlab_mention_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
 }
 
+fn is_root_message(message: &SlackConversationMessage, ts: &str) -> bool {
+    message
+        .thread_ts
+        .as_deref()
+        .is_none_or(|thread_ts| thread_ts == ts)
+}
+
+fn is_first_look_message(text: &str) -> bool {
+    text.to_ascii_lowercase().contains("first look")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +408,8 @@ mod tests {
             body: "*MR #12*\nHello @alice\n• @alice\n_Kind regards._".to_string(),
             audience: NotificationAudience::Default,
             severity: NotificationSeverity::Info,
+            thread_key: None,
+            prefer_thread_reply: false,
         };
 
         let rendered = replace_gitlab_mentions(&message.body, &user_map);
@@ -274,5 +437,40 @@ mod tests {
         let rendered = replace_gitlab_mentions("Assign @alice", &user_map);
 
         assert_eq!(rendered, "Assign @alice");
+    }
+
+    #[test]
+    fn combines_subject_and_body_for_thread_reply() {
+        let combined = combine_subject_and_body("Updates on MR #12", "Merge request: MR #12");
+
+        assert_eq!(combined, "Updates on MR #12\n\nMerge request: MR #12");
+    }
+
+    #[test]
+    fn identifies_root_messages_and_prefers_first_look_subjects() {
+        let reply = SlackConversationMessage {
+            text: Some("Mr. Milchick - updates on MR #3995".to_string()),
+            ts: Some("1700000000.000003".to_string()),
+            thread_ts: Some("1700000000.000001".to_string()),
+        };
+        let update_root = SlackConversationMessage {
+            text: Some("Mr. Milchick - updates on MR #3995".to_string()),
+            ts: Some("1700000000.000002".to_string()),
+            thread_ts: None,
+        };
+        let first_root = SlackConversationMessage {
+            text: Some("Mr. Milchick took a first look at MR #3995".to_string()),
+            ts: Some("1700000000.000001".to_string()),
+            thread_ts: None,
+        };
+
+        assert!(!is_root_message(&reply, "1700000000.000003"));
+        assert!(is_root_message(&update_root, "1700000000.000002"));
+        assert!(is_first_look_message(
+            first_root.text.as_deref().unwrap_or_default()
+        ));
+        assert!(!is_first_look_message(
+            update_root.text.as_deref().unwrap_or_default()
+        ));
     }
 }

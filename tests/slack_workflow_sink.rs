@@ -28,6 +28,8 @@ async fn sends_workflow_messages_with_simple_formatting_and_threading() {
         body: "The department has a request.\nReview requested for: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/3995)\nAssigned reviewers @principal-reviewer @bob".to_string(),
         audience: NotificationAudience::Default,
         severity: NotificationSeverity::Info,
+        thread_key: Some("MR #3995".to_string()),
+        prefer_thread_reply: false,
     };
 
     let report = sink.send(&notification).await.expect("send should succeed");
