@@ -1,55 +1,168 @@
-# Flavor manifest loaded at runtime.
-# This file is intentionally minimal and only contains settings
-# that the application actually reads from TOML today.
-notification_policy = "always"
+# Mr. Milchick runtime config for GitLab-oriented runs.
+#
+# This file holds non-secret operational settings only.
+# Keep CI/review metadata in CI env vars, and keep secrets in env too:
+# - GITLAB_TOKEN
+# - GITHUB_TOKEN
+# - MR_MILCHICK_SLACK_BOT_TOKEN
+# - MR_MILCHICK_SLACK_WEBHOOK_URL
+#
+# If you want to use a different config file path, set:
+# - MR_MILCHICK_CONFIG_PATH=/path/to/other-config.toml
 
-[platform_connector]
+[platform]
+# Review platform compiled into this binary.
+# Valid values:
+# - "gitlab"
+# - "github"
 kind = "gitlab"
 
-# Optional Slack notifications:
-# [[notifications]]
-# kind = "slack-workflow"
+# Optional API base URL override.
+# Leave this commented for normal gitlab.com usage.
+# base_url = "https://gitlab.example.com/api/v4"
+
+[execution]
+# When true, `refine` behaves like a dry run and will not mutate the platform.
+# dry_run = true
+
+# Controls when notifications are emitted.
+# Valid values:
+# - "always"
+# - "on-applied-action"
+notification_policy = "always"
+
+[reviewers]
+# Maximum number of area-routed reviewers to assign from `reviewers.definitions`.
+# Mandatory reviewers and fallback behavior are resolved independently of this cap.
+# max_reviewers = 2
+
+# Define reviewer routing entries under [[reviewers.definitions]].
+# Supported fields:
+# - username   : required review-platform username
+# - areas      : optional list of owned areas
+# - fallback   : optional boolean, used when no area match is found
+# - mandatory  : optional boolean, always include this reviewer
+
+# Example fallback reviewer:
+# [[reviewers.definitions]]
+# username = "milchick-duty"
+# fallback = true
+
+# Example mandatory reviewer:
+# [[reviewers.definitions]]
+# username = "principal-reviewer"
+# mandatory = true
+
+# Example area-based reviewers:
+# [[reviewers.definitions]]
+# username = "alice"
+# areas = ["frontend", "packages"]
+
+# [[reviewers.definitions]]
+# username = "carol"
+# areas = ["backend"]
+
+[codeowners]
+# Enable or disable CODEOWNERS-based routing.
+# Defaults to true when omitted.
 # enabled = true
 
-# [[notifications]]
-# kind = "slack-app"
-# enabled = true
+# Optional explicit CODEOWNERS path.
+# If omitted, Milchick auto-discovers common CODEOWNERS locations.
+# path = ".gitlab/CODEOWNERS"
 
-# [slack_app.user_map]
+[inference]
+# Local advisory inference is available only when the binary is compiled with
+# the `llm-local` feature. If configured without that feature, Milchick will
+# report that inference is configured but not compiled in.
+
+# Enable local advisory review suggestions.
+# enabled = false
+
+# Path to a local GGUF model file.
+# model_path = "models/review.gguf"
+
+# Timeout budget for the local inference pass, in milliseconds.
+# timeout_ms = 15000
+
+# Maximum total patch bytes included in the advisory prompt.
+# max_patch_bytes = 32768
+
+# Context window budget for the model runtime.
+# context_tokens = 4096
+
+# Emit detailed advisory inference diagnostics in command output.
+# trace = false
+
+[notifications]
+# Notification sink config lives under the nested sections below.
+# Uncomment only the sink types that match your compiled features and secrets.
+
+# Slack app sink configuration.
+# Requires:
+# - binary compiled with `slack-app`
+# - MR_MILCHICK_SLACK_BOT_TOKEN in env
+
+# [notifications.slack_app]
+# enabled = true
+#
+# Slack channel ID where review notifications should be posted.
+# channel = "C01234567"
+#
+# Optional Slack API base URL override for tests and local mocks.
+# base_url = "https://slack.com/api"
+
+# Optional mapping from review-platform usernames to Slack user IDs.
+# This lets Milkchick rewrite mentions like `@alice` into `<@U123...>`.
+# [notifications.slack_app.user_map]
 # "arthur" = "U028DDKDJ4E"
 # "principal-reviewer" = "U03D9NN5HB6"
 # "bob" = "U028GSCQBUJ"
 
-# Template inspiration
-# Uncomment any section below to start customizing platform connector output.
-# These examples match the current built-in defaults.
+# Slack workflow sink configuration.
+# Requires:
+# - binary compiled with `slack-workflow`
+# - MR_MILCHICK_SLACK_WEBHOOK_URL in env
 
-#[templates.gitlab]
-#summary = """
-## {{summary_title}}
+# [notifications.slack_workflow]
+# enabled = true
 #
-#{{summary_intro}}
-#
-#{{findings_block}}
-#
-#{{actions_block}}
-#
-#_{{closing_tone_message}}_
-#"""
+# Channel ID passed into the workflow payload.
+# channel = "C01234567"
 
-#[templates.github]
-#summary = """
-## {{summary_title}}
-#
-#{{summary_intro}}
-#
-#{{findings_block}}
-#
-#{{actions_block}}
-#
-#_{{closing_tone_message}}_
-#"""
+[templates]
+# Message template overrides live under the sections below.
+# If omitted, Milchick uses built-in defaults.
 
+# GitLab summary comment override.
+# [templates.gitlab]
+# summary = """
+# ## {{summary_title}}
+#
+# {{summary_intro}}
+#
+# {{findings_block}}
+#
+# {{actions_block}}
+#
+# _{{closing_tone_message}}_
+# """
+
+# GitHub summary comment override.
+# [templates.github]
+# summary = """
+# ## {{summary_title}}
+#
+# {{summary_intro}}
+#
+# {{findings_block}}
+#
+# {{actions_block}}
+#
+# _{{closing_tone_message}}_
+# """
+
+# Slack app template overrides.
 # [templates.slack_app]
 # first_root = ":gitlab: {{notification_subject}} :pepe-review:"
 # first_thread = """
@@ -57,7 +170,6 @@ kind = "gitlab"
 # Merge request: {{mr_link}}
 # {{reviewers_line}}
 # """
-
 # update_root = ":gitlab: {{notification_subject}} :thread:"
 # update_thread = """
 # Merge request: {{mr_link}}
@@ -66,19 +178,18 @@ kind = "gitlab"
 # _{{summary_footer}}_
 # """
 
-#[templates.slack_workflow]
-
-#first_title = "{{notification_subject}}"
-#first_thread = """
-#{{notification_title}}
-#Merge request: {{mr_link}}
-#{{reviewers_line}}
-#"""
-
-#update_title = "{{notification_subject}}"
-#update_thread = """
-#Merge request: {{mr_link}}
-#{{findings_block}}
-#{{actions_block}}
-#{{summary_footer}}
-#"""
+# Slack workflow template overrides.
+# [templates.slack_workflow]
+# first_title = "{{notification_subject}}"
+# first_thread = """
+# {{notification_title}}
+# Merge request: {{mr_link}}
+# {{reviewers_line}}
+# """
+# update_title = "{{notification_subject}}"
+# update_thread = """
+# Merge request: {{mr_link}}
+# {{findings_block}}
+# {{actions_block}}
+# {{summary_footer}}
+# """

@@ -382,6 +382,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -653,5 +655,15 @@ enabled = true
         .expect_err("enabled slack workflow should fail");
 
         assert!(error.to_string().contains("slack-workflow"));
+    }
+
+    #[test]
+    fn checked_in_config_examples_parse_with_current_schema() {
+        for path in ["mr-milchick.toml", "mr-milchick.github.toml"] {
+            let raw = fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("failed to read {path}: {error}"));
+            toml::from_str::<schema::ConfigFile>(&raw)
+                .unwrap_or_else(|error| panic!("{path} should parse with current schema: {error}"));
+        }
     }
 }
