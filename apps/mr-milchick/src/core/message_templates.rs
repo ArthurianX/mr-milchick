@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use tracing::warn;
 
-use crate::config::model::FlavorConfig;
+use crate::config::TemplatesConfig;
 use crate::context::model::CiContext;
 use crate::core::inference::{RecommendationCategory, ReviewInferenceOutcome};
 use crate::core::model::{NotificationSinkKind, ReviewAction, ReviewPlatformKind, ReviewSnapshot};
@@ -305,61 +305,57 @@ impl TemplateField {
     }
 }
 
-pub fn resolve_template_catalog(flavor: Option<&FlavorConfig>) -> TemplateCatalog {
+pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog {
     let mut catalog = TemplateCatalog::default();
-
-    let Some(flavor) = flavor else {
-        return catalog;
-    };
 
     apply_template_override(
         &mut catalog.gitlab.summary,
-        flavor.templates.gitlab.summary.as_deref(),
+        templates.gitlab.summary.as_deref(),
         TemplateField::GitLabSummary,
     );
     apply_template_override(
         &mut catalog.github.summary,
-        flavor.templates.github.summary.as_deref(),
+        templates.github.summary.as_deref(),
         TemplateField::GitHubSummary,
     );
     apply_template_override(
         &mut catalog.slack_app.first_root,
-        flavor.templates.slack_app.first_root.as_deref(),
+        templates.slack_app.first_root.as_deref(),
         TemplateField::SlackAppFirstRoot,
     );
     apply_template_override(
         &mut catalog.slack_app.first_thread,
-        flavor.templates.slack_app.first_thread.as_deref(),
+        templates.slack_app.first_thread.as_deref(),
         TemplateField::SlackAppFirstThread,
     );
     apply_template_override(
         &mut catalog.slack_app.update_root,
-        flavor.templates.slack_app.update_root.as_deref(),
+        templates.slack_app.update_root.as_deref(),
         TemplateField::SlackAppUpdateRoot,
     );
     apply_template_override(
         &mut catalog.slack_app.update_thread,
-        flavor.templates.slack_app.update_thread.as_deref(),
+        templates.slack_app.update_thread.as_deref(),
         TemplateField::SlackAppUpdateThread,
     );
     apply_template_override(
         &mut catalog.slack_workflow.first_title,
-        flavor.templates.slack_workflow.first_title.as_deref(),
+        templates.slack_workflow.first_title.as_deref(),
         TemplateField::SlackWorkflowFirstTitle,
     );
     apply_template_override(
         &mut catalog.slack_workflow.first_thread,
-        flavor.templates.slack_workflow.first_thread.as_deref(),
+        templates.slack_workflow.first_thread.as_deref(),
         TemplateField::SlackWorkflowFirstThread,
     );
     apply_template_override(
         &mut catalog.slack_workflow.update_title,
-        flavor.templates.slack_workflow.update_title.as_deref(),
+        templates.slack_workflow.update_title.as_deref(),
         TemplateField::SlackWorkflowUpdateTitle,
     );
     apply_template_override(
         &mut catalog.slack_workflow.update_thread,
-        flavor.templates.slack_workflow.update_thread.as_deref(),
+        templates.slack_workflow.update_thread.as_deref(),
         TemplateField::SlackWorkflowUpdateThread,
     );
 
@@ -1054,10 +1050,9 @@ pub fn enabled_notification_targets(sinks: &[NotificationSinkKind]) -> Vec<Notif
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::model::{
-        FlavorConfig, FlavorGitLabTemplates, FlavorNotification, FlavorPlatformConnector,
-        FlavorSlackAppConfig, FlavorSlackAppTemplates, FlavorSlackWorkflowTemplates,
-        FlavorTemplatesConfig,
+    use crate::config::{
+        GitHubTemplates, GitLabTemplates, SlackAppTemplates, SlackWorkflowTemplates,
+        TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::inference::{
@@ -1214,31 +1209,19 @@ mod tests {
 
     #[test]
     fn uses_partial_template_override_without_affecting_other_fields() {
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
+        let templates = TemplatesConfig {
+            gitlab: GitLabTemplates::default(),
+            github: GitHubTemplates::default(),
+            slack_app: SlackAppTemplates {
+                first_root: Some("custom root for {{mr_ref}}".to_string()),
+                first_thread: None,
+                update_root: None,
+                update_thread: None,
             },
-            notification_policy: None,
-            notifications: vec![FlavorNotification {
-                kind: "slack-app".to_string(),
-                enabled: true,
-            }],
-            slack_app: Some(FlavorSlackAppConfig::default()),
-            llm: None,
-            templates: FlavorTemplatesConfig {
-                gitlab: FlavorGitLabTemplates::default(),
-                github: crate::config::model::FlavorGitHubTemplates::default(),
-                slack_app: FlavorSlackAppTemplates {
-                    first_root: Some("custom root for {{mr_ref}}".to_string()),
-                    first_thread: None,
-                    update_root: None,
-                    update_thread: None,
-                },
-                slack_workflow: FlavorSlackWorkflowTemplates::default(),
-            },
+            slack_workflow: SlackWorkflowTemplates::default(),
         };
 
-        let catalog = resolve_template_catalog(Some(&flavor));
+        let catalog = resolve_template_catalog(&templates);
 
         assert_eq!(catalog.slack_app.first_root, "custom root for {{mr_ref}}");
         assert_eq!(
@@ -1249,28 +1232,19 @@ mod tests {
 
     #[test]
     fn falls_back_to_default_when_override_is_invalid() {
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
+        let templates = TemplatesConfig {
+            gitlab: GitLabTemplates::default(),
+            github: GitHubTemplates::default(),
+            slack_app: SlackAppTemplates {
+                first_root: Some("custom {{unknown_placeholder}}".to_string()),
+                first_thread: None,
+                update_root: None,
+                update_thread: None,
             },
-            notification_policy: None,
-            notifications: Vec::new(),
-            slack_app: None,
-            llm: None,
-            templates: FlavorTemplatesConfig {
-                gitlab: FlavorGitLabTemplates::default(),
-                github: crate::config::model::FlavorGitHubTemplates::default(),
-                slack_app: FlavorSlackAppTemplates {
-                    first_root: Some("custom {{unknown_placeholder}}".to_string()),
-                    first_thread: None,
-                    update_root: None,
-                    update_thread: None,
-                },
-                slack_workflow: FlavorSlackWorkflowTemplates::default(),
-            },
+            slack_workflow: SlackWorkflowTemplates::default(),
         };
 
-        let catalog = resolve_template_catalog(Some(&flavor));
+        let catalog = resolve_template_catalog(&templates);
 
         assert_eq!(catalog.slack_app.first_root, SLACK_APP_FIRST_ROOT_TEMPLATE);
     }

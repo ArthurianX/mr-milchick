@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -42,8 +42,9 @@ use crate::core::tone::{ToneCategory, ToneSelector};
 use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
 use crate::cli::{Cli, FixtureNotificationVariantArg};
-use crate::config::loader::{load_config, load_flavor_config, resolve_codeowners_path};
-use crate::config::model::{FlavorConfig, NotificationPolicy, RuntimeConfig};
+use crate::config::{
+    ResolvedConfig, compiled_notification_sinks, load_resolved_config, resolve_codeowners_path,
+};
 use crate::context::builder::build_ci_context;
 use crate::fixture::load_review_fixture;
 use crate::runtime::{
@@ -57,7 +58,7 @@ compile_error!("Exactly one platform connector feature must be enabled.");
 
 #[derive(Debug, Clone)]
 struct AppConfigContext {
-    runtime: RuntimeConfig,
+    config: ResolvedConfig,
     routing_config: ReviewerRoutingConfig,
     codeowners: CodeownersContext,
 }
@@ -65,35 +66,22 @@ struct AppConfigContext {
 #[derive(Debug)]
 struct FixturePlatformConnector;
 
-const DEFAULT_LLM_TIMEOUT_MS: u64 = 15_000;
-const DEFAULT_LLM_MAX_PATCH_BYTES: usize = 32 * 1024;
-const DEFAULT_LLM_CONTEXT_TOKENS: usize = 4_096;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct EffectiveLlmConfig {
-    enabled: bool,
-    model_path: Option<String>,
-    timeout_ms: u64,
-    max_patch_bytes: usize,
-    context_tokens: usize,
-}
-
 struct ReviewInferenceConnectorAdapter {
     engine: Box<dyn ReviewInferenceEngine>,
     timeout: Duration,
 }
 
 fn load_app_config_context() -> Result<AppConfigContext> {
-    let runtime = load_config()?;
-    let routing_config = ReviewerRoutingConfig::from_config(&runtime.reviewers);
+    let config = load_resolved_config()?;
+    let routing_config = ReviewerRoutingConfig::from_config(&config.reviewers);
     let codeowners = CodeownersContext {
-        enabled: runtime.codeowners.enabled,
-        file: resolve_codeowners_path(&runtime.codeowners)
+        enabled: config.codeowners.enabled,
+        file: resolve_codeowners_path(&config.codeowners)
             .and_then(|path| parse_codeowners_file(&path).ok()),
     };
 
     Ok(AppConfigContext {
-        runtime,
+        config,
         routing_config,
         codeowners,
     })
@@ -213,8 +201,7 @@ pub async fn run_mode(
 
     let selector = ToneSelector::default();
     let app_config = load_app_config_context()?;
-    let flavor = load_flavor_config()?;
-    let template_catalog = resolve_template_catalog(flavor.as_ref());
+    let template_catalog = resolve_template_catalog(&app_config.config.templates);
     let fixture_mode = fixture_path.is_some();
     let mut fixture_notification_variant = fixture_variant.map(map_fixture_variant_arg);
 
@@ -229,7 +216,7 @@ pub async fn run_mode(
         ctx = fixture.to_ci_context()?;
         snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
         outcome = fixture.to_rule_outcome()?;
-        wiring = build_fixture_runtime_wiring(&app_config, flavor.as_ref())?;
+        wiring = build_fixture_runtime_wiring(&app_config)?;
     } else {
         ctx = build_ci_context()?;
         println!("{}", selector.select(ToneCategory::Observation, &ctx));
@@ -240,7 +227,7 @@ pub async fn run_mode(
             return Ok(());
         }
 
-        let live_wiring = build_runtime_wiring(&ctx, &app_config, flavor.as_ref())?;
+        let live_wiring = build_runtime_wiring(&ctx, &app_config)?;
         snapshot = live_wiring.platform_connector.load_snapshot().await?;
         outcome = enrich_with_reviewer_assignment(
             evaluate_rules(&ctx),
@@ -256,7 +243,7 @@ pub async fn run_mode(
         print_compiled_capabilities();
     }
 
-    let preview_sink_kinds = configured_notification_sink_kinds(&app_config, flavor.as_ref());
+    let preview_sink_kinds = configured_notification_sink_kinds(&app_config);
     info!(
         inference_available = wiring.capabilities.inference_available,
         changed_files = snapshot.changed_file_count(),
@@ -283,7 +270,7 @@ pub async fn run_mode(
             "advisory local review produced structured suggestions"
         );
     }
-    if llm_trace_enabled() {
+    if app_config.config.inference.trace {
         print_inference_details(&inference_outcome);
     }
 
@@ -359,10 +346,9 @@ pub async fn run_mode(
                     ExecutionStrategy::DryRun
                 }
             } else {
-                ExecutionStrategy::from_env()
+                ExecutionStrategy::from_dry_run(app_config.config.execution.dry_run)
             };
-            let notification_policy =
-                resolve_notification_policy(&app_config.runtime, flavor.as_ref());
+            let notification_policy = app_config.config.execution.notification_policy;
             let notifications = build_notifications(
                 &outcome,
                 &snapshot,
@@ -399,16 +385,22 @@ pub async fn run_mode(
 fn build_runtime_wiring(
     ctx: &crate::context::model::CiContext,
     app_config: &AppConfigContext,
-    flavor: Option<&FlavorConfig>,
 ) -> Result<RuntimeWiring> {
-    validate_flavor(flavor)?;
     let review_id = ctx
         .review_id()
         .ok_or_else(|| anyhow::anyhow!("missing review identifier"))?;
 
     #[cfg(feature = "gitlab")]
+    let platform_token =
+        app_config.config.platform.token.clone().ok_or_else(|| {
+            anyhow::anyhow!("missing required environment variable: GITLAB_TOKEN")
+        })?;
+    #[cfg(feature = "gitlab")]
     let platform_connector: Box<dyn PlatformConnector> = Box::new(GitLabPlatformConnector::new(
-        crate::connectors::gitlab::api::GitLabConfig::from_env()?,
+        crate::connectors::gitlab::api::GitLabConfig {
+            base_url: app_config.config.platform.base_url.clone(),
+            token: platform_token,
+        },
         ctx.project_key(),
         review_id,
         ctx.source_branch(),
@@ -416,8 +408,16 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     ));
     #[cfg(feature = "github")]
+    let platform_token =
+        app_config.config.platform.token.clone().ok_or_else(|| {
+            anyhow::anyhow!("missing required environment variable: GITHUB_TOKEN")
+        })?;
+    #[cfg(feature = "github")]
     let platform_connector: Box<dyn PlatformConnector> = Box::new(GitHubPlatformConnector::new(
-        crate::connectors::github::api::GitHubConfig::from_env()?,
+        crate::connectors::github::api::GitHubConfig {
+            base_url: app_config.config.platform.base_url.clone(),
+            token: platform_token,
+        },
         ctx.project_key(),
         review_id,
         ctx.source_branch(),
@@ -425,48 +425,39 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     ));
 
-    let (inference_connector, inference_available) =
-        build_inference_connector(&app_config.runtime, flavor)?;
+    let (inference_connector, inference_available) = build_inference_connector(&app_config.config)?;
 
     Ok(RuntimeWiring::new(
         platform_connector,
         inference_connector,
         inference_available,
-        build_notification_sinks(app_config, flavor),
+        build_notification_sinks(app_config),
     ))
 }
 
-fn build_fixture_runtime_wiring(
-    app_config: &AppConfigContext,
-    flavor: Option<&FlavorConfig>,
-) -> Result<RuntimeWiring> {
-    validate_flavor(flavor)?;
-    let (inference_connector, inference_available) =
-        build_inference_connector(&app_config.runtime, flavor)?;
+fn build_fixture_runtime_wiring(app_config: &AppConfigContext) -> Result<RuntimeWiring> {
+    let (inference_connector, inference_available) = build_inference_connector(&app_config.config)?;
 
     Ok(RuntimeWiring::new(
         Box::new(FixturePlatformConnector),
         inference_connector,
         inference_available,
-        build_notification_sinks(app_config, flavor),
+        build_notification_sinks(app_config),
     ))
 }
 
-fn build_notification_sinks(
-    _app_config: &AppConfigContext,
-    _flavor: Option<&FlavorConfig>,
-) -> Vec<Box<dyn NotificationSink>> {
+fn build_notification_sinks(_app_config: &AppConfigContext) -> Vec<Box<dyn NotificationSink>> {
     #[allow(unused_mut)]
     let mut sinks: Vec<Box<dyn NotificationSink>> = Vec::new();
 
     #[cfg(feature = "slack-app")]
-    if notification_enabled_by_flavor(_flavor, "slack-app") {
+    if _app_config.config.notifications.slack_app.enabled {
         let slack = SlackAppSink::new(SlackAppConfig {
-            enabled: _app_config.runtime.slack.enabled,
-            base_url: _app_config.runtime.slack.base_url.clone(),
-            bot_token: _app_config.runtime.slack.bot_token.clone(),
-            channel: _app_config.runtime.slack.channel.clone(),
-            user_map: resolve_slack_app_user_map(&_app_config.runtime, _flavor),
+            enabled: _app_config.config.notifications.slack_app.enabled,
+            base_url: _app_config.config.notifications.slack_app.base_url.clone(),
+            bot_token: _app_config.config.notifications.slack_app.bot_token.clone(),
+            channel: _app_config.config.notifications.slack_app.channel.clone(),
+            user_map: _app_config.config.notifications.slack_app.user_map.clone(),
         });
         if slack.is_enabled() {
             sinks.push(Box::new(slack));
@@ -474,11 +465,21 @@ fn build_notification_sinks(
     }
 
     #[cfg(feature = "slack-workflow")]
-    if notification_enabled_by_flavor(_flavor, "slack-workflow") {
+    if _app_config.config.notifications.slack_workflow.enabled {
         let slack = SlackWorkflowSink::new(SlackWorkflowConfig {
-            enabled: _app_config.runtime.slack.enabled,
-            webhook_url: _app_config.runtime.slack.webhook_url.clone(),
-            channel: _app_config.runtime.slack.channel.clone(),
+            enabled: _app_config.config.notifications.slack_workflow.enabled,
+            webhook_url: _app_config
+                .config
+                .notifications
+                .slack_workflow
+                .webhook_url
+                .clone(),
+            channel: _app_config
+                .config
+                .notifications
+                .slack_workflow
+                .channel
+                .clone(),
         });
         if slack.is_enabled() {
             sinks.push(Box::new(slack));
@@ -488,26 +489,20 @@ fn build_notification_sinks(
     sinks
 }
 
-fn configured_notification_sink_kinds(
-    _app_config: &AppConfigContext,
-    _flavor: Option<&FlavorConfig>,
-) -> Vec<NotificationSinkKind> {
+fn configured_notification_sink_kinds(_app_config: &AppConfigContext) -> Vec<NotificationSinkKind> {
     #[allow(unused_mut)]
     let mut sinks = Vec::new();
 
     #[cfg(feature = "slack-app")]
     {
         let sink = SlackAppSink::new(SlackAppConfig {
-            enabled: _app_config.runtime.slack.enabled,
-            base_url: _app_config.runtime.slack.base_url.clone(),
-            bot_token: _app_config.runtime.slack.bot_token.clone(),
-            channel: _app_config.runtime.slack.channel.clone(),
-            user_map: resolve_slack_app_user_map(&_app_config.runtime, _flavor),
+            enabled: _app_config.config.notifications.slack_app.enabled,
+            base_url: _app_config.config.notifications.slack_app.base_url.clone(),
+            bot_token: _app_config.config.notifications.slack_app.bot_token.clone(),
+            channel: _app_config.config.notifications.slack_app.channel.clone(),
+            user_map: _app_config.config.notifications.slack_app.user_map.clone(),
         });
-        if notification_enabled_by_flavor(_flavor, "slack-app")
-            && (notification_explicitly_enabled_in_flavor(_flavor, "slack-app")
-                || sink.is_enabled())
-        {
+        if _app_config.config.notifications.slack_app.enabled || sink.is_enabled() {
             sinks.push(NotificationSinkKind::SlackApp);
         }
     }
@@ -515,103 +510,42 @@ fn configured_notification_sink_kinds(
     #[cfg(feature = "slack-workflow")]
     {
         let sink = SlackWorkflowSink::new(SlackWorkflowConfig {
-            enabled: _app_config.runtime.slack.enabled,
-            webhook_url: _app_config.runtime.slack.webhook_url.clone(),
-            channel: _app_config.runtime.slack.channel.clone(),
+            enabled: _app_config.config.notifications.slack_workflow.enabled,
+            webhook_url: _app_config
+                .config
+                .notifications
+                .slack_workflow
+                .webhook_url
+                .clone(),
+            channel: _app_config
+                .config
+                .notifications
+                .slack_workflow
+                .channel
+                .clone(),
         });
-        if notification_enabled_by_flavor(_flavor, "slack-workflow")
-            && (notification_explicitly_enabled_in_flavor(_flavor, "slack-workflow")
-                || sink.is_enabled())
-        {
+        if _app_config.config.notifications.slack_workflow.enabled || sink.is_enabled() {
             sinks.push(NotificationSinkKind::SlackWorkflow);
         }
     }
 
     sinks
 }
-
-fn validate_flavor(flavor: Option<&FlavorConfig>) -> Result<()> {
-    if let Some(flavor) = flavor {
-        if flavor.platform_connector.kind != compiled_platform_kind().as_str() {
-            anyhow::bail!(
-                "flavor platform connector '{}' does not match compiled capability '{}'",
-                flavor.platform_connector.kind,
-                compiled_platform_kind().as_str()
-            );
-        }
-
-        for notification in &flavor.notifications {
-            match notification.kind.as_str() {
-                "slack-app" => {
-                    #[cfg(not(feature = "slack-app"))]
-                    anyhow::bail!("flavor notification sink 'slack-app' is not compiled in");
-                }
-                "slack-workflow" => {
-                    #[cfg(not(feature = "slack-workflow"))]
-                    anyhow::bail!("flavor notification sink 'slack-workflow' is not compiled in");
-                }
-                other => anyhow::bail!("unsupported flavor notification sink '{}'", other),
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn notification_enabled_by_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> bool {
-    flavor
-        .map(|flavor| {
-            if flavor.notifications.is_empty() {
-                return true;
-            }
-
-            flavor
-                .notifications
-                .iter()
-                .any(|notification| notification.kind == kind && notification.enabled)
-        })
-        .unwrap_or(true)
-}
-
-fn notification_explicitly_enabled_in_flavor(flavor: Option<&FlavorConfig>, kind: &str) -> bool {
-    flavor
-        .and_then(|flavor| {
-            flavor
-                .notifications
-                .iter()
-                .find(|notification| notification.kind == kind)
-        })
-        .is_some_and(|notification| notification.enabled)
-}
-
-fn resolve_notification_policy(
-    runtime: &RuntimeConfig,
-    flavor: Option<&FlavorConfig>,
-) -> NotificationPolicy {
-    runtime
-        .notification_policy
-        .or_else(|| flavor.and_then(|config| config.notification_policy))
-        .unwrap_or(NotificationPolicy::Always)
-}
-
 fn build_inference_connector(
-    runtime: &RuntimeConfig,
-    flavor: Option<&FlavorConfig>,
+    config: &ResolvedConfig,
 ) -> Result<(Box<dyn ReviewInferenceConnector>, bool)> {
-    let llm = resolve_llm_config(runtime, flavor);
-    let timeout = Duration::from_millis(llm.timeout_ms);
+    let timeout = Duration::from_millis(config.inference.timeout_ms);
 
     info!(
-        llm_enabled = llm.enabled,
-        llm_model_path = llm.model_path.as_deref().unwrap_or(""),
-        llm_timeout_ms = llm.timeout_ms,
-        llm_max_patch_bytes = llm.max_patch_bytes,
-        llm_context_tokens = llm.context_tokens,
+        llm_enabled = config.inference.enabled,
+        llm_model_path = config.inference.model_path.as_deref().unwrap_or(""),
+        llm_timeout_ms = config.inference.timeout_ms,
+        llm_max_patch_bytes = config.inference.max_patch_bytes,
+        llm_context_tokens = config.inference.context_tokens,
         "resolved advisory local review configuration"
     );
 
-    if !llm.enabled {
+    if !config.inference.enabled {
         info!("advisory local review is disabled by configuration");
         return Ok((
             Box::new(ReviewInferenceConnectorAdapter {
@@ -624,7 +558,8 @@ fn build_inference_connector(
         ));
     }
 
-    let model_path = llm
+    let model_path = config
+        .inference
         .model_path
         .clone()
         .ok_or_else(|| anyhow::anyhow!("LLM review recommendations require a model path"))?;
@@ -636,8 +571,8 @@ fn build_inference_connector(
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(LocalLlamaReviewInferenceEngine::new(
                     model_path,
-                    llm.max_patch_bytes,
-                    llm.context_tokens,
+                    config.inference.max_patch_bytes,
+                    config.inference.context_tokens,
                     timeout,
                 )?),
                 timeout,
@@ -664,87 +599,21 @@ fn build_inference_connector(
     }
 }
 
-fn resolve_llm_config(
-    runtime: &RuntimeConfig,
-    flavor: Option<&FlavorConfig>,
-) -> EffectiveLlmConfig {
-    let flavor = flavor.and_then(|config| config.llm.as_ref());
-
-    EffectiveLlmConfig {
-        enabled: runtime
-            .llm
-            .enabled
-            .or_else(|| flavor.and_then(|config| config.enabled))
-            .unwrap_or(false),
-        model_path: runtime
-            .llm
-            .model_path
-            .clone()
-            .or_else(|| flavor.and_then(|config| config.model_path.clone())),
-        timeout_ms: runtime
-            .llm
-            .timeout_ms
-            .or_else(|| flavor.and_then(|config| config.timeout_ms))
-            .unwrap_or(DEFAULT_LLM_TIMEOUT_MS),
-        max_patch_bytes: runtime
-            .llm
-            .max_patch_bytes
-            .or_else(|| flavor.and_then(|config| config.max_patch_bytes))
-            .unwrap_or(DEFAULT_LLM_MAX_PATCH_BYTES),
-        context_tokens: runtime
-            .llm
-            .context_tokens
-            .or_else(|| flavor.and_then(|config| config.context_tokens))
-            .unwrap_or(DEFAULT_LLM_CONTEXT_TOKENS),
-    }
-}
-
-#[allow(dead_code)]
-fn resolve_slack_app_user_map(
-    runtime: &RuntimeConfig,
-    flavor: Option<&FlavorConfig>,
-) -> BTreeMap<String, String> {
-    if !runtime.slack.user_map.is_empty() {
-        return runtime.slack.user_map.clone();
-    }
-
-    flavor
-        .and_then(|config| config.slack_app.as_ref())
-        .map(|config| {
-            config
-                .user_map
-                .iter()
-                .filter_map(|(gitlab_username, slack_user_id)| {
-                    let gitlab_username = gitlab_username.trim();
-                    let slack_user_id = slack_user_id.trim();
-
-                    if gitlab_username.is_empty() || slack_user_id.is_empty() {
-                        return None;
-                    }
-
-                    Some((gitlab_username.to_string(), slack_user_id.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn print_compiled_capabilities() {
     println!("Compiled capabilities:");
     println!(
         "- platform connector: {}",
-        compiled_platform_kind().as_str()
+        crate::config::compiled_platform_kind().as_str()
     );
-    #[cfg(feature = "llm-local")]
-    println!("- advisory local review: llama.cpp");
-    #[cfg(not(feature = "llm-local"))]
-    println!("- advisory local review: not compiled");
-    #[allow(unused_mut)]
-    let mut sinks: Vec<&str> = Vec::new();
-    #[cfg(feature = "slack-app")]
-    sinks.push("slack-app");
-    #[cfg(feature = "slack-workflow")]
-    sinks.push("slack-workflow");
+    if crate::config::llm_backend_compiled() {
+        println!("- advisory local review: llama.cpp");
+    } else {
+        println!("- advisory local review: not compiled");
+    }
+    let sinks = compiled_notification_sinks()
+        .into_iter()
+        .map(|sink| sink.as_str())
+        .collect::<Vec<_>>();
 
     if sinks.is_empty() {
         println!("- notification sinks: none");
@@ -1069,12 +938,6 @@ fn print_inference_details(inference_outcome: &ReviewInferenceOutcome) {
     }
 }
 
-fn llm_trace_enabled() -> bool {
-    std::env::var("MR_MILCHICK_LLM_TRACE")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
-}
-
 fn print_codeowners_details(
     snapshot: &crate::core::model::ReviewSnapshot,
     app_config: &AppConfigContext,
@@ -1136,8 +999,10 @@ fn print_codeowners_details(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::model::{
-        CodeownersConfig, FlavorPlatformConnector, FlavorSlackAppConfig, SlackConfig,
+    use crate::config::{
+        CodeownersConfig, ExecutionConfig, InferenceConfig, NotificationsConfig, PlatformConfig,
+        ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig,
+        SlackWorkflowConfig as ResolvedSlackWorkflowConfig, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::context::model::{
@@ -1223,6 +1088,51 @@ mod tests {
                         .to_string(),
             }],
         })
+    }
+
+    fn sample_resolved_config() -> ResolvedConfig {
+        ResolvedConfig {
+            platform: PlatformConfig {
+                kind: ReviewPlatformKind::GitLab,
+                base_url: "https://gitlab.example.com/api/v4".to_string(),
+                token: Some("gitlab-token".to_string()),
+            },
+            execution: ExecutionConfig {
+                dry_run: false,
+                notification_policy: crate::config::NotificationPolicy::Always,
+            },
+            reviewers: crate::core::model::ReviewerConfig {
+                definitions: Vec::new(),
+                max_reviewers: 2,
+            },
+            codeowners: CodeownersConfig {
+                enabled: true,
+                path: None,
+            },
+            inference: InferenceConfig {
+                enabled: false,
+                model_path: None,
+                timeout_ms: 15_000,
+                max_patch_bytes: 32 * 1024,
+                context_tokens: 4_096,
+                trace: false,
+            },
+            notifications: NotificationsConfig {
+                slack_app: ResolvedSlackAppConfig {
+                    enabled: false,
+                    base_url: "https://slack.com/api".to_string(),
+                    bot_token: None,
+                    channel: None,
+                    user_map: Default::default(),
+                },
+                slack_workflow: ResolvedSlackWorkflowConfig {
+                    enabled: false,
+                    webhook_url: None,
+                    channel: None,
+                },
+            },
+            templates: TemplatesConfig::default(),
+        }
     }
 
     #[test]
@@ -1316,374 +1226,48 @@ mod tests {
     }
 
     #[test]
-    fn slack_app_user_map_prefers_runtime_env_mapping() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: None,
-                model_path: None,
-                timeout_ms: None,
-                max_patch_bytes: None,
-                context_tokens: None,
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::from([("alice".to_string(), "UENV12345".to_string())]),
-            },
-            notification_policy: None,
-        };
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: None,
-            notifications: Vec::new(),
-            slack_app: Some(FlavorSlackAppConfig {
-                user_map: BTreeMap::from([("alice".to_string(), "UTOML1234".to_string())]),
-            }),
-            llm: None,
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
+    fn configured_notification_sink_kinds_uses_resolved_config() {
+        let mut config = sample_resolved_config();
+        config.notifications.slack_app.enabled = true;
 
-        let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
-
-        assert_eq!(resolved.get("alice"), Some(&"UENV12345".to_string()));
-    }
-
-    #[test]
-    fn slack_app_user_map_falls_back_to_flavor_mapping() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: None,
-                model_path: None,
-                timeout_ms: None,
-                max_patch_bytes: None,
-                context_tokens: None,
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::new(),
-            },
-            notification_policy: None,
-        };
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: None,
-            notifications: Vec::new(),
-            slack_app: Some(FlavorSlackAppConfig {
-                user_map: BTreeMap::from([
-                    ("alice".to_string(), "UTOML1234".to_string()),
-                    ("bob".to_string(), "".to_string()),
-                ]),
-            }),
-            llm: None,
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
-
-        let resolved = resolve_slack_app_user_map(&runtime, Some(&flavor));
-
-        assert_eq!(resolved.get("alice"), Some(&"UTOML1234".to_string()));
-        assert!(!resolved.contains_key("bob"));
-    }
-
-    #[test]
-    fn notification_policy_defaults_to_always() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: None,
-                model_path: None,
-                timeout_ms: None,
-                max_patch_bytes: None,
-                context_tokens: None,
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::new(),
-            },
-            notification_policy: None,
-        };
-
-        assert_eq!(
-            resolve_notification_policy(&runtime, None),
-            NotificationPolicy::Always
-        );
-    }
-
-    #[test]
-    fn notification_sinks_default_to_enabled_when_flavor_has_no_entries() {
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: None,
-            notifications: Vec::new(),
-            slack_app: None,
-            llm: None,
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
-
-        assert!(notification_enabled_by_flavor(Some(&flavor), "slack-app"));
-        assert!(notification_enabled_by_flavor(
-            Some(&flavor),
-            "slack-workflow"
-        ));
-    }
-
-    #[test]
-    fn notification_sinks_honor_explicit_flavor_entries() {
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: None,
-            notifications: vec![crate::config::model::FlavorNotification {
-                kind: "slack-app".to_string(),
+        let app_config = AppConfigContext {
+            config,
+            routing_config: ReviewerRoutingConfig::from_config(
+                &crate::core::model::ReviewerConfig {
+                    definitions: Vec::new(),
+                    max_reviewers: 2,
+                },
+            ),
+            codeowners: CodeownersContext {
                 enabled: false,
-            }],
-            slack_app: None,
-            llm: None,
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
+                file: None,
+            },
         };
 
-        assert!(!notification_enabled_by_flavor(Some(&flavor), "slack-app"));
-        assert!(!notification_enabled_by_flavor(
-            Some(&flavor),
-            "slack-workflow"
-        ));
-    }
-
-    #[test]
-    fn notification_policy_uses_flavor_when_runtime_has_no_override() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: None,
-                model_path: None,
-                timeout_ms: None,
-                max_patch_bytes: None,
-                context_tokens: None,
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::new(),
-            },
-            notification_policy: None,
-        };
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: Some(NotificationPolicy::OnAppliedAction),
-            notifications: Vec::new(),
-            slack_app: None,
-            llm: None,
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
-
-        assert_eq!(
-            resolve_notification_policy(&runtime, Some(&flavor)),
-            NotificationPolicy::OnAppliedAction
+        assert!(
+            configured_notification_sink_kinds(&app_config)
+                .contains(&NotificationSinkKind::SlackApp)
         );
     }
 
     #[test]
-    fn notification_policy_prefers_runtime_override_over_flavor() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: None,
-                model_path: None,
-                timeout_ms: None,
-                max_patch_bytes: None,
-                context_tokens: None,
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::new(),
-            },
-            notification_policy: Some(NotificationPolicy::Always),
-        };
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: Some(NotificationPolicy::OnAppliedAction),
-            notifications: Vec::new(),
-            slack_app: None,
-            llm: None,
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
+    fn build_inference_connector_respects_resolved_config() {
+        let config = sample_resolved_config();
+        let (_, available) =
+            build_inference_connector(&config).expect("disabled inference should succeed");
 
-        assert_eq!(
-            resolve_notification_policy(&runtime, Some(&flavor)),
-            NotificationPolicy::Always
-        );
+        assert!(!available);
     }
 
     #[test]
-    fn llm_resolution_falls_back_to_flavor_when_runtime_has_no_overrides() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: None,
-                model_path: None,
-                timeout_ms: None,
-                max_patch_bytes: None,
-                context_tokens: None,
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::new(),
-            },
-            notification_policy: None,
+    fn build_inference_connector_requires_model_path_when_enabled() {
+        let mut config = sample_resolved_config();
+        config.inference.enabled = true;
+
+        let error = match build_inference_connector(&config) {
+            Ok(_) => panic!("missing model path should fail"),
+            Err(error) => error,
         };
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: None,
-            notifications: Vec::new(),
-            slack_app: None,
-            llm: Some(crate::config::model::FlavorLlmConfig {
-                enabled: Some(true),
-                model_path: Some("/models/review.gguf".to_string()),
-                timeout_ms: Some(22_000),
-                max_patch_bytes: Some(48_000),
-                context_tokens: Some(8_192),
-            }),
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
-
-        let resolved = resolve_llm_config(&runtime, Some(&flavor));
-
-        assert!(resolved.enabled);
-        assert_eq!(resolved.model_path.as_deref(), Some("/models/review.gguf"));
-        assert_eq!(resolved.timeout_ms, 22_000);
-        assert_eq!(resolved.max_patch_bytes, 48_000);
-        assert_eq!(resolved.context_tokens, 8_192);
-    }
-
-    #[test]
-    fn llm_resolution_prefers_runtime_overrides_over_flavor_values() {
-        let runtime = RuntimeConfig {
-            reviewers: crate::core::model::ReviewerConfig {
-                definitions: Vec::new(),
-                max_reviewers: 2,
-            },
-            codeowners: CodeownersConfig {
-                enabled: true,
-                path: None,
-            },
-            llm: crate::config::model::LlmConfig {
-                enabled: Some(false),
-                model_path: Some("/env/model.gguf".to_string()),
-                timeout_ms: Some(5_000),
-                max_patch_bytes: Some(16_000),
-                context_tokens: Some(12_288),
-            },
-            slack: SlackConfig {
-                enabled: true,
-                base_url: "https://slack.com/api".to_string(),
-                bot_token: None,
-                webhook_url: None,
-                channel: None,
-                user_map: BTreeMap::new(),
-            },
-            notification_policy: None,
-        };
-        let flavor = FlavorConfig {
-            platform_connector: FlavorPlatformConnector {
-                kind: "gitlab".to_string(),
-            },
-            notification_policy: None,
-            notifications: Vec::new(),
-            slack_app: None,
-            llm: Some(crate::config::model::FlavorLlmConfig {
-                enabled: Some(true),
-                model_path: Some("/flavor/model.gguf".to_string()),
-                timeout_ms: Some(22_000),
-                max_patch_bytes: Some(48_000),
-                context_tokens: Some(8_192),
-            }),
-            templates: crate::config::model::FlavorTemplatesConfig::default(),
-        };
-
-        let resolved = resolve_llm_config(&runtime, Some(&flavor));
-
-        assert!(!resolved.enabled);
-        assert_eq!(resolved.model_path.as_deref(), Some("/env/model.gguf"));
-        assert_eq!(resolved.timeout_ms, 5_000);
-        assert_eq!(resolved.max_patch_bytes, 16_000);
-        assert_eq!(resolved.context_tokens, 12_288);
+        assert!(error.to_string().contains("require a model path"));
     }
 }

@@ -1,21 +1,7 @@
-use anyhow::{Result, anyhow};
-
 #[derive(Debug, Clone)]
 pub struct GitHubConfig {
     pub base_url: String,
     pub token: String,
-}
-
-impl GitHubConfig {
-    pub fn from_env() -> Result<Self> {
-        let base_url = std::env::var("GITHUB_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.github.com".to_string());
-
-        let token = std::env::var("GITHUB_TOKEN")
-            .map_err(|_| anyhow!("missing required environment variable: GITHUB_TOKEN"))?;
-
-        Ok(Self { base_url, token })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

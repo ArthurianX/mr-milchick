@@ -19,42 +19,193 @@ fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Outp
     command.arg(subcommand);
     command.args(extra_args);
     command.env_clear();
-    let has_flavor_override = envs
-        .iter()
-        .any(|(key, _)| *key == "MR_MILCHICK_FLAVOR_PATH");
-    let default_flavor = (!has_flavor_override).then(|| {
-        write_temp_flavor(&format!(
-            r#"[platform_connector]
-kind = "{}"
-"#,
-            compiled_platform_connector_kind()
-        ))
-    });
+    let config_override = env_value(envs, "MR_MILCHICK_CONFIG_PATH")
+        .or_else(|| env_value(envs, "MR_MILCHICK_FLAVOR_PATH"));
+    let default_config = config_override
+        .is_none()
+        .then(|| write_temp_config(&build_test_config(envs)));
 
     for (key, value) in envs {
+        if is_config_managed_env(key) || *key == "MR_MILCHICK_FLAVOR_PATH" {
+            continue;
+        }
         command.env(key, value);
     }
-    if let Some(path) = &default_flavor {
-        command.env("MR_MILCHICK_FLAVOR_PATH", path);
+    if let Some(path) = config_override {
+        command.env("MR_MILCHICK_CONFIG_PATH", path);
+    } else if let Some(path) = &default_config {
+        command.env("MR_MILCHICK_CONFIG_PATH", path);
     }
 
     let output = command.output().expect("CLI invocation should succeed");
 
-    if let Some(path) = default_flavor {
+    if let Some(path) = default_config {
         let _ = fs::remove_file(path);
     }
 
     output
 }
 
-fn write_temp_flavor(contents: &str) -> String {
+fn write_temp_config(contents: &str) -> String {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("mr-milchick-flavor-{unique}.toml"));
-    fs::write(&path, contents).expect("temp flavor should be written");
+    let path = std::env::temp_dir().join(format!("mr-milchick-config-{unique}.toml"));
+    fs::write(&path, contents).expect("temp config should be written");
     path.display().to_string()
+}
+
+fn build_test_config(envs: &[(&str, &str)]) -> String {
+    let mut sections = vec![format!(
+        "[platform]\nkind = \"{}\"\nbase_url = {}\n",
+        compiled_platform_connector_kind(),
+        toml_string(
+            env_value(envs, "GITLAB_BASE_URL")
+                .or_else(|| env_value(envs, "GITHUB_API_BASE_URL"))
+                .unwrap_or(default_platform_base_url())
+        )
+    )];
+
+    sections.push(format!(
+        "[execution]\ndry_run = {}\nnotification_policy = {}\n",
+        legacy_bool(env_value(envs, "MR_MILCHICK_DRY_RUN")).unwrap_or(false),
+        toml_string(env_value(envs, "MR_MILCHICK_NOTIFICATION_POLICY").unwrap_or("always"))
+    ));
+
+    sections.push(build_reviewers_config(envs));
+    sections.push(format!(
+        "[codeowners]\nenabled = {}\n",
+        legacy_bool(env_value(envs, "MR_MILCHICK_CODEOWNERS_ENABLED")).unwrap_or(true)
+    ));
+
+    if legacy_bool(env_value(envs, "MR_MILCHICK_SLACK_ENABLED")).unwrap_or(false) {
+        sections.push(format!(
+            "[notifications.slack_app]\nenabled = true\nchannel = {}\nbase_url = {}\n",
+            toml_optional_string(env_value(envs, "MR_MILCHICK_SLACK_CHANNEL")),
+            toml_string(
+                env_value(envs, "MR_MILCHICK_SLACK_BASE_URL").unwrap_or("https://slack.com/api")
+            )
+        ));
+
+        if let Some(user_map) = env_value(envs, "MR_MILCHICK_SLACK_USER_MAP") {
+            sections.push(build_user_map_config(user_map));
+        }
+    }
+
+    if legacy_bool(env_value(envs, "MR_MILCHICK_SLACK_ENABLED")).unwrap_or(false)
+        && env_value(envs, "MR_MILCHICK_SLACK_WEBHOOK_URL").is_some()
+    {
+        sections.push(format!(
+            "[notifications.slack_workflow]\nenabled = true\nchannel = {}\n",
+            toml_optional_string(env_value(envs, "MR_MILCHICK_SLACK_CHANNEL"))
+        ));
+    }
+
+    sections.join("\n")
+}
+
+fn build_reviewers_config(envs: &[(&str, &str)]) -> String {
+    let max_reviewers = env_value(envs, "MR_MILCHICK_MAX_REVIEWERS").unwrap_or("2");
+    let mut config = format!("[reviewers]\nmax_reviewers = {}\n", max_reviewers);
+
+    let Some(raw) = env_value(envs, "MR_MILCHICK_REVIEWERS") else {
+        return config;
+    };
+
+    let reviewers = serde_json::from_str::<Vec<serde_json::Value>>(raw)
+        .expect("test reviewer config should be valid JSON");
+    for reviewer in reviewers {
+        let username = reviewer["username"]
+            .as_str()
+            .expect("reviewer username should be present");
+        config.push_str("\n[[reviewers.definitions]]\n");
+        config.push_str(&format!("username = {}\n", toml_string(username)));
+        if let Some(areas) = reviewer["areas"].as_array() {
+            let areas = areas
+                .iter()
+                .map(|area| toml_string(area.as_str().expect("area should be a string")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            config.push_str(&format!("areas = [{}]\n", areas));
+        }
+        if reviewer["fallback"].as_bool().unwrap_or(false) {
+            config.push_str("fallback = true\n");
+        }
+        if reviewer["mandatory"].as_bool().unwrap_or(false) {
+            config.push_str("mandatory = true\n");
+        }
+    }
+
+    config
+}
+
+fn build_user_map_config(raw: &str) -> String {
+    let user_map = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(raw)
+        .expect("test Slack user map should be valid JSON");
+    let mut config = String::from("[notifications.slack_app.user_map]\n");
+    for (username, user_id) in user_map {
+        config.push_str(&format!(
+            "{} = {}\n",
+            toml_string(&username),
+            toml_string(user_id.as_str().expect("Slack user id should be a string"))
+        ));
+    }
+    config
+}
+
+fn env_value<'a>(envs: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
+    envs.iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, value)| *value)
+}
+
+fn is_config_managed_env(key: &str) -> bool {
+    matches!(
+        key,
+        "MR_MILCHICK_REVIEWERS"
+            | "MR_MILCHICK_MAX_REVIEWERS"
+            | "MR_MILCHICK_CODEOWNERS_ENABLED"
+            | "MR_MILCHICK_CODEOWNERS_PATH"
+            | "MR_MILCHICK_DRY_RUN"
+            | "MR_MILCHICK_NOTIFICATION_POLICY"
+            | "MR_MILCHICK_LLM_ENABLED"
+            | "MR_MILCHICK_LLM_MODEL_PATH"
+            | "MR_MILCHICK_LLM_TIMEOUT_MS"
+            | "MR_MILCHICK_LLM_MAX_PATCH_BYTES"
+            | "MR_MILCHICK_LLM_CONTEXT_TOKENS"
+            | "MR_MILCHICK_LLM_TRACE"
+            | "MR_MILCHICK_SLACK_ENABLED"
+            | "MR_MILCHICK_SLACK_CHANNEL"
+            | "MR_MILCHICK_SLACK_BASE_URL"
+            | "MR_MILCHICK_SLACK_USER_MAP"
+            | "GITLAB_BASE_URL"
+            | "GITHUB_API_BASE_URL"
+            | "MR_MILCHICK_CONFIG_PATH"
+    )
+}
+
+fn legacy_bool(value: Option<&str>) -> Option<bool> {
+    value.map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+}
+
+fn toml_string(value: &str) -> String {
+    serde_json::to_string(value).expect("string should serialize")
+}
+
+fn toml_optional_string(value: Option<&str>) -> String {
+    value.map(toml_string).unwrap_or_else(|| "\"\"".to_string())
+}
+
+fn default_platform_base_url() -> &'static str {
+    #[cfg(feature = "github")]
+    {
+        "https://api.github.com"
+    }
+    #[cfg(not(feature = "github"))]
+    {
+        "https://gitlab.com/api/v4"
+    }
 }
 
 fn compiled_platform_connector_kind() -> &'static str {
@@ -247,12 +398,32 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
 #[test]
 fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
+kind = "{platform}"
+base_url = {base_url}
+
+[execution]
+notification_policy = "always"
+
+[reviewers]
+max_reviewers = 2
+
+[codeowners]
+enabled = false
+
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = {slack_base_url}
+"#,
+        platform = compiled_platform_connector_kind(),
+        base_url = toml_string(server.api_base_url().as_str()),
+        slack_base_url = toml_string(server.slack_api_base_url().as_str()),
+    ));
     let mut envs = review_env(&server);
-    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
 
     let first = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
@@ -296,22 +467,39 @@ fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_un
         server.request_count("POST", "/slack/api/chat.postMessage"),
         3
     );
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
-    let mut envs = review_env(&server);
-    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
-    envs.push((
-        "MR_MILCHICK_NOTIFICATION_POLICY",
-        "on-applied-action".to_string(),
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
+kind = "{platform}"
+base_url = {base_url}
+
+[execution]
+notification_policy = "on-applied-action"
+
+[reviewers]
+max_reviewers = 2
+
+[codeowners]
+enabled = false
+
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = {slack_base_url}
+"#,
+        platform = compiled_platform_connector_kind(),
+        base_url = toml_string(server.api_base_url().as_str()),
+        slack_base_url = toml_string(server.slack_api_base_url().as_str()),
     ));
+    let mut envs = review_env(&server);
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
 
     let first = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
@@ -352,34 +540,37 @@ fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unch
         server.request_count("POST", "/slack/api/chat.postMessage"),
         2
     );
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
 #[test]
-fn refine_mode_uses_partial_slack_template_override_from_flavor_file() {
+fn refine_mode_uses_partial_slack_template_override_from_config_file() {
     let server = MockGitLabServer::start();
-    let flavor_path = write_temp_flavor(
-        &r#"
-[platform_connector]
+    let config_body = r#"
+[platform]
 kind = "__PLATFORM__"
+base_url = "__BASE_URL__"
 
-[[notifications]]
-kind = "slack-app"
+[reviewers]
+max_reviewers = 2
+
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
+base_url = "__SLACK_BASE_URL__"
 
 [templates.slack_app]
 update_root = "Template override for {{mr_ref}}"
 "#
-        .replace("__PLATFORM__", compiled_platform_connector_kind()),
-    );
+    .replace("__PLATFORM__", compiled_platform_connector_kind())
+    .replace("__BASE_URL__", &server.api_base_url())
+    .replace("__SLACK_BASE_URL__", &server.slack_api_base_url());
+    let config_path = write_temp_config(&config_body);
 
     let mut envs = review_env(&server);
-    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
-    envs.push(("MR_MILCHICK_FLAVOR_PATH", flavor_path.clone()));
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
 
     let output = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
@@ -402,35 +593,37 @@ update_root = "Template override for {{mr_ref}}"
             .any(|body| body.contains("No findings were produced."))
     );
 
-    let _ = fs::remove_file(flavor_path);
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_invalid_template_override_falls_back_to_default_output() {
     let server = MockGitLabServer::start();
-    let flavor_path = write_temp_flavor(
-        &r#"
-[platform_connector]
+    let config_body = r#"
+[platform]
 kind = "__PLATFORM__"
+base_url = "__BASE_URL__"
 
-[[notifications]]
-kind = "slack-app"
+[reviewers]
+max_reviewers = 2
+
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
+base_url = "__SLACK_BASE_URL__"
 
 [templates.slack_app]
 update_root = "Template override for {{unknown_placeholder}}"
 "#
-        .replace("__PLATFORM__", compiled_platform_connector_kind()),
-    );
+    .replace("__PLATFORM__", compiled_platform_connector_kind())
+    .replace("__BASE_URL__", &server.api_base_url())
+    .replace("__SLACK_BASE_URL__", &server.slack_api_base_url());
+    let config_path = write_temp_config(&config_body);
 
     let mut envs = review_env(&server);
-    envs.push(("MR_MILCHICK_REVIEWERS", "[]".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_ENABLED", "true".to_string()));
     envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X".to_string()));
-    envs.push(("MR_MILCHICK_SLACK_BASE_URL", server.slack_api_base_url()));
-    envs.push(("MR_MILCHICK_FLAVOR_PATH", flavor_path.clone()));
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
 
     let output = run_cli("refine", &[], &borrow_env(&envs));
     assert!(
@@ -448,7 +641,7 @@ update_root = "Template override for {{unknown_placeholder}}"
             .all(|body| !body.contains("unknown_placeholder"))
     );
 
-    let _ = fs::remove_file(flavor_path);
+    let _ = fs::remove_file(config_path);
 }
 
 #[test]
@@ -474,15 +667,17 @@ fn observe_mode_supports_fixture_without_ci_env_without_notification_sinks() {
 #[cfg(feature = "slack-app")]
 #[test]
 fn observe_mode_fixture_variant_override_can_force_update_preview() {
-    let flavor_path = write_temp_flavor(&format!(
-        r#"[platform_connector]
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
 kind = "{platform}"
+base_url = {base_url}
 
-[[notifications]]
-kind = "slack-app"
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
 "#,
         platform = compiled_platform_connector_kind(),
+        base_url = toml_string(default_platform_base_url()),
     ));
     let output = run_cli(
         "observe",
@@ -493,7 +688,7 @@ enabled = true
             "update",
         ],
         &[
-            ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
+            ("MR_MILCHICK_CONFIG_PATH", config_path.as_str()),
             ("RUST_LOG", "off"),
         ],
     );
@@ -510,27 +705,29 @@ enabled = true
     assert!(stdout.contains("Mr. Milchick - updates"));
     assert!(!stdout.contains("took a first look at"));
 
-    let _ = fs::remove_file(flavor_path);
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
 #[test]
 fn observe_mode_supports_fixture_without_ci_env_and_prints_notification_preview() {
-    let flavor_path = write_temp_flavor(&format!(
-        r#"[platform_connector]
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
 kind = "{platform}"
+base_url = {base_url}
 
-[[notifications]]
-kind = "slack-app"
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
 "#,
         platform = compiled_platform_connector_kind(),
+        base_url = toml_string(default_platform_base_url()),
     ));
     let output = run_cli(
         "observe",
         &["--fixture", "fixtures/first-notification.toml"],
         &[
-            ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
+            ("MR_MILCHICK_CONFIG_PATH", config_path.as_str()),
             ("RUST_LOG", "off"),
         ],
     );
@@ -547,7 +744,7 @@ enabled = true
     assert!(stdout.contains("SlackApp"));
     assert!(stdout.contains("took a first look at"));
 
-    let _ = fs::remove_file(flavor_path);
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
@@ -555,16 +752,20 @@ enabled = true
 fn refine_mode_fixture_sends_slack_notifications_without_gitlab_env() {
     let server = MockGitLabServer::start();
     let slack_base_url = server.slack_api_base_url();
-    let flavor_path = write_temp_flavor(&format!(
+    let config_path = write_temp_config(&format!(
         r#"
-[platform_connector]
+[platform]
 kind = "{platform}"
+base_url = {base_url}
 
-[[notifications]]
-kind = "slack-app"
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
+base_url = {slack_base_url}
 "#,
         platform = compiled_platform_connector_kind(),
+        base_url = toml_string(default_platform_base_url()),
+        slack_base_url = toml_string(slack_base_url.as_str()),
     ));
 
     let output = run_cli(
@@ -575,11 +776,8 @@ enabled = true
             "--send-notifications",
         ],
         &[
-            ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
-            ("MR_MILCHICK_SLACK_ENABLED", "true"),
+            ("MR_MILCHICK_CONFIG_PATH", config_path.as_str()),
             ("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test"),
-            ("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X"),
-            ("MR_MILCHICK_SLACK_BASE_URL", slack_base_url.as_str()),
             ("RUST_LOG", "off"),
         ],
     );
@@ -608,7 +806,7 @@ enabled = true
         "fixture mode should not talk to GitHub"
     );
 
-    let _ = fs::remove_file(flavor_path);
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
@@ -616,24 +814,25 @@ enabled = true
 fn refine_mode_fixture_update_reuses_existing_slack_thread_for_same_mr() {
     let server = MockGitLabServer::start();
     let slack_base_url = server.slack_api_base_url();
-    let flavor_path = write_temp_flavor(&format!(
+    let config_path = write_temp_config(&format!(
         r#"
-[platform_connector]
+[platform]
 kind = "{platform}"
+base_url = {base_url}
 
-[[notifications]]
-kind = "slack-app"
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
+base_url = {slack_base_url}
 "#,
         platform = compiled_platform_connector_kind(),
+        base_url = toml_string(default_platform_base_url()),
+        slack_base_url = toml_string(slack_base_url.as_str()),
     ));
 
     let common_env = [
-        ("MR_MILCHICK_FLAVOR_PATH", flavor_path.as_str()),
-        ("MR_MILCHICK_SLACK_ENABLED", "true"),
+        ("MR_MILCHICK_CONFIG_PATH", config_path.as_str()),
         ("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test"),
-        ("MR_MILCHICK_SLACK_CHANNEL", "C0ALY38CW3X"),
-        ("MR_MILCHICK_SLACK_BASE_URL", slack_base_url.as_str()),
         ("RUST_LOG", "off"),
     ];
 
@@ -691,7 +890,7 @@ enabled = true
     assert!(update_text.contains("MR #3997"));
     assert!(update_text.contains("Button spacing changed near the CTA"));
 
-    let _ = fs::remove_file(flavor_path);
+    let _ = fs::remove_file(config_path);
 }
 
 #[test]

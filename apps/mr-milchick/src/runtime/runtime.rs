@@ -1,4 +1,4 @@
-use crate::config::model::NotificationPolicy;
+use crate::config::NotificationPolicy;
 use crate::core::inference::ReviewInferenceOutcome;
 use crate::core::model::{
     NotificationMessage, NotificationSinkKind, ReviewAction, ReviewActionKind, ReviewPlatformKind,
@@ -23,11 +23,7 @@ pub enum ExecutionStrategy {
 }
 
 impl ExecutionStrategy {
-    pub fn from_env() -> Self {
-        let dry_run = std::env::var("MR_MILCHICK_DRY_RUN")
-            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
-
+    pub fn from_dry_run(dry_run: bool) -> Self {
         if dry_run { Self::DryRun } else { Self::Real }
     }
 }

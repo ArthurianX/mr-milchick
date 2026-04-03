@@ -57,17 +57,36 @@ Internally, the repository now ships as a single crate with layered modules:
 
 The example below builds the binary in GitLab CI with the GitLab platform connector plus Slack app support, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
 
+Runtime settings now live in `mr-milchick.toml`. A minimal GitLab-oriented example looks like this:
+
+```toml
+[platform]
+kind = "gitlab"
+
+[reviewers]
+max_reviewers = 2
+
+[[reviewers.definitions]]
+username = "milchick-duty"
+fallback = true
+
+[[reviewers.definitions]]
+username = "principal-reviewer"
+mandatory = true
+
+[[reviewers.definitions]]
+username = "alice"
+areas = ["frontend", "packages"]
+
+[[reviewers.definitions]]
+username = "carol"
+areas = ["backend"]
+```
+
 ```yaml
 stages:
   - build
   - review
-
-variables:
-  MR_MILCHICK_REVIEWERS: >-
-    [{"username":"milchick-duty","fallback":true},
-     {"username":"principal-reviewer","mandatory":true},
-     {"username":"alice","areas":["frontend","packages"]},
-     {"username":"carol","areas":["backend"]}]
 
 build:milchick:
   stage: build
@@ -94,7 +113,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN`, `MR_MILCHICK_SLACK_CHANNEL`, and optionally `MR_MILCHICK_SLACK_USER_MAP`. With the Slack app sink, follow-up update notifications try to land in the original MR thread for the same `MR #...`; Slack workflow delivery does not currently do that thread reuse. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and optional user mapping now live in `mr-milchick.toml`. With the Slack app sink, follow-up update notifications try to land in the original MR thread for the same `MR #...`; Slack workflow delivery does not currently do that thread reuse. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 For a local Linux-musl artifact, use the checked-in helper instead of calling the target directly:
 
@@ -116,13 +135,14 @@ You can always fetch the latest binary, but inside sensitive infrastructures it'
 
 Mr Milchick can attach advisory local review suggestions from a GGUF model when compiled with `--features llm-local`. The current local inference path uses each model's built-in chat template when available, falls back safely when a template is missing, and supports repeatable smoke tests plus model benchmarking.
 
-The main runtime knobs are:
+The main runtime knobs now live under `[inference]` in `mr-milchick.toml`:
 
-- `MR_MILCHICK_LLM_ENABLED`
-- `MR_MILCHICK_LLM_MODEL_PATH`
-- `MR_MILCHICK_LLM_TIMEOUT_MS`
-- `MR_MILCHICK_LLM_MAX_PATCH_BYTES`
-- `MR_MILCHICK_LLM_CONTEXT_TOKENS`
+- `enabled`
+- `model_path`
+- `timeout_ms`
+- `max_patch_bytes`
+- `context_tokens`
+- `trace`
 
 The full setup, CI shape, model repo pattern, smoke testing, and benchmark workflow live in [docs/local-llm.md](docs/local-llm.md).
 

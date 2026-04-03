@@ -28,8 +28,8 @@ mod llm_local_smoke {
 
     fn model_path_from_env() -> PathBuf {
         PathBuf::from(
-            env::var("MR_MILCHICK_LLM_MODEL_PATH")
-                .expect("set MR_MILCHICK_LLM_MODEL_PATH to a local GGUF file"),
+            env::var("MR_MILCHICK_LLM_SMOKE_MODEL_PATH")
+                .expect("set MR_MILCHICK_LLM_SMOKE_MODEL_PATH to a local GGUF file"),
         )
     }
 
@@ -318,13 +318,13 @@ mod llm_local_smoke {
     }
 
     #[test]
-    #[ignore = "requires MR_MILCHICK_LLM_MODEL_PATH to point at a local GGUF"]
+    #[ignore = "requires MR_MILCHICK_LLM_SMOKE_MODEL_PATH to point at a local GGUF"]
     fn backend_load_and_context_probe() {
         let _guard = smoke_test_lock().blocking_lock();
         let model_path = model_path_from_env();
         assert!(
             model_path.is_file(),
-            "MR_MILCHICK_LLM_MODEL_PATH must point to an existing file, got '{}'",
+            "MR_MILCHICK_LLM_SMOKE_MODEL_PATH must point to an existing file, got '{}'",
             model_path.display()
         );
 
@@ -516,7 +516,7 @@ mod llm_local_smoke {
     }
 
     #[tokio::test]
-    #[ignore = "requires MR_MILCHICK_LLM_MODEL_PATH and runs real GGUF inference"]
+    #[ignore = "requires MR_MILCHICK_LLM_SMOKE_MODEL_PATH and runs real GGUF inference"]
     async fn reacts_to_typescript_frontend_changes() {
         let snapshot = sample_snapshot(
             "Render raw profile bios from the API payload",
@@ -655,7 +655,7 @@ mod llm_local_smoke {
     }
 
     #[tokio::test]
-    #[ignore = "requires MR_MILCHICK_LLM_MODEL_PATH and runs real GGUF inference"]
+    #[ignore = "requires MR_MILCHICK_LLM_SMOKE_MODEL_PATH and runs real GGUF inference"]
     async fn reacts_to_javascript_backend_changes() {
         let snapshot = sample_snapshot(
             "Simplify admin role updates",

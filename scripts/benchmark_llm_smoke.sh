@@ -426,7 +426,7 @@ run_case() {
 
   local -a env_args=(
     "TMPDIR=$tmpdir"
-    "MR_MILCHICK_LLM_MODEL_PATH=$model_path"
+    "MR_MILCHICK_LLM_SMOKE_MODEL_PATH=$model_path"
     "MR_MILCHICK_LLM_SMOKE_TIMEOUT_MS=$smoke_timeout_ms"
   )
 

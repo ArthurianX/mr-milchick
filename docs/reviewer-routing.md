@@ -1,103 +1,57 @@
 # Reviewer Routing
 
-This page describes the reviewer assignment behavior the current planner implements.
+Reviewer routing now comes from `mr-milchick.toml`, not from runtime env JSON.
 
-## Decision Order
+## Example
 
-Reviewer assignment happens in this order:
+```toml
+[reviewers]
+max_reviewers = 2
 
-1. Classify changed files into code areas.
-2. Build an area-based reviewer recommendation from `MR_MILCHICK_REVIEWERS`.
-3. If CODEOWNERS is enabled and at least one section matches the merge request, replace that area-based recommendation with a CODEOWNERS assignment plan.
-4. Prepend mandatory reviewers to the final recommendation.
-5. Skip already-assigned reviewers when building the action plan.
-6. Defer assignment completely if the merge request is draft.
+[[reviewers.definitions]]
+username = "milchick-duty"
+fallback = true
 
-The merge request author is excluded from both area-based routing and CODEOWNERS-derived assignment.
+[[reviewers.definitions]]
+username = "principal-reviewer"
+mandatory = true
 
-## Area-Based Routing
+[[reviewers.definitions]]
+username = "alice"
+areas = ["frontend", "packages"]
 
-Area-based routing is driven by `MR_MILCHICK_REVIEWERS`. Each entry can describe:
-
-- one or more `areas`
-- a `fallback` reviewer
-- a `mandatory` reviewer
-
-Example:
-
-```bash
-MR_MILCHICK_REVIEWERS='[
-  {"username":"milchick-duty","fallback":true},
-  {"username":"principal-reviewer","mandatory":true},
-  {"username":"alice","areas":["frontend","packages"]},
-  {"username":"carol","areas":["backend"]},
-  {"username":"grace","areas":["devops"]}
-]'
+[[reviewers.definitions]]
+username = "carol"
+areas = ["backend"]
 ```
 
-Changed files are classified into these code areas:
+## Selection Order
 
-| Area | Config keys | Typical path matches |
-| --- | --- | --- |
-| `frontend` | `frontend`, `apps`, `ui` | `apps/frontend`, `.tsx`, `.jsx`, `/ui/` |
-| `backend` | `backend`, `api` | `services/`, `/backend/`, `.rs`, `.go` |
-| `packages` | `packages`, `shared`, `bootstrap` | `libs/`, `/shared/` |
-| `devops` | `devops`, `ops`, `infrastructure`, `scripts`, `patches`, `proxy` | `.gitlab`, `docker`, `k8s`, `infra` |
-| `documentation` | `documentation`, `docs`, `reports` | `docs/`, `.md` |
-| `tests` | `tests`, `test`, `qa` | paths containing `test` or `spec` |
-| `unknown` | `unknown` | everything else |
+1. Build an area summary from changed files.
+2. Recommend non-mandatory reviewers from matching areas.
+3. Prepend mandatory reviewers.
+4. If no area match exists, fall back to reviewers marked `fallback = true`.
+5. If CODEOWNERS is enabled and matches, CODEOWNERS planning can replace area-based routing.
 
-The planner sorts areas by changed-file count and then chooses reviewers from the configured pools in that order.
+The merge request author is excluded from both area-based and CODEOWNERS-derived assignment.
 
-## Mandatory And Fallback Reviewers
+## `max_reviewers`
 
-Mandatory reviewers are added before normal area routing and are kept even if CODEOWNERS later replaces the area-based recommendation.
+`max_reviewers` limits only the non-mandatory area-routed portion.
 
-Fallback reviewers are only used when:
+If `max_reviewers = 2` and there is one mandatory reviewer, Milchick can still recommend three total reviewers:
 
-- no significant area is detected
-- no eligible area reviewer can be selected at all
+- one mandatory reviewer
+- two area-routed reviewers
 
-Fallback reviewers do not replace matched CODEOWNERS sections.
+## Supported Area Keys
 
-## What `MR_MILCHICK_MAX_REVIEWERS` Does
+- `frontend`, `apps`, `ui`
+- `backend`, `api`
+- `packages`, `shared`, `bootstrap`
+- `devops`, `ops`, `infrastructure`, `scripts`, `patches`, `proxy`
+- `documentation`, `docs`, `reports`
+- `tests`, `test`, `qa`
+- `unknown`
 
-`MR_MILCHICK_MAX_REVIEWERS` limits only the non-mandatory area-routed portion of the recommendation.
-
-It does not limit:
-
-- mandatory reviewers
-- reviewers already assigned on the merge request
-- CODEOWNERS-driven assignments once CODEOWNERS has taken over
-
-If `MR_MILCHICK_MAX_REVIEWERS=2` and there is one mandatory reviewer, the planner can still recommend three total reviewers: one mandatory reviewer plus two area-routed reviewers.
-
-## CODEOWNERS Override
-
-If CODEOWNERS is enabled and the parsed file matches at least one section for the changed files, the planner switches from area routing to CODEOWNERS-driven coverage planning.
-
-That means:
-
-- the earlier area-based recommendation is discarded
-- the CODEOWNERS planner selects additional reviewers needed to satisfy matched sections
-- current reviewers already on the merge request count toward coverage
-- mandatory reviewers are prepended to the CODEOWNERS-derived assignments
-
-If matched sections still cannot be fully covered, Mr Milchick records a warning finding and includes the uncovered sections in the explanation output.
-
-## Drafts And Existing Reviewers
-
-Draft merge requests never receive an `AssignReviewers` action. If a recommendation exists, the planner instead records an informational finding saying assignment is deferred for draft state.
-
-For non-draft merge requests, recommended reviewers already present in the MR are filtered out before the action plan is built. If nothing is left to add, the planner records an informational finding that all recommended reviewers are already assigned.
-
-## Practical Mental Model
-
-The simplest accurate summary is:
-
-- area routing is the default path
-- CODEOWNERS overrides that path when matches exist
-- mandatory reviewers always stay on top
-- draft state defers assignment
-
-For configuration details, see [config-reference.md](config-reference.md). For the end-to-end command flow, see [architecture.md](architecture.md).
+For CODEOWNERS configuration, see [config-reference.md](config-reference.md).

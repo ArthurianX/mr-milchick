@@ -1,46 +1,48 @@
 # CI Quickstart
 
-This guide shows the shortest path to running Mr Milchick in a GitLab merge request pipeline, then layering on Slack delivery only if you want it. GitHub connector support and tag-based GitHub Releases now ship from the same repository, but the example below keeps the GitLab CI rollout path because it mirrors the existing pipeline model directly.
+This is the shortest path to running Mr Milchick safely in CI with the new config boundary.
 
 ## What You Need
 
-Mr Milchick currently supports two platform connectors and two optional notification sinks:
+- one compiled platform connector: GitLab or GitHub
+- optional notification sinks: Slack app and/or Slack workflow
+- a `mr-milchick.toml` file committed with non-secret runtime config
+- secrets supplied through CI variables
 
-- platform connectors: GitLab, GitHub
-- notification sinks: Slack workflow, Slack app
-
-The binary expects platform review context at runtime. Real GitLab reads and writes require `GITLAB_TOKEN`; real GitHub reads and writes require `GITHUB_TOKEN`.
-
-## Minimal Flavor File
-
-The flavor file is optional. Use it to declare the platform connector explicitly, and add `[[notifications]]` entries only when you intentionally compile and configure Slack delivery.
+## Minimal Config
 
 ```toml
-[platform_connector]
+[platform]
 kind = "gitlab"
+
+[reviewers]
+max_reviewers = 2
+
+[[reviewers.definitions]]
+username = "milchick-duty"
+fallback = true
+
+[[reviewers.definitions]]
+username = "principal-reviewer"
+mandatory = true
+
+[[reviewers.definitions]]
+username = "alice"
+areas = ["frontend", "packages"]
+
+[[reviewers.definitions]]
+username = "carol"
+areas = ["backend"]
 ```
 
-Save that as `mr-milchick.toml` in the repo root, or point `MR_MILCHICK_FLAVOR_PATH` at another file. If a flavor file is present and omits `[[notifications]]`, no notification sinks are activated. If you omit the file entirely, compiled notification sinks are treated as enabled by default.
-
-For GitHub builds, switch `kind = "gitlab"` to `kind = "github"`.
+Put that in `mr-milchick.toml` at the repo root. If you need another path, set `MR_MILCHICK_CONFIG_PATH`.
 
 ## Example GitLab Pipeline
-
-This example builds a Linux artifact with the GitLab platform connector plus Slack app support, verifies the artifact with `version`, and starts with a safe `observe` rollout job.
 
 ```yaml
 stages:
   - build
   - review
-
-variables:
-  MR_MILCHICK_REVIEWERS: >-
-    [{"username":"milchick-duty","fallback":true},
-     {"username":"principal-reviewer","mandatory":true},
-     {"username":"alice","areas":["frontend","packages"]},
-     {"username":"carol","areas":["backend"]},
-     {"username":"grace","areas":["devops"]}]
-  MR_MILCHICK_MAX_REVIEWERS: "2"
 
 build:milchick:
   stage: build
@@ -67,32 +69,18 @@ milchick:observe:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-Once the planned output looks right, rename the job and switch the command to `./dist/mr-milchick refine`.
+Once the output looks right, switch `observe` to `refine`.
 
-## GitHub Releases
+## Required Secrets
 
-This repository now includes [`.github/workflows/release.yml`](../.github/workflows/release.yml). On tag pushes it:
+- `GITLAB_TOKEN` for GitLab live reads and writes
+- `GITHUB_TOKEN` for GitHub live reads and writes
+- `MR_MILCHICK_SLACK_BOT_TOKEN` for Slack app delivery
+- `MR_MILCHICK_SLACK_WEBHOOK_URL` for Slack workflow delivery
 
-- verifies the tagged commit is on `master`
-- runs `cargo test --workspace --locked`
-- builds Linux musl artifacts for `gitlab`, `github`, `gitlab-slack`, and `github-slack`
-- publishes a GitHub Release with all four binaries plus the platform flavor examples
+## Review Context Env
 
-For day-to-day GitHub pull request execution, [`.github/workflows/review.yml`](../.github/workflows/review.yml) starts the platform connector in `observe` mode on `pull_request` and points `MR_MILCHICK_FLAVOR_PATH` at [`mr-milchick.github.toml`](../mr-milchick.github.toml). Keep that workflow on `observe` until the output matches your expectations, then switch it to `refine` when you are ready for live reviewer assignment and summary upserts.
-
-## Required Variables
-
-Store these in CI variables or secrets:
-
-- `GITLAB_TOKEN`: required for live GitLab snapshot reads and mutations.
-- `MR_MILCHICK_REVIEWERS`: reviewer pool JSON for area routing, fallback reviewers, and mandatory reviewers.
-
-Add these as well when you enable the Slack app sink in `mr-milchick.toml`:
-
-- `MR_MILCHICK_SLACK_BOT_TOKEN`
-- `MR_MILCHICK_SLACK_CHANNEL`
-
-These GitLab CI variables are read from the pipeline environment:
+GitLab CI still provides:
 
 - `CI_PROJECT_ID`
 - `CI_MERGE_REQUEST_IID`
@@ -101,70 +89,47 @@ These GitLab CI variables are read from the pipeline environment:
 - `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`
 - `CI_MERGE_REQUEST_LABELS`
 
-## Slack Workflow Setup
+GitHub Actions still provides the corresponding `GITHUB_*` review context.
 
-Slack workflow is the lower-permission option. Compile the binary with `slack-workflow`, enable that sink in `mr-milchick.toml`, and set:
+## Slack App Setup
 
 ```toml
-[[notifications]]
-kind = "slack-workflow"
+[notifications.slack_app]
 enabled = true
+channel = "C0ALY38CW3X"
+
+[notifications.slack_app.user_map]
+"principal-reviewer" = "U01234567"
+"alice" = "U07654321"
 ```
 
-```bash
-MR_MILCHICK_SLACK_ENABLED=true
-MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
-MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/...
+Set:
+
+- `MR_MILCHICK_SLACK_BOT_TOKEN`
+
+## Slack Workflow Setup
+
+```toml
+[notifications.slack_workflow]
+enabled = true
+channel = "C0ALY38CW3X"
 ```
 
-The webhook must be a Slack Workflow input webhook, not a generic incoming webhook. Mr Milchick sends one trigger payload with:
+Set:
+
+- `MR_MILCHICK_SLACK_WEBHOOK_URL`
+
+The webhook must be a Slack Workflow input webhook. Milchick sends:
 
 - `mr_milchick_talks_to`
 - `mr_milchick_says`
 - `mr_milchick_says_thread`
 
-Your workflow is responsible for posting the compact parent message and the threaded follow-up.
+## Safe Rollout
 
-## Slack App Setup
+1. Run `mr-milchick version` in CI to confirm the built capabilities.
+2. Start with `observe`.
+3. If you want execution-shaped output without external mutation, set `[execution] dry_run = true` and run `refine`.
+4. Turn `dry_run` back off once the behavior is stable.
 
-Slack app is the richer direct-posting option. Compile the binary with `slack-app`, enable that sink in `mr-milchick.toml`, and set:
-
-```toml
-[[notifications]]
-kind = "slack-app"
-enabled = true
-```
-
-```bash
-MR_MILCHICK_SLACK_ENABLED=true
-MR_MILCHICK_SLACK_CHANNEL=C0ALY38CW3X
-MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-...
-```
-
-If you want GitLab usernames rewritten to real Slack mentions, also set:
-
-```bash
-MR_MILCHICK_SLACK_USER_MAP='{"principal-reviewer":"U01234567","alice":"U07654321"}'
-```
-
-The environment variable wins over `[slack_app.user_map]` in `mr-milchick.toml`.
-
-## Rollout Path
-
-Use this order to enable the tool safely:
-
-1. Build the artifact and run `mr-milchick version` in CI logs.
-2. Run `observe` until the planned findings and actions match your expectations.
-3. If you want execution logs without external mutation, temporarily set `MR_MILCHICK_DRY_RUN=true` and run `refine`.
-4. Remove dry-run and keep `refine` once the pipeline behavior is stable.
-
-## When Notifications Are Sent
-
-Slack delivery only happens during real `refine` execution. Notifications are skipped when:
-
-- `MR_MILCHICK_DRY_RUN` is enabled
-- the planned outcome still contains blocking findings
-- the action plan contains `FailPipeline`
-- no reviewer assignment action is needed
-
-For the full variable reference, see [config-reference.md](config-reference.md). For the runtime capability model, see [connectors-and-capabilities.md](connectors-and-capabilities.md).
+For the full schema, see [config-reference.md](config-reference.md).

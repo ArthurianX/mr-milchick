@@ -1,46 +1,95 @@
 # Configuration Reference
 
-This page lists the configuration inputs the application reads today and how they fit together.
-
-## Configuration Sources
-
-Mr Milchick combines three layers:
+Mr Milchick now resolves application configuration from one place:
 
 1. compiled capabilities from Cargo features
-2. an optional `mr-milchick.toml` flavor file
-3. environment variables for runtime behavior and secrets
+2. an optional `mr-milchick.toml` file
+3. a small env layer for secrets and config-path selection
 
-The important rule is that the flavor file cannot request a platform connector or notification sink that was not compiled into the binary. Runtime environment variables then provide the live CI context, reviewer pools, CODEOWNERS behavior, GitLab or GitHub credentials, Slack credentials, and dry-run mode.
+CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and the review-context override vars. `config/` does not.
 
-## Precedence And Validation
+## Sources And Precedence
 
-- Cargo features decide which connectors and sinks exist in the artifact.
-- `mr-milchick.toml` validates that runtime intent matches the compiled artifact.
-- Environment variables drive runtime behavior.
-- `MR_MILCHICK_SLACK_USER_MAP` overrides `[slack_app.user_map]` from TOML.
-- If no flavor file is present, the binary runs without flavor validation and compiled notification sinks are treated as enabled by default.
+- Cargo features decide which platform connector and notification sinks exist in the binary.
+- `mr-milchick.toml` is the canonical source for non-secret runtime configuration.
+- Env is limited to:
+  - `MR_MILCHICK_CONFIG_PATH`
+  - `GITLAB_TOKEN`
+  - `GITHUB_TOKEN`
+  - `MR_MILCHICK_SLACK_BOT_TOKEN`
+  - `MR_MILCHICK_SLACK_WEBHOOK_URL`
+- Removed env-driven runtime config is rejected with an error. That includes the old reviewer, CODEOWNERS, dry-run, Slack, LLM, and `MR_MILCHICK_FLAVOR_PATH` variables.
 
-## Flavor File
+## Default File
 
-The default runtime path is `mr-milchick.toml`. Override it with `MR_MILCHICK_FLAVOR_PATH` if needed.
+- Default path: `mr-milchick.toml`
+- Override path: `MR_MILCHICK_CONFIG_PATH`
+
+If the file is missing, Milchick uses defaults:
+
+- platform kind: compiled platform
+- platform base URL: GitLab `https://gitlab.com/api/v4`, GitHub `https://api.github.com`
+- notification policy: `always`
+- dry run: `false`
+- reviewers: empty list, `max_reviewers = 2`
+- CODEOWNERS: enabled with auto-discovery
+- inference: disabled
+- Slack sinks: disabled
+- templates: built-in defaults
+
+## Example Config
 
 ```toml
-notification_policy = "on-applied-action"
-
-[platform_connector]
+[platform]
 kind = "gitlab"
+base_url = "https://gitlab.com/api/v4"
 
-[[notifications]]
-kind = "slack-workflow"
+[execution]
+dry_run = false
+notification_policy = "always"
+
+[reviewers]
+max_reviewers = 2
+
+[[reviewers.definitions]]
+username = "milchick-duty"
+fallback = true
+
+[[reviewers.definitions]]
+username = "principal-reviewer"
+mandatory = true
+
+[[reviewers.definitions]]
+username = "alice"
+areas = ["frontend", "packages"]
+
+[[reviewers.definitions]]
+username = "carol"
+areas = ["backend"]
+
+[codeowners]
 enabled = true
 
-[[notifications]]
-kind = "slack-app"
+[inference]
 enabled = false
+model_path = "models/review.gguf"
+timeout_ms = 15000
+max_patch_bytes = 32768
+context_tokens = 4096
+trace = false
 
-[slack_app.user_map]
-"engineer.lady1" = "U01234567"
-"engineer.guy1" = "U07654321"
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = "https://slack.com/api"
+
+[notifications.slack_app.user_map]
+"principal-reviewer" = "U01234567"
+"alice" = "U07654321"
+
+[notifications.slack_workflow]
+enabled = false
+channel = "C0ALY38CW3X"
 
 [templates.gitlab]
 summary = """## {{summary_title}}
@@ -52,50 +101,80 @@ summary = """## {{summary_title}}
 {{actions_block}}
 
 _{{closing_tone_message}}_"""
-
-[templates.github]
-summary = """## {{summary_title}}
-
-{{tone_message}}
-
-{{findings_block}}
-
-{{actions_block}}
-
-_{{closing_tone_message}}_"""
-
-[templates.slack_app]
-first_root = "{{notification_subject}}"
-first_thread = """*{{notification_title}}*
-Merge request: {{mr_link}}
-{{reviewers_line}}
-"""
-update_root = "{{notification_subject}}"
-update_thread = """Merge request: {{mr_link}}
-{{findings_block}}
-{{actions_block}}
-_{{summary_footer}}_"""
-
-[templates.slack_workflow]
-first_title = "{{notification_subject}}"
-first_thread = """{{notification_title}}
-Merge request: {{mr_link}}
-{{reviewers_line}}
-"""
-update_title = "{{notification_subject}}"
-update_thread = """Merge request: {{mr_link}}
-{{findings_block}}
-{{actions_block}}
-{{summary_footer}}"""
 ```
 
-Supported TOML fields today:
+## TOML Surface
 
-- `notification_policy`
-- `platform_connector.kind`
-- `[[notifications]].kind`
-- `[[notifications]].enabled`
-- `[slack_app.user_map]`
+### `[platform]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `kind` | No | compiled platform | Must match the compiled binary if present. |
+| `base_url` | No | platform default | GitLab or GitHub API base URL. |
+
+### `[execution]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `dry_run` | No | `false` | Only affects `refine`. |
+| `notification_policy` | No | `always` | `always` or `on-applied-action`. |
+
+### `[reviewers]` and `[[reviewers.definitions]]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `max_reviewers` | No | `2` | Caps only non-mandatory area-routed reviewers. |
+| `username` | Yes | none | Reviewer username. |
+| `areas` | No | `[]` | Area keys such as `frontend`, `backend`, `packages`, `devops`, `docs`, `tests`, `unknown`. |
+| `fallback` | No | `false` | Marks fallback reviewer. |
+| `mandatory` | No | `false` | Always prepend this reviewer when eligible. |
+
+### `[codeowners]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | No | `true` | Enables CODEOWNERS planning. |
+| `path` | No | auto-discovery | Overrides lookup path. |
+
+Auto-discovery order:
+
+- `CODEOWNERS`
+- `.github/CODEOWNERS`
+- `.gitlab/CODEOWNERS`
+- `.CODEOWNERS`
+
+### `[inference]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | No | `false` | Enables advisory local review. |
+| `model_path` | No | none | Required when `enabled = true`. |
+| `timeout_ms` | No | `15000` | Must be greater than zero. |
+| `max_patch_bytes` | No | `32768` | Must be greater than zero. |
+| `context_tokens` | No | `4096` | Must be greater than zero. |
+| `trace` | No | `false` | Prints detailed inference output in CLI flows. |
+
+### `[notifications.slack_app]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | No | `false` | Must be `true` to activate the sink. |
+| `channel` | No | none | Default Slack destination. |
+| `base_url` | No | `https://slack.com/api` | Useful for tests and local mocks. |
+
+`[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs.
+
+### `[notifications.slack_workflow]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | No | `false` | Must be `true` to activate the sink. |
+| `channel` | No | none | Sent in workflow payloads as `mr_milchick_talks_to`. |
+
+### `[templates.*]`
+
+Template overrides stay field-by-field and keep built-in defaults when omitted.
+
 - `[templates.gitlab].summary`
 - `[templates.github].summary`
 - `[templates.slack_app].first_root`
@@ -107,188 +186,33 @@ Supported TOML fields today:
 - `[templates.slack_workflow].update_title`
 - `[templates.slack_workflow].update_thread`
 
-Behavior notes:
+Template placeholder validation still happens at render time. Invalid placeholders warn and fall back to the built-in field template.
 
-- `notification_policy` may be `always` or `on-applied-action`.
-- `platform_connector.kind` must match the compiled platform connector. Today that means `gitlab` or `github`.
-- `[[notifications]]` entries may use `slack-app` and `slack-workflow`.
-- If `enabled` is omitted for a notification entry, it defaults to `true`.
-- If a flavor file is present, only notification entries that are listed and enabled are activated.
-- `review_platform.kind` still parses for backward compatibility, but `platform_connector.kind` is preferred.
-- Template overrides are field-by-field. Missing fields keep the built-in default.
-- Invalid template fields warn and fall back to the built-in default for that field.
+## Supported Env Vars
 
-## Message Templates
+### Application Config
 
-Connector output can be customized from `mr-milchick.toml`.
-
-- GitLab uses `[templates.gitlab].summary`
-- GitHub uses `[templates.github].summary`
-- Slack app uses `first_*` and `update_*` template fields.
-- Slack workflow uses `first_*` and `update_*` template fields.
-- `first_*` is the lighter initial notification shape.
-- `update_*` is the fuller follow-up/update shape.
-
-Templates use `{{placeholder}}` interpolation only.
-
-Core placeholders:
-
-- `mr_number`, `mr_ref`, `mr_title`, `mr_url`, `mr_author_username`
-- `source_branch`, `target_branch`, `is_draft`, `changed_file_count`
-- `findings_count`, `blocking_findings_count`, `warning_findings_count`, `info_findings_count`
-- `actions_count`, `reviewers_count`, `new_reviewers_count`, `existing_reviewers_count`
-- `mr_link`, `reviewers_list`, `new_reviewers_list`, `existing_reviewers_list`
-- `findings_block`, `actions_block`
-- `tone_message`, `tone_category`
-
-GitLab-only placeholders:
-
-- `closing_tone_message`
-- `closing_tone_category`
-
-Useful renderer helpers:
-
-- `summary_title`, `summary_intro`, `summary_footer`
-- `notification_title`, `notification_subject`
-- `reviewers_line`, `mr_ref_link`
-
-See [message-templates.md](message-templates.md) for complete examples and connector-specific output details.
-
-## Environment Variables
-
-### CI Context
-
-These variables may come from GitLab CI, GitHub Actions, or explicit `MR_MILCHICK_*` overrides:
-
-| Variable | Required | Notes |
+| Variable | Required | Purpose |
 | --- | --- | --- |
-| `CI_PROJECT_ID` | GitLab | GitLab project identifier used as the review project key. |
-| `CI_MERGE_REQUEST_IID` | GitLab review runs | GitLab merge request identifier. |
-| `CI_PIPELINE_SOURCE` | GitLab | `merge_request_event` activates the review flow. |
-| `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME` | GitLab | Used in context and snapshot metadata. |
-| `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` | GitLab | Used in context and snapshot metadata. |
-| `CI_MERGE_REQUEST_LABELS` | GitLab | Comma-separated labels. |
-| `GITHUB_EVENT_NAME` | GitHub | `pull_request` and `pull_request_target` activate the review flow. |
-| `GITHUB_EVENT_PATH` | GitHub review runs | Pull request payload used for review id, branches, and labels. |
-| `GITHUB_REPOSITORY` | GitHub | Owner/repo key used as the review project key. |
-| `MR_MILCHICK_PROJECT_KEY` | Optional override | Explicit review project key override. |
-| `MR_MILCHICK_REVIEW_ID` | Optional override | Explicit review id override. |
-| `MR_MILCHICK_PIPELINE_SOURCE` | Optional override | Explicit review pipeline source override. |
-| `MR_MILCHICK_SOURCE_BRANCH` | Optional override | Explicit source branch override. |
-| `MR_MILCHICK_TARGET_BRANCH` | Optional override | Explicit target branch override. |
-| `MR_MILCHICK_LABELS` | Optional override | Explicit comma-separated labels override. |
+| `MR_MILCHICK_CONFIG_PATH` | No | Alternate config file path. |
+| `GITLAB_TOKEN` | GitLab live runs | GitLab API token. |
+| `GITHUB_TOKEN` | GitHub live runs | GitHub API token. |
+| `MR_MILCHICK_SLACK_BOT_TOKEN` | Slack app only | Slack bot token. |
+| `MR_MILCHICK_SLACK_WEBHOOK_URL` | Slack workflow only | Slack Workflow webhook URL. |
 
-If the pipeline is not a review pipeline, Mr Milchick prints a no-op message and exits cleanly after capability reporting.
+### Review Context
 
-### GitLab Connector
+These still belong to the CI context layer, not the app config layer:
 
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `GITLAB_TOKEN` | Yes for GitLab snapshot reads and live execution | None | Required by the GitLab connector. |
-| `GITLAB_BASE_URL` | No | `https://gitlab.com/api/v4` | Override for self-managed GitLab or tests. |
-
-### GitHub Connector
-
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `GITHUB_TOKEN` | Yes for GitHub snapshot reads and live execution | None | Required by the GitHub connector. |
-| `GITHUB_API_BASE_URL` | No | `https://api.github.com` | Override for GitHub Enterprise or tests. |
-
-### Reviewer Routing
-
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `MR_MILCHICK_REVIEWERS` | No | empty list | JSON array of reviewer definitions. |
-| `MR_MILCHICK_MAX_REVIEWERS` | No | `2` | Caps only non-mandatory area-routed reviewers. |
-
-Example:
-
-```bash
-MR_MILCHICK_REVIEWERS='[
-  {"username":"milchick-duty","fallback":true},
-  {"username":"principal-reviewer","mandatory":true},
-  {"username":"alice","areas":["frontend","packages"]},
-  {"username":"carol","areas":["backend"]},
-  {"username":"grace","areas":["devops"]}
-]'
-MR_MILCHICK_MAX_REVIEWERS=2
-```
-
-Each reviewer entry may contain:
-
-- `username`
-- `areas`
-- `fallback`
-- `mandatory`
-
-Supported area keys today:
-
-- `frontend`, `apps`, `ui`
-- `backend`, `api`
-- `packages`, `shared`, `bootstrap`
-- `devops`, `ops`, `infrastructure`, `scripts`, `patches`, `proxy`
-- `documentation`, `docs`, `reports`
-- `tests`, `test`, `qa`
-- `unknown`
-
-See [reviewer-routing.md](reviewer-routing.md) for the selection rules.
-
-### CODEOWNERS
-
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `MR_MILCHICK_CODEOWNERS_ENABLED` | No | `true` | Accepts `true/false/1/0/yes/no/on/off`. |
-| `MR_MILCHICK_CODEOWNERS_PATH` | No | auto-discovery | Overrides CODEOWNERS lookup. |
-
-Auto-discovery checks these paths in order:
-
-- `CODEOWNERS`
-- `.github/CODEOWNERS`
-- `.gitlab/CODEOWNERS`
-- `.CODEOWNERS`
-
-### Execution
-
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `MR_MILCHICK_DRY_RUN` | No | `false` | If enabled, `refine` produces a dry-run execution report and skips external writes. |
-| `MR_MILCHICK_FLAVOR_PATH` | No | `mr-milchick.toml` | Alternative flavor file path. |
-| `MR_MILCHICK_NOTIFICATION_POLICY` | No | `always` | Accepts `always` or `on-applied-action`. Overrides the flavor file when set. |
-
-`observe` and `explain` are already non-mutating. `MR_MILCHICK_DRY_RUN` only affects `refine`.
-
-### Slack
-
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `MR_MILCHICK_SLACK_ENABLED` | No | `true` | Global toggle for Slack sinks. |
-| `MR_MILCHICK_SLACK_CHANNEL` | Depends on sink | None | Channel ID used by Slack app and sent in workflow payloads. |
-| `MR_MILCHICK_SLACK_BASE_URL` | No | `https://slack.com/api` | Mostly useful for tests and local mocks. |
-| `MR_MILCHICK_SLACK_BOT_TOKEN` | Slack app only | None | Bot token for direct Slack API posting. |
-| `MR_MILCHICK_SLACK_WEBHOOK_URL` | Slack workflow only | None | Slack Workflow input webhook URL. |
-| `MR_MILCHICK_SLACK_USER_MAP` | No | empty map | JSON object mapping GitLab usernames to Slack user IDs. |
-
-Example Slack app mapping:
-
-```bash
-MR_MILCHICK_SLACK_USER_MAP='{"engineer.lady1":"U01234567","engineer.guy1":"U07654321"}'
-```
-
-If a mapping value is blank, it is ignored. In TOML, quote usernames that contain dots:
-
-```toml
-[slack_app.user_map]
-"engineer.lady1" = "U01234567"
-```
+| Variable | Notes |
+| --- | --- |
+| `CI_PROJECT_ID`, `CI_MERGE_REQUEST_IID`, `CI_PIPELINE_SOURCE`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`, `CI_MERGE_REQUEST_LABELS` | GitLab review context |
+| `GITHUB_ACTIONS`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_REPOSITORY`, `GITHUB_HEAD_REF`, `GITHUB_BASE_REF` | GitHub review context |
+| `MR_MILCHICK_PROJECT_KEY`, `MR_MILCHICK_REVIEW_ID`, `MR_MILCHICK_PIPELINE_SOURCE`, `MR_MILCHICK_SOURCE_BRANCH`, `MR_MILCHICK_TARGET_BRANCH`, `MR_MILCHICK_LABELS` | Explicit review-context overrides |
 
 ## Notes
 
-- Slack notifications are optional and do not affect review planning.
-- Notifications only run during real `refine` execution.
-- With `notification_policy = "always"`, enabled sinks receive notifications even if the summary comment is unchanged.
-- With `notification_policy = "on-applied-action"`, enabled sinks only receive notifications when the platform connector actually applies the summary upsert.
-- GitLab and GitHub are the implemented platform connectors today.
-- Slack app and Slack workflow are the only implemented notification sinks today.
-- Platform connector templates only affect GitLab, GitHub, and Slack output in this version. CLI output remains unchanged.
-
-For setup examples, see [ci-quickstart.md](ci-quickstart.md). For capability validation, see [connectors-and-capabilities.md](connectors-and-capabilities.md).
+- `observe` and `explain` are already non-mutating. `dry_run` only changes `refine`.
+- Slack notifications are planned from resolved config but only sent during real `refine`.
+- Config validation is strict. Unknown TOML fields fail parsing, and legacy app-config env vars fail startup.
+- Platform and sink configuration must agree with compiled capabilities.

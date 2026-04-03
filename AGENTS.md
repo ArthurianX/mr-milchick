@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Mr. Milchick is a Rust CLI binary (`mr-milchick`) that enforces merge request governance inside GitLab CI pipelines. It is **not** a service or bot — it runs as a single invocation per pipeline, reads CI environment variables, evaluates policy rules, and optionally mutates GitLab (Assigned reviewers, post comments, fail pipeline).
+Mr. Milchick is a Rust CLI binary (`mr-milchick`) that enforces merge request governance inside GitLab CI pipelines. It is **not** a service or bot — it runs as a single invocation per pipeline, reads CI environment variables plus resolved application config, evaluates policy rules, and optionally mutates GitLab (Assigned reviewers, post comments, fail pipeline).
 
 Three subcommands: `observe` (dry-run evaluation), `refine` (execute actions), `explain` (deep reasoning output with snapshot details).
 
@@ -38,7 +38,7 @@ Integration tests also live at the repository root in `/tests` for the packaged 
 
 ## Local Smoke Testing
 
-The tool reads GitLab CI env vars. For local runs, set them manually. See `docs/local-testing.md` for complete examples. Minimal invocation:
+The tool reads GitLab CI env vars plus `mr-milchick.toml` for non-secret runtime settings. For local runs, set the CI vars manually and either keep `mr-milchick.toml` in the repo root or point `MR_MILCHICK_CONFIG_PATH` at a different file. See `docs/local-testing.md` for complete examples. Minimal invocation:
 
 ```bash
 CI_PROJECT_ID=412 \
@@ -50,12 +50,12 @@ CI_MERGE_REQUEST_LABELS="" \
 cargo run -- observe
 ```
 
-Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (defaults to `https://gitlab.com/api/v4`).
+Real GitLab API calls require `GITLAB_TOKEN`. Platform base URLs now live under `[platform]` in `mr-milchick.toml`.
 
 ## Key Conventions
 
 - **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `apps/mr-milchick/src/context/model.rs`. Always wrap raw strings in domain types.
-- **Runtime config from environment variables**: `apps/mr-milchick/src/config/loader.rs` builds `RuntimeConfig` from CI-provided environment variables. Reviewer routing comes from `MR_MILCHICK_REVIEWERS` JSON and `MR_MILCHICK_MAX_REVIEWERS`; CODEOWNERS behavior comes from `MR_MILCHICK_CODEOWNERS_ENABLED` and `MR_MILCHICK_CODEOWNERS_PATH`; optional Slack notifications come from `MR_MILCHICK_SLACK_BOT_TOKEN` for the Slack app sink, `MR_MILCHICK_SLACK_WEBHOOK_URL` for the Slack Workflow webhook sink, `MR_MILCHICK_SLACK_CHANNEL`, `MR_MILCHICK_SLACK_ENABLED`, and optionally `MR_MILCHICK_SLACK_BASE_URL` for testing.
+- **Resolved config boundary**: `apps/mr-milchick/src/config/mod.rs` exposes `load_resolved_config()`, which merges defaults, `mr-milchick.toml`, and env-provided secrets into one `ResolvedConfig`. Non-secret runtime settings such as reviewer routing, CODEOWNERS behavior, execution mode, Slack channels, and local inference all live in TOML. Env remains limited to CI/review context, `MR_MILCHICK_CONFIG_PATH`, and secrets such as `GITLAB_TOKEN`, `GITHUB_TOKEN`, `MR_MILCHICK_SLACK_BOT_TOKEN`, and `MR_MILCHICK_SLACK_WEBHOOK_URL`.
 - **GitLab DTO separation**: `apps/mr-milchick/src/connectors/gitlab/dto.rs` holds serde-deserialized API responses; `apps/mr-milchick/src/connectors/gitlab/api.rs` holds domain models. The client in `apps/mr-milchick/src/connectors/gitlab/client.rs` maps DTOs → domain types.
 - **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `apps/mr-milchick/src/error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
 - **Async via tokio**: `#[tokio::main]` in `main.rs`. The `ActionExecutor` trait uses `#[async_trait]`. Only the GitLab client layer and execution are async.
@@ -74,7 +74,7 @@ Real GitLab API calls require `GITLAB_TOKEN` and optionally `GITLAB_BASE_URL` (d
 2. Add path matching rules in `apps/mr-milchick/src/core/domain/path_classifier.rs` — order matters (first match wins)
 3. Ensure the new area is recognized by `CodeArea::from_config_key()` in `apps/mr-milchick/src/core/domain/code_area.rs` if it needs a config key alias
 4. Keep `ReviewerRoutingConfig::from_config()` in `apps/mr-milchick/src/core/domain/reviewer_routing.rs` compatible with the new area
-5. Update env-based examples and docs that demonstrate `MR_MILCHICK_REVIEWERS` payloads
+5. Update TOML-based examples and docs that demonstrate `[[reviewers.definitions]]` entries
 
 ## Tone System
 
@@ -98,15 +98,9 @@ Slack review notifications are optional and only fire during real `refine` execu
 | `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME` | For MR pipelines | Source branch |
 | `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` | For MR pipelines | Target branch |
 | `CI_MERGE_REQUEST_LABELS` | No | Comma-separated labels |
-| `GITLAB_TOKEN` | For real execution | GitLab API token |
-| `GITLAB_BASE_URL` | No | Defaults to `https://gitlab.com/api/v4` |
-| `MR_MILCHICK_REVIEWERS` | No | JSON array of reviewer capability objects used for routing |
-| `MR_MILCHICK_MAX_REVIEWERS` | No | Max number of area-routed reviewers to add; defaults to `2` |
-| `MR_MILCHICK_DRY_RUN` | No | `true`/`1`/`yes` to force `refine` into dry-run execution |
-| `MR_MILCHICK_CODEOWNERS_ENABLED` | No | `true` by default; set to `false` to disable CODEOWNERS routing |
-| `MR_MILCHICK_CODEOWNERS_PATH` | No | Overrides CODEOWNERS auto-discovery path |
+| `MR_MILCHICK_CONFIG_PATH` | No | Overrides the default `mr-milchick.toml` path |
+| `GITLAB_TOKEN` | For real GitLab execution | GitLab API token |
+| `GITHUB_TOKEN` | For real GitHub execution | GitHub API token |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | No | Slack bot OAuth token used by the Slack app sink |
 | `MR_MILCHICK_SLACK_WEBHOOK_URL` | No | Slack Workflow webhook URL used by the Slack workflow sink |
-| `MR_MILCHICK_SLACK_CHANNEL` | No | Slack channel ID used by Slack sinks and passed to the workflow payload when using the webhook sink |
-| `MR_MILCHICK_SLACK_ENABLED` | No | `true` by default; set to `false` to disable Slack notifications even when webhook/channel are present |
-| `MR_MILCHICK_SLACK_BASE_URL` | No | Overrides the Slack API base URL; intended for tests and local mocks |
+| `RUST_LOG` | No | Standard process-level logging control; not part of Milchick runtime config |

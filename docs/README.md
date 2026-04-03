@@ -5,11 +5,11 @@ This directory holds the detailed docs that used to live in the root README. Sta
 ## Start Here
 
 - [CI quickstart](ci-quickstart.md): build the binary in GitLab CI, run `observe` or `refine`, and connect either Slack workflow or Slack app delivery.
-- [Configuration reference](config-reference.md): every supported environment variable, the optional `mr-milchick.toml` file, and the current precedence rules.
+- [Configuration reference](config-reference.md): the resolved config model, the supported `mr-milchick.toml` schema, and the remaining env inputs.
 
 ## Review Routing
 
-- [Reviewer routing](reviewer-routing.md): area-based selection, CODEOWNERS override behavior, mandatory reviewers, fallback reviewers, and `MR_MILCHICK_MAX_REVIEWERS`.
+- [Reviewer routing](reviewer-routing.md): area-based selection, CODEOWNERS override behavior, mandatory reviewers, fallback reviewers, and the `[reviewers]` TOML section.
 
 ## Runtime Surface
 

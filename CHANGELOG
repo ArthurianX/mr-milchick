@@ -7,6 +7,27 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [3.2.0] — 2026-04-03
+
+This release draws a much firmer line around configuration, so the codebase and the docs finally describe the same runtime model.
+
+### Added
+
+- A single resolved-config entrypoint that loads one authoritative `ResolvedConfig` from defaults, `mr-milchick.toml`, and env-provided secrets.
+- Strict TOML schema, resolver validation, and unit coverage for config parsing, defaults, secret injection, and capability mismatches.
+- Clear rejection of removed legacy runtime env vars, so stale pipeline configuration fails loudly instead of being silently half-applied.
+
+### Changed
+
+- Non-secret runtime settings now live in `mr-milchick.toml`, including platform base URL, execution mode, reviewer routing, CODEOWNERS behavior, Slack notification shape, templates, and local inference settings.
+- `MR_MILCHICK_CONFIG_PATH` is now the canonical config-path override, replacing the old flavor-path naming.
+- Runtime wiring now receives typed config from the resolved boundary instead of mixing direct env reads into app orchestration and connector setup.
+- Local LLM smoke tooling now uses dedicated smoke-test env names so the removed runtime inference env surface no longer leaks into developer helpers.
+
+### Docs
+
+- README, architecture notes, config reference, CI quickstart, local testing, reviewer-routing guidance, fixture-testing notes, and local-LLM docs were rewritten to match the new resolved-config boundary.
+
 ## [3.1.0] — 2026-04-02
 
 This release trims Slack channel noise during follow-up review passes and makes the sink behavior easier to understand from the docs.
