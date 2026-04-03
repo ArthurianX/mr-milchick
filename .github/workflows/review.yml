@@ -17,5 +17,5 @@ jobs:
       - name: Observe pull request
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MR_MILCHICK_FLAVOR_PATH: mr-milchick.github.toml
+          MR_MILCHICK_CONFIG_PATH: mr-milchick.github.toml
         run: cargo run --locked --no-default-features --features "github" -- refine

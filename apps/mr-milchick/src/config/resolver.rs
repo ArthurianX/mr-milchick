@@ -137,11 +137,19 @@ pub fn compiled_platform_kind() -> ReviewPlatformKind {
 }
 
 pub fn compiled_notification_sinks() -> Vec<NotificationSinkKind> {
-    let mut sinks = Vec::new();
+    let sinks = Vec::new();
     #[cfg(feature = "slack-app")]
-    sinks.push(NotificationSinkKind::SlackApp);
+    let sinks = {
+        let mut sinks = sinks;
+        sinks.push(NotificationSinkKind::SlackApp);
+        sinks
+    };
     #[cfg(feature = "slack-workflow")]
-    sinks.push(NotificationSinkKind::SlackWorkflow);
+    let sinks = {
+        let mut sinks = sinks;
+        sinks.push(NotificationSinkKind::SlackWorkflow);
+        sinks
+    };
     sinks
 }
 
