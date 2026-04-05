@@ -108,6 +108,8 @@ pub struct NotificationsConfig {
     pub slack_app: SlackAppConfig,
     #[serde(default)]
     pub slack_workflow: SlackWorkflowConfig,
+    #[serde(default)]
+    pub pipeline_status: PipelineStatusConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -130,6 +132,15 @@ pub struct SlackWorkflowConfig {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PipelineStatusConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub search_root: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [3.3.0] — 2026-04-05
+
+This release softens the TOML migration for CI pipelines and adds an optional internal path for surfacing prior job results in Slack notifications.
+
+### Added
+
+- Pre-parse TOML env interpolation with `${VAR}` and `${VAR:-default}` so CI-owned values such as LLM toggles and model filenames can stay external while non-secret runtime config remains in `mr-milchick.toml`.
+- Optional `notifications.pipeline_status` config that recursively scans `*/milchick-status/*.json` and feeds normalized job-status lines into Slack templates.
+- New notification template placeholders for pipeline-status output and counts, including `pipeline_status_block`, `pipeline_status_count`, and the passed/failed/unknown counters.
+
+### Changed
+
+- Built-in Slack app and Slack workflow thread templates now include the optional pipeline-status block when status files are present.
+- CI-facing examples now show the recommended pattern of using non-`MR_MILCHICK_*` shell env vars together with TOML interpolation for local LLM model setup.
+
+### Docs
+
+- Documented TOML interpolation semantics and caveats, including the fact that the syntax is intentionally Milchick-specific rather than standard TOML.
+- Documented the optional internal `milchick-status` JSON convention, the tolerant fields Milchick reads today, and how to render the result in Slack templates.
+
 ## [3.2.0] — 2026-04-03
 
 This release draws a much firmer line around configuration, so the codebase and the docs finally describe the same runtime model.

@@ -26,24 +26,28 @@ const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_FIRST_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Merge request: {{mr_link}}
 {{reviewers_line}}
-{{recommendations_block}}"#;
+{{recommendations_block}}
+{{pipeline_status_block}}"#;
 const SLACK_APP_UPDATE_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
 {{recommendations_block}}
 {{actions_block}}
+{{pipeline_status_block}}
 _{{summary_footer}}_"#;
 
 const SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE: &str = r#"{{notification_title}}
 Merge request: {{mr_link}}
 {{reviewers_line}}
-{{recommendations_block}}"#;
+{{recommendations_block}}
+{{pipeline_status_block}}"#;
 const SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
 {{recommendations_block}}
 {{actions_block}}
+{{pipeline_status_block}}
 {{summary_footer}}"#;
 
 const COMMON_PLACEHOLDERS: &[&str] = &[
@@ -65,12 +69,17 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "reviewers_count",
     "new_reviewers_count",
     "existing_reviewers_count",
+    "pipeline_status_count",
+    "pipeline_status_passed_count",
+    "pipeline_status_failed_count",
+    "pipeline_status_unknown_count",
     "mr_link",
     "reviewers_list",
     "new_reviewers_list",
     "existing_reviewers_list",
     "findings_block",
     "actions_block",
+    "pipeline_status_block",
     "llm_summary",
     "recommendations_block",
     "tone_message",
@@ -206,6 +215,7 @@ pub struct NotificationTemplateContext {
     reviewers: Vec<String>,
     new_reviewers: Vec<String>,
     existing_reviewers: Vec<String>,
+    pipeline_statuses: Vec<PipelineStatusTemplateEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +247,20 @@ struct InferenceTemplateContext {
 struct RecommendationView {
     label: String,
     message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineStatusState {
+    Passed,
+    Failed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineStatusTemplateEntry {
+    pub label: String,
+    pub state: PipelineStatusState,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,6 +421,7 @@ pub fn build_notification_template_context(
     reviewers: Vec<String>,
     new_reviewers: Vec<String>,
     existing_reviewers: Vec<String>,
+    pipeline_statuses: Vec<PipelineStatusTemplateEntry>,
 ) -> NotificationTemplateContext {
     let snapshot_facts = SnapshotFacts::from_snapshot(snapshot);
     let notification_tone_category = if matches!(variant, NotificationTemplateVariant::First) {
@@ -427,6 +452,7 @@ pub fn build_notification_template_context(
         reviewers,
         new_reviewers,
         existing_reviewers,
+        pipeline_statuses,
     }
 }
 
@@ -642,6 +668,7 @@ impl SummaryTemplateContext {
             &[],
             &[],
             &[],
+            &[],
             style,
             &self.tone,
         );
@@ -676,6 +703,7 @@ impl NotificationTemplateContext {
             &self.reviewers,
             &self.new_reviewers,
             &self.existing_reviewers,
+            &self.pipeline_statuses,
             style,
             &self.tone,
         );
@@ -727,6 +755,7 @@ fn common_values(
     reviewers: &[String],
     new_reviewers: &[String],
     existing_reviewers: &[String],
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
     style: RenderStyle,
     tone: &SelectedTone,
 ) -> BTreeMap<&'static str, String> {
@@ -779,6 +808,31 @@ fn common_values(
         "existing_reviewers_count",
         existing_reviewers.len().to_string(),
     );
+    values.insert("pipeline_status_count", pipeline_statuses.len().to_string());
+    values.insert(
+        "pipeline_status_passed_count",
+        pipeline_statuses
+            .iter()
+            .filter(|entry| matches!(entry.state, PipelineStatusState::Passed))
+            .count()
+            .to_string(),
+    );
+    values.insert(
+        "pipeline_status_failed_count",
+        pipeline_statuses
+            .iter()
+            .filter(|entry| matches!(entry.state, PipelineStatusState::Failed))
+            .count()
+            .to_string(),
+    );
+    values.insert(
+        "pipeline_status_unknown_count",
+        pipeline_statuses
+            .iter()
+            .filter(|entry| matches!(entry.state, PipelineStatusState::Unknown))
+            .count()
+            .to_string(),
+    );
     values.insert(
         "mr_link",
         message_link(style, &snapshot.mr_url, &snapshot.mr_title),
@@ -794,6 +848,10 @@ fn common_values(
     );
     values.insert("findings_block", format_findings_block(style, findings));
     values.insert("actions_block", format_actions_block(style, actions));
+    values.insert(
+        "pipeline_status_block",
+        format_pipeline_status_block(style, pipeline_statuses),
+    );
     values.insert("llm_summary", inference.summary.clone().unwrap_or_default());
     values.insert(
         "recommendations_block",
@@ -956,6 +1014,45 @@ fn format_recommendations_block(
                 }
             }),
     );
+
+    lines.join("\n")
+}
+
+fn format_pipeline_status_block(
+    style: RenderStyle,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
+) -> String {
+    if pipeline_statuses.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = Vec::new();
+    match style {
+        RenderStyle::GitLab | RenderStyle::GitHub => lines.push("### CI task status".to_string()),
+        RenderStyle::SlackApp => lines.push("*CI task status*".to_string()),
+        RenderStyle::SlackWorkflow => lines.push("CI task status".to_string()),
+    }
+
+    lines.extend(pipeline_statuses.iter().map(|entry| {
+        let indicator = match entry.state {
+            PipelineStatusState::Passed => ":green_circle:",
+            PipelineStatusState::Failed => ":red_circle:",
+            PipelineStatusState::Unknown => ":white_circle:",
+        };
+        let mut line = match style {
+            RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
+                format!("- {} {}", indicator, entry.label)
+            }
+            RenderStyle::SlackApp => format!("{} {}", indicator, entry.label),
+        };
+
+        if let Some(detail) = entry.detail.as_deref().filter(|detail| !detail.is_empty()) {
+            line.push_str(": ");
+            line.push_str(detail);
+        }
+
+        line
+    }));
 
     lines.join("\n")
 }
@@ -1191,19 +1288,26 @@ mod tests {
                 &sample_snapshot(),
                 &sample_inference_outcome(),
                 &ToneSelector::default(),
-                &sample_context(),
-                NotificationTemplateVariant::First,
-                vec!["principal-reviewer".to_string(), "bob".to_string()],
-                vec!["bob".to_string()],
-                vec!["principal-reviewer".to_string()],
-            ),
+            &sample_context(),
             NotificationTemplateVariant::First,
-        );
+            vec!["principal-reviewer".to_string(), "bob".to_string()],
+            vec!["bob".to_string()],
+            vec!["principal-reviewer".to_string()],
+            vec![PipelineStatusTemplateEntry {
+                label: "unit_tests".to_string(),
+                state: PipelineStatusState::Passed,
+                detail: Some("12 tests passed".to_string()),
+            }],
+        ),
+        NotificationTemplateVariant::First,
+    );
 
         assert!(subject.contains("took a first look at"));
         assert!(body.contains("Assigned reviewers @principal-reviewer @bob"));
         assert!(body.contains("Local review recommendations"));
         assert!(body.contains("advisory inference text appearing in summary"));
+        assert!(body.contains("CI task status"));
+        assert!(body.contains(":green_circle: unit_tests: 12 tests passed"));
         assert!(!body.contains("No findings were produced."));
     }
 

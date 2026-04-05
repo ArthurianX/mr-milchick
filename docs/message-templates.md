@@ -35,11 +35,29 @@ Common placeholders include:
 - `mr_number`, `mr_ref`, `mr_title`, `mr_url`, `mr_author_username`
 - `source_branch`, `target_branch`, `changed_file_count`
 - `findings_block`, `actions_block`
+- `pipeline_status_block`, `pipeline_status_count`
+- `pipeline_status_passed_count`, `pipeline_status_failed_count`, `pipeline_status_unknown_count`
 - `summary_title`, `summary_intro`, `summary_footer`
 - `notification_title`, `notification_subject`
 - `reviewers_line`, `mr_ref_link`
 
 Invalid placeholders warn and fall back to the built-in field template.
+
+## Optional Pipeline Status Block
+
+If `[notifications.pipeline_status]` is enabled, Milchick can enrich Slack notifications with status lines built from `*/milchick-status/*.json` files that already exist in the workspace.
+
+This is optional and mainly useful for internal CI setups where earlier jobs emit compact JSON summaries for later pipeline stages.
+
+The main placeholders are:
+
+- `pipeline_status_block`
+- `pipeline_status_count`
+- `pipeline_status_passed_count`
+- `pipeline_status_failed_count`
+- `pipeline_status_unknown_count`
+
+The built-in Slack templates already include `{{pipeline_status_block}}`. If no status files are found, the placeholder renders as an empty string.
 
 ## Slack Mention Rewriting
 

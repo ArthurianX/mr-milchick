@@ -12,6 +12,9 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
 
 - Cargo features decide which platform connector and notification sinks exist in the binary.
 - `mr-milchick.toml` is the canonical source for non-secret runtime configuration.
+- TOML supports env interpolation before parsing:
+  - `${VAR}` for required env vars
+  - `${VAR:-default}` for optional env vars with a fallback
 - Env is limited to:
   - `MR_MILCHICK_CONFIG_PATH`
   - `GITLAB_TOKEN`
@@ -36,6 +39,19 @@ If the file is missing, Milchick uses defaults:
 - inference: disabled
 - Slack sinks: disabled
 - templates: built-in defaults
+
+## TOML Interpolation
+
+Mr Milchick expands interpolation markers before it hands the file to the TOML parser.
+
+- `${VAR}` requires `VAR` to be present and non-empty.
+- `${VAR:-default}` falls back to `default` when `VAR` is missing or empty.
+- Interpolation happens before TOML parsing, so scalar values can be injected directly:
+  - `enabled = ${MILCHICK_LLM_ENABLED:-false}`
+- String values should still be quoted in TOML:
+  - `model_path = "${CI_PROJECT_DIR}/models/${MILCHICK_LLM_MODEL}"`
+
+This syntax is intentionally Milchick-specific and is not part of standard TOML. Generic TOML tooling and IDE plugins may flag it even though Milchick resolves it successfully at runtime.
 
 ## Example Config
 
@@ -71,8 +87,8 @@ areas = ["backend"]
 enabled = true
 
 [inference]
-enabled = false
-model_path = "models/review.gguf"
+enabled = ${MR_MILCHICK_LLM_ENABLED:-false}
+model_path = "${CI_PROJECT_DIR}/models/review.gguf"
 timeout_ms = 15000
 max_patch_bytes = 32768
 context_tokens = 4096
@@ -90,6 +106,10 @@ base_url = "https://slack.com/api"
 [notifications.slack_workflow]
 enabled = false
 channel = "C0ALY38CW3X"
+
+[notifications.pipeline_status]
+enabled = true
+search_root = "${CI_PROJECT_DIR}"
 
 [templates.gitlab]
 summary = """## {{summary_title}}
@@ -171,6 +191,36 @@ Auto-discovery order:
 | `enabled` | No | `false` | Must be `true` to activate the sink. |
 | `channel` | No | none | Sent in workflow payloads as `mr_milchick_talks_to`. |
 
+### `[notifications.pipeline_status]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | No | `false` | Enables Slack notification enrichment from local status JSON files. |
+| `search_root` | No | current working directory | Milchick recursively scans below this path for `*/milchick-status/*.json`. |
+
+This feature is optional and primarily intended for internal CI setups that already emit job result snapshots into the workspace before Milchick runs.
+
+Milchick accepts a tolerant JSON shape and currently looks for fields such as:
+
+- label/name: `label`, `name`, `job`, `task`, `step`
+- state: `status`, `state`, `success`, `passed`, `ok`
+- detail: `summary`, `message`, `detail`, `details`, `description`
+
+Example:
+
+```json
+{
+  "job": "unit_tests",
+  "status": "success",
+  "summary": "All tests passed",
+  "blocking": true,
+  "job_url": "https://gitlab.example.com/.../jobs/123",
+  "pipeline_url": "https://gitlab.example.com/.../pipelines/456"
+}
+```
+
+Unknown extra fields are ignored. Today `blocking`, `job_url`, and `pipeline_url` are preserved in the file format but are not rendered into notifications by default.
+
 ### `[templates.*]`
 
 Template overrides stay field-by-field and keep built-in defaults when omitted.
@@ -185,6 +235,14 @@ Template overrides stay field-by-field and keep built-in defaults when omitted.
 - `[templates.slack_workflow].first_thread`
 - `[templates.slack_workflow].update_title`
 - `[templates.slack_workflow].update_thread`
+
+Useful notification placeholders include:
+
+- `pipeline_status_block`
+- `pipeline_status_count`
+- `pipeline_status_passed_count`
+- `pipeline_status_failed_count`
+- `pipeline_status_unknown_count`
 
 Template placeholder validation still happens at render time. Invalid placeholders warn and fall back to the built-in field template.
 

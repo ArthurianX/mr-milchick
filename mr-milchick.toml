@@ -9,6 +9,10 @@
 #
 # If you want to use a different config file path, set:
 # - MR_MILCHICK_CONFIG_PATH=/path/to/other-config.toml
+#
+# TOML supports env interpolation before parsing:
+# - ${VAR} for required env vars
+# - ${VAR:-default} for optional env vars with a fallback
 
 [platform]
 # Review platform compiled into this binary.
@@ -77,10 +81,10 @@ notification_policy = "always"
 # report that inference is configured but not compiled in.
 
 # Enable local advisory review suggestions.
-# enabled = false
+# enabled = ${MR_MILCHICK_LLM_ENABLED:-false}
 
 # Path to a local GGUF model file.
-# model_path = "models/review.gguf"
+# model_path = "${CI_PROJECT_DIR}/models/review.gguf"
 
 # Timeout budget for the local inference pass, in milliseconds.
 # timeout_ms = 15000
@@ -130,6 +134,14 @@ notification_policy = "always"
 # Channel ID passed into the workflow payload.
 # channel = "C01234567"
 
+# Optional pipeline-task status aggregation for Slack templates.
+# Milchick recursively scans for JSON files under directories named
+# `milchick-status` starting from `search_root`.
+#
+# [notifications.pipeline_status]
+# enabled = true
+# search_root = "${CI_PROJECT_DIR}"
+
 [templates]
 # Message template overrides live under the sections below.
 # If omitted, Milchick uses built-in defaults.
@@ -169,12 +181,14 @@ notification_policy = "always"
 # *{{notification_title}}*
 # Merge request: {{mr_link}}
 # {{reviewers_line}}
+# {{pipeline_status_block}}
 # """
 # update_root = ":gitlab: {{notification_subject}} :thread:"
 # update_thread = """
 # Merge request: {{mr_link}}
 # {{findings_block}}
 # {{actions_block}}
+# {{pipeline_status_block}}
 # _{{summary_footer}}_
 # """
 
@@ -185,11 +199,13 @@ notification_policy = "always"
 # {{notification_title}}
 # Merge request: {{mr_link}}
 # {{reviewers_line}}
+# {{pipeline_status_block}}
 # """
 # update_title = "{{notification_subject}}"
 # update_thread = """
 # Merge request: {{mr_link}}
 # {{findings_block}}
 # {{actions_block}}
+# {{pipeline_status_block}}
 # {{summary_footer}}
 # """

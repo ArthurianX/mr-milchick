@@ -70,6 +70,7 @@ pub struct InferenceConfig {
 pub struct NotificationsConfig {
     pub slack_app: SlackAppConfig,
     pub slack_workflow: SlackWorkflowConfig,
+    pub pipeline_status: PipelineStatusConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,12 @@ pub struct SlackWorkflowConfig {
     pub enabled: bool,
     pub webhook_url: Option<String>,
     pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineStatusConfig {
+    pub enabled: bool,
+    pub search_root: Option<String>,
 }
 
 pub fn load_resolved_config() -> Result<ResolvedConfig> {
@@ -165,6 +172,8 @@ fn load_config_file(path_override: Option<&str>) -> Result<schema::ConfigFile> {
 
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read config file '{}'", path))?;
+    let raw = interpolate_env_vars(&raw)
+        .with_context(|| format!("failed to interpolate config file '{}'", path))?;
     toml::from_str::<schema::ConfigFile>(&raw)
         .with_context(|| format!("failed to parse config file '{}'", path))
 }
@@ -300,6 +309,10 @@ fn resolve_notifications_config(
             webhook_url: secrets.slack_webhook_url.clone(),
             channel: sanitize_optional(file.slack_workflow.channel.clone()),
         },
+        pipeline_status: PipelineStatusConfig {
+            enabled: file.pipeline_status.enabled.unwrap_or(false),
+            search_root: sanitize_optional(file.pipeline_status.search_root.clone()),
+        },
     }
 }
 
@@ -353,6 +366,75 @@ fn sanitize_user_map(raw: &BTreeMap<String, String>) -> BTreeMap<String, String>
     sanitized
 }
 
+fn interpolate_env_vars(input: &str) -> Result<String> {
+    interpolate_env_vars_with(input, |name| std::env::var(name).ok())
+}
+
+fn interpolate_env_vars_with<F>(input: &str, mut lookup: F) -> Result<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let chars = input.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut output = String::with_capacity(input.len());
+
+    while index < chars.len() {
+        if chars[index] == '$' && chars.get(index + 1) == Some(&'{') {
+            let start = index + 2;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '}' {
+                end += 1;
+            }
+
+            if end >= chars.len() {
+                bail!("unclosed env interpolation");
+            }
+
+            let expression = chars[start..end].iter().collect::<String>();
+            output.push_str(&resolve_interpolation_expression(&expression, &mut lookup)?);
+            index = end + 1;
+            continue;
+        }
+
+        output.push(chars[index]);
+        index += 1;
+    }
+
+    Ok(output)
+}
+
+fn resolve_interpolation_expression<F>(expression: &str, lookup: &mut F) -> Result<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let expression = expression.trim();
+    if expression.is_empty() {
+        bail!("empty env interpolation");
+    }
+
+    let (name, default) = match expression.split_once(":-") {
+        Some((name, default)) => (name.trim(), Some(default)),
+        None => (expression, None),
+    };
+
+    if !name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        bail!("invalid env interpolation '${{{}}}'", expression);
+    }
+
+    if let Some(value) = lookup(name).filter(|value| !value.is_empty()) {
+        return Ok(value);
+    }
+
+    if let Some(default) = default {
+        return Ok(default.to_string());
+    }
+
+    bail!("missing environment variable '{}' for config interpolation", name);
+}
+
 fn resolve_positive_u64(value: Option<u64>, default: u64, field: &str) -> Result<u64> {
     match value {
         Some(0) => bail!("'{}' must be greater than zero", field),
@@ -404,6 +486,7 @@ mod tests {
         assert!(!config.inference.trace);
         assert!(!config.notifications.slack_app.enabled);
         assert!(!config.notifications.slack_workflow.enabled);
+        assert!(!config.notifications.pipeline_status.enabled);
     }
 
     #[test]
@@ -459,6 +542,10 @@ base_url = "https://slack.example.test/api"
 enabled = {slack_workflow_enabled}
 channel = "C456"
 
+[notifications.pipeline_status]
+enabled = true
+search_root = "."
+
 [templates.gitlab]
 summary = "## {{{{summary_title}}}}"
 
@@ -510,6 +597,11 @@ first_root = "hello"
         assert_eq!(
             config.notifications.slack_workflow.webhook_url.as_deref(),
             Some("https://hooks.slack.com/triggers/test")
+        );
+        assert!(config.notifications.pipeline_status.enabled);
+        assert_eq!(
+            config.notifications.pipeline_status.search_root.as_deref(),
+            Some(".")
         );
         assert_eq!(
             config.notifications.slack_app.user_map.get("alice"),
@@ -576,6 +668,52 @@ max_reviewers = 0
         .expect_err("zero max reviewers should fail");
 
         assert!(error.to_string().contains("reviewers.max_reviewers"));
+    }
+
+    #[test]
+    fn interpolates_env_vars_before_toml_parse() {
+        let raw = r#"
+[execution]
+dry_run = ${DRY_RUN_FLAG:-false}
+
+[inference]
+enabled = ${LLM_ENABLED}
+model_path = "${CI_PROJECT_DIR}/models/review.gguf"
+"#;
+
+        let interpolated = interpolate_env_vars_with(raw, |name| match name {
+            "LLM_ENABLED" => Some("true".to_string()),
+            "CI_PROJECT_DIR" => Some("/builds/example/project".to_string()),
+            _ => None,
+        })
+        .expect("config interpolation should succeed");
+
+        let file = toml::from_str::<schema::ConfigFile>(&interpolated)
+            .expect("interpolated config should parse");
+
+        assert_eq!(file.execution.dry_run, Some(false));
+        assert_eq!(file.inference.enabled, Some(true));
+        assert_eq!(
+            file.inference.model_path.as_deref(),
+            Some("/builds/example/project/models/review.gguf")
+        );
+    }
+
+    #[test]
+    fn fails_when_required_interpolation_env_var_is_missing() {
+        let error = interpolate_env_vars_with(
+            r#"[inference]
+model_path = "${CI_PROJECT_DIR}/models/review.gguf"
+"#,
+            |_| None,
+        )
+        .expect_err("missing env var should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("missing environment variable 'CI_PROJECT_DIR'")
+        );
     }
 
     #[test]

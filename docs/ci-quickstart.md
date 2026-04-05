@@ -33,6 +33,14 @@ areas = ["frontend", "packages"]
 [[reviewers.definitions]]
 username = "carol"
 areas = ["backend"]
+
+[inference]
+enabled = ${MR_MILCHICK_LLM_ENABLED:-false}
+model_path = "${CI_PROJECT_DIR}/models/microcoder-1.5b-Q5_K_M.gguf"
+
+[notifications.pipeline_status]
+enabled = true
+search_root = "${CI_PROJECT_DIR}"
 ```
 
 Put that in `mr-milchick.toml` at the repo root. If you need another path, set `MR_MILCHICK_CONFIG_PATH`.
@@ -124,6 +132,28 @@ The webhook must be a Slack Workflow input webhook. Milchick sends:
 - `mr_milchick_talks_to`
 - `mr_milchick_says`
 - `mr_milchick_says_thread`
+
+## Interpolation Notes
+
+- TOML supports `${VAR}` for required env vars.
+- TOML supports `${VAR:-default}` for optional env vars with a fallback.
+- Keep string substitutions quoted, for example `model_path = "${CI_PROJECT_DIR}/models/review.gguf"`.
+- Scalar substitutions can stay unquoted, for example `enabled = ${MR_MILCHICK_LLM_ENABLED:-false}`.
+- This syntax is specific to Mr Milchick and is resolved before TOML parsing, so IDE TOML validators may still flag it.
+
+## Optional Prior-Job Status Input
+
+Some internal CI setups have earlier jobs write compact JSON files under `milchick-status/` directories and then let Milchick include those results in Slack notifications.
+
+If you use that pattern, enable:
+
+```toml
+[notifications.pipeline_status]
+enabled = true
+search_root = "${CI_PROJECT_DIR}"
+```
+
+Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. This is optional; if your pipeline does not produce those files, leave the feature disabled.
 
 ## Safe Rollout
 

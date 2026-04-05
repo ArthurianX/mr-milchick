@@ -1,6 +1,10 @@
 use anyhow::Result;
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+use serde::Deserialize;
 use tracing::{info, warn};
 
 #[cfg(feature = "github")]
@@ -30,7 +34,8 @@ use crate::core::inference::{
 use crate::core::message_templates::{
     build_notification_template_context, build_summary_template_context,
     notification_template_variant, render_review_summary, render_slack_app_notification,
-    render_slack_workflow_notification, resolve_template_catalog,
+    render_slack_workflow_notification, resolve_template_catalog, PipelineStatusState,
+    PipelineStatusTemplateEntry,
 };
 use crate::core::model::{
     NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
@@ -69,6 +74,42 @@ struct FixturePlatformConnector;
 struct ReviewInferenceConnectorAdapter {
     engine: Box<dyn ReviewInferenceEngine>,
     timeout: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+struct RawPipelineStatusRecord {
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    job: Option<String>,
+    #[serde(default)]
+    task: Option<String>,
+    #[serde(default)]
+    step: Option<String>,
+    #[serde(default)]
+    stage: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    passed: Option<bool>,
+    #[serde(default)]
+    ok: Option<bool>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
+    details: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 fn load_app_config_context() -> Result<AppConfigContext> {
@@ -244,6 +285,7 @@ pub async fn run_mode(
     }
 
     let preview_sink_kinds = configured_notification_sink_kinds(&app_config);
+    let pipeline_statuses = load_pipeline_status_entries(&app_config.config);
     info!(
         inference_available = wiring.capabilities.inference_available,
         changed_files = snapshot.changed_file_count(),
@@ -295,6 +337,7 @@ pub async fn run_mode(
                     &selector,
                     &ctx,
                     &inference_outcome,
+                    &pipeline_statuses,
                     &preview_sink_kinds,
                     fixture_notification_variant,
                 );
@@ -327,6 +370,7 @@ pub async fn run_mode(
                 &selector,
                 &ctx,
                 &inference_outcome,
+                &pipeline_statuses,
                 &preview_sink_kinds,
                 fixture_notification_variant,
             );
@@ -356,6 +400,7 @@ pub async fn run_mode(
                 &selector,
                 &ctx,
                 &inference_outcome,
+                &pipeline_statuses,
                 &preview_sink_kinds,
                 fixture_notification_variant,
             );
@@ -743,6 +788,7 @@ fn build_notifications(
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
     inference_outcome: &ReviewInferenceOutcome,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
     sink_kinds: &[NotificationSinkKind],
     variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
@@ -763,6 +809,7 @@ fn build_notifications(
         reviewers.reviewers.clone(),
         reviewers.new_reviewers.clone(),
         reviewers.existing_reviewers.clone(),
+        pipeline_statuses.to_vec(),
     );
 
     sink_kinds
@@ -803,6 +850,174 @@ fn build_notifications(
             _ => None,
         })
         .collect()
+}
+
+fn load_pipeline_status_entries(config: &ResolvedConfig) -> Vec<PipelineStatusTemplateEntry> {
+    if !config.notifications.pipeline_status.enabled {
+        return Vec::new();
+    }
+
+    let search_root = config
+        .notifications
+        .pipeline_status
+        .search_root
+        .as_deref()
+        .unwrap_or(".");
+    let root = Path::new(search_root);
+
+    if !root.exists() {
+        warn!(
+            search_root,
+            "pipeline status search root does not exist; skipping status aggregation"
+        );
+        return Vec::new();
+    }
+
+    let paths = match collect_pipeline_status_paths(root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            warn!(
+                search_root,
+                error = %err,
+                "failed to scan pipeline status files; skipping status aggregation"
+            );
+            return Vec::new();
+        }
+    };
+
+    paths.into_iter()
+        .filter_map(|path| match load_pipeline_status_file(&path) {
+            Ok(entries) => Some(entries),
+            Err(err) => {
+                warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to read pipeline status file; skipping"
+                );
+                None
+            }
+        })
+        .flatten()
+        .collect()
+}
+
+fn collect_pipeline_status_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let path = entry.path();
+
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+
+            if file_type.is_file()
+                && path.extension() == Some(OsStr::new("json"))
+                && path.parent().and_then(Path::file_name) == Some(OsStr::new("milchick-status"))
+            {
+                paths.push(path);
+            }
+        }
+    }
+
+    paths.sort();
+    Ok(paths)
+}
+
+fn load_pipeline_status_file(path: &Path) -> Result<Vec<PipelineStatusTemplateEntry>> {
+    let raw = fs::read_to_string(path)?;
+    let payload = serde_json::from_str::<serde_json::Value>(&raw)?;
+
+    let entries = match payload {
+        serde_json::Value::Object(_) => vec![parse_pipeline_status_value(payload, path)?],
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .map(|value| parse_pipeline_status_value(value, path))
+            .collect::<Result<Vec<_>>>()?,
+        _ => anyhow::bail!("status file must contain a JSON object or array of objects"),
+    };
+
+    Ok(entries)
+}
+
+fn parse_pipeline_status_value(
+    value: serde_json::Value,
+    path: &Path,
+) -> Result<PipelineStatusTemplateEntry> {
+    let record = serde_json::from_value::<RawPipelineStatusRecord>(value)?;
+
+    let mut label = first_non_empty([
+        record.label.as_deref(),
+        record.name.as_deref(),
+        record.job.as_deref(),
+        record.task.as_deref(),
+        record.step.as_deref(),
+    ])
+    .map(ToOwned::to_owned)
+    .unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("unknown-task")
+            .to_string()
+    });
+
+    if let Some(stage) = first_non_empty([record.stage.as_deref()]) {
+        if !label.contains(stage) {
+            label = format!("{label} ({stage})");
+        }
+    }
+
+    Ok(PipelineStatusTemplateEntry {
+        label,
+        state: infer_pipeline_status_state(&record),
+        detail: first_non_empty([
+            record.summary.as_deref(),
+            record.message.as_deref(),
+            record.detail.as_deref(),
+            record.details.as_deref(),
+            record.description.as_deref(),
+        ])
+        .map(ToOwned::to_owned),
+    })
+}
+
+fn infer_pipeline_status_state(record: &RawPipelineStatusRecord) -> PipelineStatusState {
+    for value in [record.success, record.passed, record.ok].into_iter().flatten() {
+        return if value {
+            PipelineStatusState::Passed
+        } else {
+            PipelineStatusState::Failed
+        };
+    }
+
+    let status = first_non_empty([record.status.as_deref(), record.state.as_deref()])
+        .map(|value| value.trim().to_ascii_lowercase());
+
+    match status.as_deref() {
+        Some("success" | "succeeded" | "passed" | "pass" | "ok" | "healthy") => {
+            PipelineStatusState::Passed
+        }
+        Some("failed" | "failure" | "error" | "errored" | "broken" | "unhealthy") => {
+            PipelineStatusState::Failed
+        }
+        _ => PipelineStatusState::Unknown,
+    }
+}
+
+fn first_non_empty<'a, I>(values: I) -> Option<&'a str>
+where
+    I: IntoIterator<Item = Option<&'a str>>,
+{
+    values
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
 }
 
 fn map_fixture_variant_arg(
@@ -1001,7 +1216,8 @@ mod tests {
     use super::*;
     use crate::config::{
         CodeownersConfig, ExecutionConfig, InferenceConfig, NotificationsConfig, PlatformConfig,
-        ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig,
+        PipelineStatusConfig as ResolvedPipelineStatusConfig, ResolvedConfig,
+        SlackAppConfig as ResolvedSlackAppConfig,
         SlackWorkflowConfig as ResolvedSlackWorkflowConfig, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
@@ -1016,6 +1232,7 @@ mod tests {
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
     };
     use crate::core::rules::model::{FindingSeverity, RuleFinding};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn sample_context() -> CiContext {
         CiContext {
@@ -1130,6 +1347,10 @@ mod tests {
                     webhook_url: None,
                     channel: None,
                 },
+                pipeline_status: ResolvedPipelineStatusConfig {
+                    enabled: false,
+                    search_root: None,
+                },
             },
             templates: TemplatesConfig::default(),
         }
@@ -1178,6 +1399,7 @@ mod tests {
             &selector,
             &ctx,
             &sample_inference_outcome(),
+            &[],
             &[NotificationSinkKind::SlackApp],
             None,
         );
@@ -1209,6 +1431,11 @@ mod tests {
             &selector,
             &ctx,
             &sample_inference_outcome(),
+            &[PipelineStatusTemplateEntry {
+                label: "unit_tests".to_string(),
+                state: PipelineStatusState::Passed,
+                detail: Some("18 tests passed".to_string()),
+            }],
             &[NotificationSinkKind::SlackWorkflow],
             None,
         );
@@ -1223,6 +1450,9 @@ mod tests {
                 .body
                 .contains("The change adds advisory local review suggestions.")
         );
+        assert!(notifications[0]
+            .body
+            .contains(":green_circle: unit_tests: 18 tests passed"));
     }
 
     #[test]
@@ -1269,5 +1499,34 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("require a model path"));
+    }
+
+    #[test]
+    fn loads_pipeline_status_entries_from_workspace_tree() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("mr-milchick-status-{unique}"));
+        let status_dir = root.join("unit_tests").join("milchick-status");
+        fs::create_dir_all(&status_dir).expect("status dir should be created");
+        fs::write(
+            status_dir.join("result.json"),
+            r#"{"job":"unit_tests","success":true,"summary":"18 tests passed"}"#,
+        )
+        .expect("status file should be written");
+
+        let mut config = sample_resolved_config();
+        config.notifications.pipeline_status.enabled = true;
+        config.notifications.pipeline_status.search_root = Some(root.display().to_string());
+
+        let entries = load_pipeline_status_entries(&config);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].label, "unit_tests");
+        assert_eq!(entries[0].state, PipelineStatusState::Passed);
+        assert_eq!(entries[0].detail.as_deref(), Some("18 tests passed"));
+
+        fs::remove_dir_all(&root).expect("temp status dir should be removed");
     }
 }

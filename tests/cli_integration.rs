@@ -560,6 +560,9 @@ enabled = true
 channel = "C0ALY38CW3X"
 base_url = "__SLACK_BASE_URL__"
 
+[codeowners]
+enabled = false
+
 [templates.slack_app]
 update_root = "Template override for {{mr_ref}}"
 "#
@@ -612,6 +615,9 @@ max_reviewers = 2
 enabled = true
 channel = "C0ALY38CW3X"
 base_url = "__SLACK_BASE_URL__"
+
+[codeowners]
+enabled = false
 
 [templates.slack_app]
 update_root = "Template override for {{unknown_placeholder}}"
