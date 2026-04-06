@@ -1452,7 +1452,7 @@ mod tests {
         );
         assert!(notifications[0]
             .body
-            .contains(":green_circle: unit_tests: 18 tests passed"));
+            .contains(":large_green_circle: unit_tests: 18 tests passed"));
     }
 
     #[test]

@@ -1035,9 +1035,9 @@ fn format_pipeline_status_block(
 
     lines.extend(pipeline_statuses.iter().map(|entry| {
         let indicator = match entry.state {
-            PipelineStatusState::Passed => ":green_circle:",
+            PipelineStatusState::Passed => ":large_green_circle:",
             PipelineStatusState::Failed => ":red_circle:",
-            PipelineStatusState::Unknown => ":white_circle:",
+            PipelineStatusState::Unknown => ":large_yellow_circle:",
         };
         let mut line = match style {
             RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
@@ -1307,7 +1307,7 @@ mod tests {
         assert!(body.contains("Local review recommendations"));
         assert!(body.contains("advisory inference text appearing in summary"));
         assert!(body.contains("CI task status"));
-        assert!(body.contains(":green_circle: unit_tests: 12 tests passed"));
+        assert!(body.contains(":large_green_circle: unit_tests: 12 tests passed"));
         assert!(!body.contains("No findings were produced."));
     }
 
