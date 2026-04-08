@@ -1288,19 +1288,19 @@ mod tests {
                 &sample_snapshot(),
                 &sample_inference_outcome(),
                 &ToneSelector::default(),
-            &sample_context(),
+                &sample_context(),
+                NotificationTemplateVariant::First,
+                vec!["principal-reviewer".to_string(), "bob".to_string()],
+                vec!["bob".to_string()],
+                vec!["principal-reviewer".to_string()],
+                vec![PipelineStatusTemplateEntry {
+                    label: "unit_tests".to_string(),
+                    state: PipelineStatusState::Passed,
+                    detail: Some("12 tests passed".to_string()),
+                }],
+            ),
             NotificationTemplateVariant::First,
-            vec!["principal-reviewer".to_string(), "bob".to_string()],
-            vec!["bob".to_string()],
-            vec!["principal-reviewer".to_string()],
-            vec![PipelineStatusTemplateEntry {
-                label: "unit_tests".to_string(),
-                state: PipelineStatusState::Passed,
-                detail: Some("12 tests passed".to_string()),
-            }],
-        ),
-        NotificationTemplateVariant::First,
-    );
+        );
 
         assert!(subject.contains("took a first look at"));
         assert!(body.contains("Assigned reviewers @principal-reviewer @bob"));

@@ -132,6 +132,14 @@ _{{closing_tone_message}}_"""
 | `kind` | No | compiled platform | Must match the compiled binary if present. |
 | `base_url` | No | platform default | GitLab or GitHub API base URL. |
 
+### `[platform.gitlab]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `all_pipelines_pass_label` | No | none | Adds this GitLab MR label only when parsed `milchick-status` entries exist and every entry is `Passed`. |
+
+If `all_pipelines_pass_label` is configured but Milchick does not find any `*/milchick-status/*.json` data, Milchick emits a warning and does not plan the label action.
+
 ### `[execution]`
 
 | Field | Required | Default | Notes |
@@ -199,6 +207,8 @@ Auto-discovery order:
 | `search_root` | No | current working directory | Milchick recursively scans below this path for `*/milchick-status/*.json`. |
 
 This feature is optional and primarily intended for internal CI setups that already emit job result snapshots into the workspace before Milchick runs.
+
+It also powers the optional GitLab success-label flow under `[platform.gitlab]`. Without parsed status entries, Milchick will not attempt that label action.
 
 Milchick accepts a tolerant JSON shape and currently looks for fields such as:
 

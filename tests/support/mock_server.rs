@@ -50,6 +50,7 @@ struct MockSlackMessage {
 #[derive(Debug)]
 struct ServerState {
     reviewers: Vec<String>,
+    labels: Vec<String>,
     notes: Vec<MockNote>,
     slack_messages: Vec<MockSlackMessage>,
     github_files: Vec<MockGithubFile>,
@@ -67,18 +68,30 @@ pub struct MockGitLabServer {
 
 impl MockGitLabServer {
     pub fn start() -> Self {
-        Self::start_with_reviewers_and_github_files(Vec::new(), 1)
+        Self::start_with_reviewers_labels_and_github_files(Vec::new(), Vec::new(), 1)
     }
 
     pub fn start_with_reviewers(reviewers: Vec<&str>) -> Self {
-        Self::start_with_reviewers_and_github_files(reviewers, 1)
+        Self::start_with_reviewers_labels_and_github_files(reviewers, Vec::new(), 1)
+    }
+
+    pub fn start_with_labels(labels: Vec<&str>) -> Self {
+        Self::start_with_reviewers_labels_and_github_files(Vec::new(), labels, 1)
     }
 
     pub fn start_with_github_file_count(file_count: usize) -> Self {
-        Self::start_with_reviewers_and_github_files(Vec::new(), file_count)
+        Self::start_with_reviewers_labels_and_github_files(Vec::new(), Vec::new(), file_count)
     }
 
     pub fn start_with_reviewers_and_github_files(reviewers: Vec<&str>, file_count: usize) -> Self {
+        Self::start_with_reviewers_labels_and_github_files(reviewers, Vec::new(), file_count)
+    }
+
+    pub fn start_with_reviewers_labels_and_github_files(
+        reviewers: Vec<&str>,
+        labels: Vec<&str>,
+        file_count: usize,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
         listener
             .set_nonblocking(true)
@@ -92,6 +105,7 @@ impl MockGitLabServer {
                 .into_iter()
                 .map(|value| value.to_string())
                 .collect(),
+            labels: labels.into_iter().map(|value| value.to_string()).collect(),
             notes: Vec::new(),
             slack_messages: Vec::new(),
             github_files: github_files(file_count),
@@ -172,6 +186,14 @@ impl MockGitLabServer {
             .lock()
             .expect("state lock should succeed")
             .reviewers
+            .clone()
+    }
+
+    pub fn labels(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .expect("state lock should succeed")
+            .labels
             .clone()
     }
 
@@ -355,6 +377,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 "web_url": "https://gitlab.example.com/group/project/-/merge_requests/3995",
                 "author": {"username": "arthur"},
                 "reviewers": state.reviewers.iter().map(|username| json!({"username": username})).collect::<Vec<_>>(),
+                "labels": state.labels,
             })
             .to_string(),
         },
@@ -465,17 +488,38 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
         ("PUT", path) if path == mr_path => {
             let body: Value =
                 serde_json::from_str(&request.body).expect("reviewer assignment should be JSON");
-            let reviewer_ids = body["reviewer_ids"]
-                .as_array()
-                .expect("reviewer_ids should be an array");
+            if let Some(reviewer_ids) = body["reviewer_ids"].as_array() {
+                state.reviewers = reviewer_ids
+                    .iter()
+                    .map(|value| {
+                        let id = value.as_u64().expect("reviewer id should be a number");
+                        username_for_id(id).to_string()
+                    })
+                    .collect();
+            }
 
-            state.reviewers = reviewer_ids
-                .iter()
-                .map(|value| {
-                    let id = value.as_u64().expect("reviewer id should be a number");
-                    username_for_id(id).to_string()
-                })
-                .collect();
+            if let Some(add_labels) = body["add_labels"].as_str() {
+                for label in add_labels
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|label| !label.is_empty())
+                {
+                    if !state.labels.iter().any(|existing| existing == label) {
+                        state.labels.push(label.to_string());
+                    }
+                }
+            }
+
+            if let Some(remove_labels) = body["remove_labels"].as_str() {
+                let labels_to_remove = remove_labels
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|label| !label.is_empty())
+                    .collect::<Vec<_>>();
+                state
+                    .labels
+                    .retain(|label| !labels_to_remove.iter().any(|removed| removed == label));
+            }
 
             HttpResponse {
                 status_code: 200,

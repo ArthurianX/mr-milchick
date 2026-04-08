@@ -42,6 +42,12 @@ pub struct PlatformConfig {
     pub kind: ReviewPlatformKind,
     pub base_url: String,
     pub token: Option<String>,
+    pub gitlab: GitLabPlatformConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitLabPlatformConfig {
+    pub all_pipelines_pass_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +206,11 @@ fn resolve_platform_config(
         kind,
         base_url,
         token,
+        gitlab: GitLabPlatformConfig {
+            all_pipelines_pass_label: sanitize_optional(
+                file.gitlab.all_pipelines_pass_label.clone(),
+            ),
+        },
     })
 }
 
@@ -432,7 +443,10 @@ where
         return Ok(default.to_string());
     }
 
-    bail!("missing environment variable '{}' for config interpolation", name);
+    bail!(
+        "missing environment variable '{}' for config interpolation",
+        name
+    );
 }
 
 fn resolve_positive_u64(value: Option<u64>, default: u64, field: &str) -> Result<u64> {
@@ -477,6 +491,7 @@ mod tests {
         assert_eq!(config.reviewers.max_reviewers, DEFAULT_MAX_REVIEWERS);
         assert!(config.reviewers.definitions.is_empty());
         assert!(config.codeowners.enabled);
+        assert!(config.platform.gitlab.all_pipelines_pass_label.is_none());
         assert!(!config.execution.dry_run);
         assert_eq!(
             config.execution.notification_policy,
@@ -497,6 +512,9 @@ mod tests {
 [platform]
 kind = "gitlab"
 base_url = "https://gitlab.example.com/api/v4"
+
+[platform.gitlab]
+all_pipelines_pass_label = "ready-to-merge"
 
 [execution]
 dry_run = true
@@ -572,6 +590,10 @@ first_root = "hello"
             "https://gitlab.example.com/api/v4"
         );
         assert_eq!(config.platform.token.as_deref(), Some("gitlab-token"));
+        assert_eq!(
+            config.platform.gitlab.all_pipelines_pass_label.as_deref(),
+            Some("ready-to-merge")
+        );
         assert!(config.execution.dry_run);
         assert_eq!(
             config.execution.notification_policy,

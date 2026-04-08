@@ -1,10 +1,10 @@
 use anyhow::Result;
+use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use serde::Deserialize;
 use tracing::{info, warn};
 
 #[cfg(feature = "github")]
@@ -32,17 +32,16 @@ use crate::core::inference::{
     NoopReviewInferenceEngine, ReviewInferenceEngine, ReviewInferenceOutcome, analyze_with_timeout,
 };
 use crate::core::message_templates::{
-    build_notification_template_context, build_summary_template_context,
-    notification_template_variant, render_review_summary, render_slack_app_notification,
-    render_slack_workflow_notification, resolve_template_catalog, PipelineStatusState,
-    PipelineStatusTemplateEntry,
+    PipelineStatusState, PipelineStatusTemplateEntry, build_notification_template_context,
+    build_summary_template_context, notification_template_variant, render_review_summary,
+    render_slack_app_notification, render_slack_workflow_notification, resolve_template_catalog,
 };
 use crate::core::model::{
     NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
     ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
 use crate::core::rules::engine::evaluate_rules;
-use crate::core::rules::model::RuleOutcome;
+use crate::core::rules::model::{RuleFinding, RuleOutcome};
 use crate::core::tone::{ToneCategory, ToneSelector};
 use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
@@ -286,6 +285,12 @@ pub async fn run_mode(
 
     let preview_sink_kinds = configured_notification_sink_kinds(&app_config);
     let pipeline_statuses = load_pipeline_status_entries(&app_config.config);
+    outcome = enrich_with_pipeline_success_label(
+        outcome,
+        &snapshot,
+        &app_config.config,
+        &pipeline_statuses,
+    );
     info!(
         inference_available = wiring.capabilities.inference_available,
         changed_files = snapshot.changed_file_count(),
@@ -885,7 +890,8 @@ fn load_pipeline_status_entries(config: &ResolvedConfig) -> Vec<PipelineStatusTe
         }
     };
 
-    paths.into_iter()
+    paths
+        .into_iter()
         .filter_map(|path| match load_pipeline_status_file(&path) {
             Ok(entries) => Some(entries),
             Err(err) => {
@@ -899,6 +905,56 @@ fn load_pipeline_status_entries(config: &ResolvedConfig) -> Vec<PipelineStatusTe
         })
         .flatten()
         .collect()
+}
+
+fn enrich_with_pipeline_success_label(
+    mut outcome: RuleOutcome,
+    snapshot: &crate::core::model::ReviewSnapshot,
+    config: &ResolvedConfig,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
+) -> RuleOutcome {
+    let Some(label) = config.platform.gitlab.all_pipelines_pass_label.as_deref() else {
+        return outcome;
+    };
+
+    if config.platform.kind != ReviewPlatformKind::GitLab
+        || snapshot.review_ref.platform != ReviewPlatformKind::GitLab
+    {
+        return outcome;
+    }
+
+    if pipeline_statuses.is_empty() {
+        outcome.push(RuleFinding::warning(format!(
+            "GitLab label '{}' is configured for successful pipelines, but no milchick-status data was found. Milchick will not plan the label action without parsed pipeline results.",
+            label
+        )));
+        return outcome;
+    }
+
+    if !pipeline_statuses
+        .iter()
+        .all(|entry| entry.state == PipelineStatusState::Passed)
+    {
+        return outcome;
+    }
+
+    if snapshot.labels.iter().any(|existing| existing == label) {
+        return outcome;
+    }
+
+    if outcome.action_plan.actions.iter().any(|action| {
+        matches!(
+            action,
+            ReviewAction::AddLabels { labels } if labels.iter().any(|existing| existing == label)
+        )
+    }) {
+        return outcome;
+    }
+
+    outcome.action_plan.push(ReviewAction::AddLabels {
+        labels: vec![label.to_string()],
+    });
+    outcome
 }
 
 fn collect_pipeline_status_paths(root: &Path) -> Result<Vec<PathBuf>> {
@@ -987,7 +1043,10 @@ fn parse_pipeline_status_value(
 }
 
 fn infer_pipeline_status_state(record: &RawPipelineStatusRecord) -> PipelineStatusState {
-    for value in [record.success, record.passed, record.ok].into_iter().flatten() {
+    for value in [record.success, record.passed, record.ok]
+        .into_iter()
+        .flatten()
+    {
         return if value {
             PipelineStatusState::Passed
         } else {
@@ -1215,9 +1274,9 @@ fn print_codeowners_details(
 mod tests {
     use super::*;
     use crate::config::{
-        CodeownersConfig, ExecutionConfig, InferenceConfig, NotificationsConfig, PlatformConfig,
-        PipelineStatusConfig as ResolvedPipelineStatusConfig, ResolvedConfig,
-        SlackAppConfig as ResolvedSlackAppConfig,
+        CodeownersConfig, ExecutionConfig, GitLabPlatformConfig as ResolvedGitLabPlatformConfig,
+        InferenceConfig, NotificationsConfig, PipelineStatusConfig as ResolvedPipelineStatusConfig,
+        PlatformConfig, ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig,
         SlackWorkflowConfig as ResolvedSlackWorkflowConfig, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
@@ -1313,6 +1372,9 @@ mod tests {
                 kind: ReviewPlatformKind::GitLab,
                 base_url: "https://gitlab.example.com/api/v4".to_string(),
                 token: Some("gitlab-token".to_string()),
+                gitlab: ResolvedGitLabPlatformConfig {
+                    all_pipelines_pass_label: None,
+                },
             },
             execution: ExecutionConfig {
                 dry_run: false,
@@ -1450,9 +1512,11 @@ mod tests {
                 .body
                 .contains("The change adds advisory local review suggestions.")
         );
-        assert!(notifications[0]
-            .body
-            .contains(":large_green_circle: unit_tests: 18 tests passed"));
+        assert!(
+            notifications[0]
+                .body
+                .contains(":large_green_circle: unit_tests: 18 tests passed")
+        );
     }
 
     #[test]
@@ -1528,5 +1592,74 @@ mod tests {
         assert_eq!(entries[0].detail.as_deref(), Some("18 tests passed"));
 
         fs::remove_dir_all(&root).expect("temp status dir should be removed");
+    }
+
+    #[test]
+    fn plans_success_label_when_all_pipeline_statuses_pass() {
+        let mut config = sample_resolved_config();
+        config.platform.gitlab.all_pipelines_pass_label = Some("ready-to-merge".to_string());
+
+        let outcome = enrich_with_pipeline_success_label(
+            RuleOutcome::new(),
+            &sample_snapshot(Vec::new()),
+            &config,
+            &[PipelineStatusTemplateEntry {
+                label: "unit_tests".to_string(),
+                state: PipelineStatusState::Passed,
+                detail: Some("18 tests passed".to_string()),
+            }],
+        );
+
+        assert!(outcome.findings.is_empty());
+        assert!(matches!(
+            outcome.action_plan.actions.as_slice(),
+            [ReviewAction::AddLabels { labels }] if labels == &vec!["ready-to-merge".to_string()]
+        ));
+    }
+
+    #[test]
+    fn warns_when_success_label_is_configured_without_pipeline_status_data() {
+        let mut config = sample_resolved_config();
+        config.platform.gitlab.all_pipelines_pass_label = Some("ready-to-merge".to_string());
+
+        let outcome = enrich_with_pipeline_success_label(
+            RuleOutcome::new(),
+            &sample_snapshot(Vec::new()),
+            &config,
+            &[],
+        );
+
+        assert!(outcome.action_plan.is_empty());
+        assert_eq!(outcome.findings.len(), 1);
+        assert_eq!(outcome.findings[0].severity, FindingSeverity::Warning);
+        assert!(outcome.findings[0].message.contains("ready-to-merge"));
+        assert!(outcome.findings[0].message.contains("milchick-status"));
+    }
+
+    #[test]
+    fn does_not_plan_success_label_when_any_pipeline_status_is_not_passed() {
+        let mut config = sample_resolved_config();
+        config.platform.gitlab.all_pipelines_pass_label = Some("ready-to-merge".to_string());
+
+        let outcome = enrich_with_pipeline_success_label(
+            RuleOutcome::new(),
+            &sample_snapshot(Vec::new()),
+            &config,
+            &[
+                PipelineStatusTemplateEntry {
+                    label: "unit_tests".to_string(),
+                    state: PipelineStatusState::Passed,
+                    detail: None,
+                },
+                PipelineStatusTemplateEntry {
+                    label: "lint".to_string(),
+                    state: PipelineStatusState::Failed,
+                    detail: Some("1 error".to_string()),
+                },
+            ],
+        );
+
+        assert!(outcome.findings.is_empty());
+        assert!(outcome.action_plan.is_empty());
     }
 }

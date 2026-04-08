@@ -148,12 +148,15 @@ Some internal CI setups have earlier jobs write compact JSON files under `milchi
 If you use that pattern, enable:
 
 ```toml
+[platform.gitlab]
+all_pipelines_pass_label = "ready-to-merge"
+
 [notifications.pipeline_status]
 enabled = true
 search_root = "${CI_PROJECT_DIR}"
 ```
 
-Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. This is optional; if your pipeline does not produce those files, leave the feature disabled.
+Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. If `all_pipelines_pass_label` is configured, Milchick also uses those parsed results to add the GitLab label only when every status entry passed. If no status files are found, Milchick warns and skips the label action.
 
 ## Safe Rollout
 

@@ -26,7 +26,7 @@ fn connector(server: &MockGitLabServer) -> GitLabReviewConnector {
 
 #[tokio::test]
 async fn loads_neutral_snapshot_from_gitlab() {
-    let server = MockGitLabServer::start();
+    let server = MockGitLabServer::start_with_labels(vec!["frontend"]);
     let connector = connector(&server);
 
     let snapshot = connector
@@ -47,6 +47,7 @@ async fn loads_neutral_snapshot_from_gitlab() {
         snapshot.changed_files[0].patch.as_deref(),
         Some("@@ -1,2 +1,2 @@")
     );
+    assert_eq!(snapshot.labels, vec!["frontend".to_string()]);
 }
 
 #[tokio::test]
@@ -141,4 +142,38 @@ async fn merges_existing_reviewers_instead_of_replacing_them() {
             .expect("reviewer assignment body should parse"),
         json!({"reviewer_ids": [1004, 1001, 1002]})
     );
+}
+
+#[tokio::test]
+async fn adds_gitlab_labels_idempotently() {
+    let server = MockGitLabServer::start();
+    let connector = connector(&server);
+    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
+
+    let actions = vec![ReviewAction::AddLabels {
+        labels: vec!["ready-to-merge".to_string()],
+    }];
+
+    let first = connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("first apply should succeed");
+    assert_eq!(first.applied.len(), 1);
+    assert_eq!(server.labels(), vec!["ready-to-merge"]);
+
+    let second = connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("second apply should succeed");
+    assert_eq!(second.skipped.len(), 1);
+    assert_eq!(second.skipped[0].action, ReviewActionKind::AddLabels);
+    assert_eq!(server.labels(), vec!["ready-to-merge"]);
+
+    let label_update_bodies = server.request_bodies("PUT", &mr_path);
+    assert!(
+        label_update_bodies
+            .iter()
+            .any(|body| body.contains(r#""add_labels":"ready-to-merge""#))
+    );
+    assert_eq!(server.request_count("PUT", &mr_path), 1);
 }

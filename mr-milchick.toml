@@ -25,6 +25,13 @@ kind = "gitlab"
 # Leave this commented for normal gitlab.com usage.
 # base_url = "https://gitlab.example.com/api/v4"
 
+[platform.gitlab]
+# Optional GitLab label to add when every parsed `milchick-status` entry passed.
+# This only works when Milchick actually found pipeline status JSON files.
+# If the label is configured but no status data is available, Milchick warns and
+# does not plan the label action.
+# all_pipelines_pass_label = "ready-to-merge"
+
 [execution]
 # When true, `refine` behaves like a dry run and will not mutate the platform.
 # dry_run = true

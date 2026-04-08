@@ -118,6 +118,7 @@ impl GitLabClient {
             web_url: dto.web_url,
             author_username: dto.author.username,
             reviewer_usernames: dto.reviewers.into_iter().map(|u| u.username).collect(),
+            labels: dto.labels,
         })
     }
 
@@ -263,6 +264,78 @@ impl GitLabClient {
         let body_text = response.text().await.unwrap_or_default();
         if !status.is_success() {
             anyhow::bail!("GitLab comment update failed: {} - {}", status, body_text);
+        }
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, labels), fields(project_id = %project_id, merge_request_iid = %merge_request_iid, label_count = labels.len()))]
+    pub async fn add_labels(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+        labels: &[String],
+    ) -> Result<()> {
+        if labels.is_empty() {
+            return Ok(());
+        }
+
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        let response = self
+            .http
+            .put(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .json(&serde_json::json!({ "add_labels": labels.join(",") }))
+            .send()
+            .await
+            .context("failed to send add labels request to GitLab")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("GitLab add labels failed: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, labels), fields(project_id = %project_id, merge_request_iid = %merge_request_iid, label_count = labels.len()))]
+    pub async fn remove_labels(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+        labels: &[String],
+    ) -> Result<()> {
+        if labels.is_empty() {
+            return Ok(());
+        }
+
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        let response = self
+            .http
+            .put(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .json(&serde_json::json!({ "remove_labels": labels.join(",") }))
+            .send()
+            .await
+            .context("failed to send remove labels request to GitLab")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("GitLab remove labels failed: {} - {}", status, body);
         }
 
         Ok(())

@@ -10,6 +10,8 @@ pub struct MergeRequestDto {
     pub web_url: String,
     pub author: AuthorDto,
     pub reviewers: Vec<UserDto>,
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

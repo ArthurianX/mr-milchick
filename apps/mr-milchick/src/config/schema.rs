@@ -43,6 +43,15 @@ pub struct PlatformConfig {
     pub kind: Option<PlatformKind>,
     #[serde(default)]
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub gitlab: GitLabPlatformConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct GitLabPlatformConfig {
+    #[serde(default)]
+    pub all_pipelines_pass_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
