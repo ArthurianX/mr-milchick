@@ -7,6 +7,23 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [3.3.2] — 2026-04-08
+
+This release lets Milchick act as the final enforcement point for upstream job summaries that were intentionally allowed to fail earlier in the pipeline.
+
+### Added
+
+- New `notifications.pipeline_status.fail_pipeline_on_failed` config flag that fails the current Milchick pipeline when any parsed `milchick-status` entry is explicitly `Failed`.
+
+### Changed
+
+- Pipeline-status enrichment now reuses the same parsed status inputs for both the optional GitLab success label flow and the new failure gate, while continuing to treat missing status data as a warning rather than a hard failure.
+- Failure reasons now name the upstream status labels that failed so the summary and execution output explain exactly why Milchick stopped the pipeline.
+
+### Docs
+
+- Documented the new pipeline failure gate in the config reference, checked-in example config, and CI quickstart guidance for fan-in pipelines that rely on Milchick as the final gate.
+
 ## [3.3.0] — 2026-04-05
 
 This release softens the TOML migration for CI pipelines and adds an optional internal path for surfacing prior job results in Slack notifications.
