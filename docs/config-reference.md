@@ -109,6 +109,7 @@ channel = "C0ALY38CW3X"
 
 [notifications.pipeline_status]
 enabled = true
+fail_pipeline_on_failed = true
 search_root = "${CI_PROJECT_DIR}"
 
 [templates.gitlab]
@@ -204,11 +205,12 @@ Auto-discovery order:
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `enabled` | No | `false` | Enables Slack notification enrichment from local status JSON files. |
+| `fail_pipeline_on_failed` | No | `false` | Fails Milchick's pipeline when any parsed `milchick-status` entry is explicitly `Failed`. Missing data only warns. |
 | `search_root` | No | current working directory | Milchick recursively scans below this path for `*/milchick-status/*.json`. |
 
 This feature is optional and primarily intended for internal CI setups that already emit job result snapshots into the workspace before Milchick runs.
 
-It also powers the optional GitLab success-label flow under `[platform.gitlab]`. Without parsed status entries, Milchick will not attempt that label action.
+It also powers the optional GitLab success-label flow under `[platform.gitlab]` and the optional pipeline failure gate. Without parsed status entries, Milchick will not attempt the label action and will only warn instead of failing the pipeline.
 
 Milchick accepts a tolerant JSON shape and currently looks for fields such as:
 

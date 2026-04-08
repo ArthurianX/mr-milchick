@@ -149,6 +149,8 @@ pub struct PipelineStatusConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
+    pub fail_pipeline_on_failed: Option<bool>,
+    #[serde(default)]
     pub search_root: Option<String>,
 }
 

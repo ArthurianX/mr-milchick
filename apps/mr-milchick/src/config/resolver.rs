@@ -98,6 +98,7 @@ pub struct SlackWorkflowConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipelineStatusConfig {
     pub enabled: bool,
+    pub fail_pipeline_on_failed: bool,
     pub search_root: Option<String>,
 }
 
@@ -322,6 +323,10 @@ fn resolve_notifications_config(
         },
         pipeline_status: PipelineStatusConfig {
             enabled: file.pipeline_status.enabled.unwrap_or(false),
+            fail_pipeline_on_failed: file
+                .pipeline_status
+                .fail_pipeline_on_failed
+                .unwrap_or(false),
             search_root: sanitize_optional(file.pipeline_status.search_root.clone()),
         },
     }
@@ -502,6 +507,7 @@ mod tests {
         assert!(!config.notifications.slack_app.enabled);
         assert!(!config.notifications.slack_workflow.enabled);
         assert!(!config.notifications.pipeline_status.enabled);
+        assert!(!config.notifications.pipeline_status.fail_pipeline_on_failed);
     }
 
     #[test]
@@ -562,6 +568,7 @@ channel = "C456"
 
 [notifications.pipeline_status]
 enabled = true
+fail_pipeline_on_failed = true
 search_root = "."
 
 [templates.gitlab]
@@ -621,6 +628,7 @@ first_root = "hello"
             Some("https://hooks.slack.com/triggers/test")
         );
         assert!(config.notifications.pipeline_status.enabled);
+        assert!(config.notifications.pipeline_status.fail_pipeline_on_failed);
         assert_eq!(
             config.notifications.pipeline_status.search_root.as_deref(),
             Some(".")

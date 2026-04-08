@@ -153,10 +153,11 @@ all_pipelines_pass_label = "ready-to-merge"
 
 [notifications.pipeline_status]
 enabled = true
+fail_pipeline_on_failed = true
 search_root = "${CI_PROJECT_DIR}"
 ```
 
-Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. If `all_pipelines_pass_label` is configured, Milchick also uses those parsed results to add the GitLab label only when every status entry passed. If no status files are found, Milchick warns and skips the label action.
+Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. If `all_pipelines_pass_label` is configured, Milchick also uses those parsed results to add the GitLab label only when every status entry passed. If `fail_pipeline_on_failed = true`, Milchick will fail the current pipeline when any parsed status entry is explicitly failed, which is useful when earlier fan-in jobs are allowed to fail and Milchick is the final enforcement point. If no status files are found, Milchick warns and skips both the label action and the failure gate.
 
 ## Safe Rollout
 

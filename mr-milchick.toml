@@ -147,6 +147,7 @@ notification_policy = "always"
 #
 # [notifications.pipeline_status]
 # enabled = true
+# fail_pipeline_on_failed = true
 # search_root = "${CI_PROJECT_DIR}"
 
 [templates]

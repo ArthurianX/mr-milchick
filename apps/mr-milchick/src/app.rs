@@ -291,6 +291,7 @@ pub async fn run_mode(
         &app_config.config,
         &pipeline_statuses,
     );
+    outcome = enrich_with_pipeline_failure_gate(outcome, &app_config.config, &pipeline_statuses);
     info!(
         inference_available = wiring.capabilities.inference_available,
         changed_files = snapshot.changed_file_count(),
@@ -957,6 +958,45 @@ fn enrich_with_pipeline_success_label(
     outcome
 }
 
+fn enrich_with_pipeline_failure_gate(
+    mut outcome: RuleOutcome,
+    config: &ResolvedConfig,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
+) -> RuleOutcome {
+    if !config.notifications.pipeline_status.fail_pipeline_on_failed {
+        return outcome;
+    }
+
+    if pipeline_statuses.is_empty() {
+        outcome.push(RuleFinding::warning(
+            "Pipeline status failure gating is enabled, but no milchick-status data was found. Milchick will not fail the pipeline without parsed pipeline results.",
+        ));
+        return outcome;
+    }
+
+    let failed_labels = pipeline_statuses
+        .iter()
+        .filter(|entry| entry.state == PipelineStatusState::Failed)
+        .map(|entry| entry.label.as_str())
+        .collect::<Vec<_>>();
+
+    if failed_labels.is_empty() {
+        return outcome;
+    }
+
+    let reason = format!(
+        "Milchick found failed upstream pipeline statuses: {}",
+        failed_labels.join(", ")
+    );
+    outcome.push(RuleFinding::blocking(reason.clone()));
+    if !outcome.action_plan.has_fail_pipeline() {
+        outcome
+            .action_plan
+            .push(ReviewAction::FailPipeline { reason });
+    }
+    outcome
+}
+
 fn collect_pipeline_status_paths(root: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -1411,6 +1451,7 @@ mod tests {
                 },
                 pipeline_status: ResolvedPipelineStatusConfig {
                     enabled: false,
+                    fail_pipeline_on_failed: false,
                     search_root: None,
                 },
             },
@@ -1661,5 +1702,124 @@ mod tests {
 
         assert!(outcome.findings.is_empty());
         assert!(outcome.action_plan.is_empty());
+    }
+
+    #[test]
+    fn warns_when_pipeline_failure_gate_is_configured_without_pipeline_status_data() {
+        let mut config = sample_resolved_config();
+        config.notifications.pipeline_status.fail_pipeline_on_failed = true;
+
+        let outcome = enrich_with_pipeline_failure_gate(RuleOutcome::new(), &config, &[]);
+
+        assert!(outcome.action_plan.is_empty());
+        assert_eq!(outcome.findings.len(), 1);
+        assert_eq!(outcome.findings[0].severity, FindingSeverity::Warning);
+        assert!(outcome.findings[0].message.contains("milchick-status"));
+    }
+
+    #[test]
+    fn does_not_fail_when_all_pipeline_statuses_pass() {
+        let mut config = sample_resolved_config();
+        config.notifications.pipeline_status.fail_pipeline_on_failed = true;
+
+        let outcome = enrich_with_pipeline_failure_gate(
+            RuleOutcome::new(),
+            &config,
+            &[PipelineStatusTemplateEntry {
+                label: "unit_tests".to_string(),
+                state: PipelineStatusState::Passed,
+                detail: Some("18 tests passed".to_string()),
+            }],
+        );
+
+        assert!(outcome.findings.is_empty());
+        assert!(outcome.action_plan.is_empty());
+    }
+
+    #[test]
+    fn fails_when_any_pipeline_status_failed() {
+        let mut config = sample_resolved_config();
+        config.notifications.pipeline_status.fail_pipeline_on_failed = true;
+
+        let outcome = enrich_with_pipeline_failure_gate(
+            RuleOutcome::new(),
+            &config,
+            &[
+                PipelineStatusTemplateEntry {
+                    label: "unit_tests".to_string(),
+                    state: PipelineStatusState::Passed,
+                    detail: None,
+                },
+                PipelineStatusTemplateEntry {
+                    label: "lint".to_string(),
+                    state: PipelineStatusState::Failed,
+                    detail: Some("1 error".to_string()),
+                },
+            ],
+        );
+
+        assert_eq!(outcome.findings.len(), 1);
+        assert_eq!(outcome.findings[0].severity, FindingSeverity::Blocking);
+        assert!(outcome.findings[0].message.contains("lint"));
+        assert!(matches!(
+            outcome.action_plan.actions.as_slice(),
+            [ReviewAction::FailPipeline { reason }] if reason.contains("lint")
+        ));
+    }
+
+    #[test]
+    fn does_not_fail_when_pipeline_statuses_are_unknown_only() {
+        let mut config = sample_resolved_config();
+        config.notifications.pipeline_status.fail_pipeline_on_failed = true;
+
+        let outcome = enrich_with_pipeline_failure_gate(
+            RuleOutcome::new(),
+            &config,
+            &[PipelineStatusTemplateEntry {
+                label: "external_quality_gate".to_string(),
+                state: PipelineStatusState::Unknown,
+                detail: Some("still running".to_string()),
+            }],
+        );
+
+        assert!(outcome.findings.is_empty());
+        assert!(outcome.action_plan.is_empty());
+    }
+
+    #[test]
+    fn success_label_and_failure_gate_share_pipeline_statuses_without_conflict() {
+        let mut config = sample_resolved_config();
+        config.platform.gitlab.all_pipelines_pass_label = Some("ready-to-merge".to_string());
+        config.notifications.pipeline_status.fail_pipeline_on_failed = true;
+        let statuses = vec![
+            PipelineStatusTemplateEntry {
+                label: "unit_tests".to_string(),
+                state: PipelineStatusState::Passed,
+                detail: None,
+            },
+            PipelineStatusTemplateEntry {
+                label: "lint".to_string(),
+                state: PipelineStatusState::Failed,
+                detail: Some("1 error".to_string()),
+            },
+        ];
+
+        let outcome = enrich_with_pipeline_failure_gate(
+            enrich_with_pipeline_success_label(
+                RuleOutcome::new(),
+                &sample_snapshot(Vec::new()),
+                &config,
+                &statuses,
+            ),
+            &config,
+            &statuses,
+        );
+
+        assert_eq!(outcome.findings.len(), 1);
+        assert_eq!(outcome.findings[0].severity, FindingSeverity::Blocking);
+        assert!(matches!(
+            outcome.action_plan.actions.as_slice(),
+            [ReviewAction::FailPipeline { reason }] if reason.contains("lint")
+        ));
     }
 }
