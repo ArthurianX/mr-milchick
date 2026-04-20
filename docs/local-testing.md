@@ -58,6 +58,24 @@ Then run:
 cargo run -- refine
 ```
 
+That is useful for previewing governance execution, but because `dry_run` does not post the managed summary comment to the review platform, a later live `cargo run -- explain` run will skip.
+
+## Live Refine And Explain
+
+If you want to test the full governance-plus-advisory flow against a live review, build with `llm-local`, enable `[inference]`, turn `dry_run` off, run `refine` once, then run `explain`:
+
+```toml
+[execution]
+dry_run = false
+```
+
+```bash
+GITLAB_TOKEN=your-gitlab-token cargo run -- refine
+GITLAB_TOKEN=your-gitlab-token cargo run -- explain
+```
+
+`explain` rereads Milchick's managed governance summary comment and only runs the advisory pass when that latest `refine` reported applied governance effect or a blocking outcome.
+
 ## Local Slack Testing
 
 Slack config belongs in TOML:
@@ -86,6 +104,8 @@ channel = "C0ALY38CW3X"
 ```bash
 MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... cargo run -- refine
 ```
+
+`explain` never sends Slack notifications.
 
 ## Alternate Config Path
 

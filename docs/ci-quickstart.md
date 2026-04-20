@@ -44,6 +44,7 @@ search_root = "${CI_PROJECT_DIR}"
 ```
 
 Put that in `mr-milchick.toml` at the repo root. If you need another path, set `MR_MILCHICK_CONFIG_PATH`.
+That `[inference]` section only affects `explain`; `observe` and `refine` never invoke local inference.
 
 ## Example GitLab Pipeline
 
@@ -78,6 +79,40 @@ milchick:observe:
 ```
 
 Once the output looks right, switch `observe` to `refine`.
+
+## Recommended Job Shape
+
+The intended rollout now looks like this:
+
+1. Start with `observe` to preview deterministic governance output.
+2. Switch to `refine` for the fast path once reviewer assignment, summary upsert, and optional notification behavior look correct.
+3. If you want advisory LLM commentary, add a separate slower `explain` job after a real `refine` run.
+
+That split keeps the main governance job quick while leaving richer advisory analysis to a later follow-up stage or pipeline.
+
+If you want `explain` to produce advisory output, build the binary with `llm-local`, enable `[inference]`, and add a follow-up job such as:
+
+```yaml
+milchick:refine:
+  stage: review
+  image: debian:bookworm-slim
+  needs: ["build:milchick"]
+  script:
+    - ./dist/mr-milchick refine
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+milchick:explain:
+  stage: review
+  image: debian:bookworm-slim
+  needs: ["build:milchick", "milchick:refine"]
+  script:
+    - ./dist/mr-milchick explain
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+```
+
+`explain` reloads Milchick's managed governance summary comment from the review platform and skips itself when the latest `refine` run reported no governance effect and no blocking outcome.
 
 ## Required Secrets
 
@@ -165,5 +200,8 @@ Milchick will recursively scan for `*/milchick-status/*.json` before rendering S
 2. Start with `observe`.
 3. If you want execution-shaped output without external mutation, set `[execution] dry_run = true` and run `refine`.
 4. Turn `dry_run` back off once the behavior is stable.
+5. Add a separate `explain` job only after a real `refine` run exists on the review platform.
+
+With `dry_run = true`, `refine` previews the governance summary but does not post it to the platform, so a later live `explain` run has nothing to reread and will skip.
 
 For the full schema, see [config-reference.md](config-reference.md).

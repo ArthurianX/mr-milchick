@@ -17,6 +17,68 @@ pick_tool() {
   return 1
 }
 
+configure_bindgen_sysroot_for_macos() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  local sdkroot
+  sdkroot="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+
+  if [[ -z "${sdkroot}" ]]; then
+    echo "info: macOS SDK path not found; continuing without SDKROOT bindgen hints" >&2
+    return 0
+  fi
+
+  export SDKROOT="${SDKROOT:-$sdkroot}"
+
+  local bindgen_args="${BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl:-}"
+  if [[ "${bindgen_args}" != *"--sysroot=${SDKROOT}"* ]]; then
+    if [[ -n "${bindgen_args}" ]]; then
+      bindgen_args+=" "
+    fi
+    bindgen_args+="--sysroot=${SDKROOT}"
+    export BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl="${bindgen_args}"
+    echo "info: configured bindgen macOS SDK sysroot for ${target}" >&2
+  fi
+}
+
+feature_requested() {
+  local needle="$1"
+  local feature
+  local token
+
+  for feature in "${feature_args[@]}"; do
+    for token in ${feature//,/ }; do
+      if [[ "${token}" == "${needle}" ]]; then
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
+
+require_cmake_for_llm_local() {
+  if ! feature_requested "llm-local"; then
+    return 0
+  fi
+
+  if command -v cmake >/dev/null 2>&1; then
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+error: `llm-local` builds require `cmake`, but it is not installed on this host
+
+The local advisory inference path vendors llama.cpp through llama-cpp-sys, and
+that crate invokes CMake during the native build. Install `cmake`, then rerun:
+
+  ./scripts/build_linux_release.sh --no-default-features --features gitlab slack-app llm-local
+EOF
+  exit 1
+}
+
 while (($# > 0)); do
   case "$1" in
     --features)
@@ -69,6 +131,8 @@ if [[ -n "${cc_tool}" && -n "${cxx_tool}" ]]; then
   if [[ -n "${ar_tool}" ]]; then
     export AR_x86_64_unknown_linux_musl="${AR_x86_64_unknown_linux_musl:-$ar_tool}"
   fi
+  configure_bindgen_sysroot_for_macos
+  require_cmake_for_llm_local
   cargo build --release --locked --target "${target}" "${cargo_args[@]}"
   exit 0
 fi
@@ -90,6 +154,7 @@ if command -v cross >/dev/null 2>&1; then
 fi
 
 if command -v cargo-zigbuild >/dev/null 2>&1 && command -v zig >/dev/null 2>&1; then
+  require_cmake_for_llm_local
   cargo zigbuild --release --locked --target "${target}" "${cargo_args[@]}"
   exit 0
 fi

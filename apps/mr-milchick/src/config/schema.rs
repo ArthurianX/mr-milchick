@@ -172,6 +172,8 @@ pub struct TemplatesConfig {
 pub struct GitLabTemplates {
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    pub explain: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -179,6 +181,8 @@ pub struct GitLabTemplates {
 pub struct GitHubTemplates {
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    pub explain: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

@@ -4,13 +4,22 @@ This page describes the runtime surface that is actually implemented today.
 
 ## Supported Today
 
-Mr Milchick binaries are built from exactly one platform connector and zero or more notification sinks.
+Mr Milchick binaries are built from exactly one platform connector, zero or more notification sinks, and an optional advisory local-review backend.
 
 Implemented now:
 
 - platform connectors: GitLab, GitHub
 - notification sinks: Slack app, Slack workflow
+- advisory local review backend: llama.cpp via `llm-local`
 - commands: `observe`, `refine`, `explain`, `version`
+
+## Command Roles
+
+- `observe`: verbose deterministic inspection only
+- `refine`: fast governance execution plus optional notifications
+- `explain`: slower advisory follow-up that may upsert the managed explain comment
+
+Only `refine` can assign reviewers, change labels, fail the pipeline, or deliver notifications.
 
 ## Cargo Features
 
@@ -18,16 +27,17 @@ The app exposes these feature flags:
 
 ```toml
 [features]
-default = ["github"]
+default = ["gitlab", "slack-app"]
 gitlab = []
 github = []
 slack-app = []
 slack-workflow = []
 teams = []
 discord = []
+llm-local = ["dep:llama-cpp-2"]
 ```
 
-Only `gitlab`, `github`, `slack-app`, and `slack-workflow` correspond to implemented code paths today.
+Only `gitlab`, `github`, `slack-app`, `slack-workflow`, and `llm-local` correspond to implemented code paths today.
 
 ## Common Build Shapes
 
@@ -61,10 +71,10 @@ GitLab plus Slack app:
 cargo build --release --no-default-features --features "gitlab slack-app"
 ```
 
-GitLab plus both Slack sinks:
+GitLab plus advisory local review:
 
 ```bash
-cargo build --release --no-default-features --features "gitlab slack-app slack-workflow"
+cargo build --release --no-default-features --features "gitlab slack-app llm-local"
 ```
 
 GitHub plus both Slack sinks:
@@ -92,33 +102,19 @@ The helper supports three local paths:
 - `cross`
 - `cargo-zigbuild` plus `zig`
 
-Without one of those available, crates with native code such as `ring` can still fail later even after the Rust target itself has been added.
+When `llm-local` is included, the host also needs `cmake`. On macOS, the helper forwards the active Xcode SDK path to bindgen automatically for the local `llama.cpp` build.
 
 ## Capability Rules
 
 The runtime enforces these invariants:
 
-- exactly one platform connector must be enabled
+- exactly one platform connector must be compiled in
 - notification sinks are optional fanout only
-- the flavor file cannot request a sink that was not compiled in
-- the flavor file platform connector must match the compiled platform connector
+- advisory local review is optional and only used by `explain`
+- runtime `[platform].kind` must match the compiled platform connector when it is set explicitly
+- runtime notification sections can only be enabled for sinks that were compiled in
 
 If those rules are violated, startup fails with a configuration error instead of silently degrading.
-
-## Flavor Alignment
-
-The flavor file is a runtime declaration of intended compiled capabilities:
-
-```toml
-[platform_connector]
-kind = "gitlab"
-
-[[notifications]]
-kind = "slack-workflow"
-enabled = true
-```
-
-If the binary was compiled without `slack-workflow`, the application exits with a configuration error. The same applies if the flavor file names a platform connector other than the compiled connector. For backward compatibility, `review_platform` still parses, but `platform_connector` is the preferred name.
 
 ## Verifying The Artifact
 
@@ -128,30 +124,33 @@ Use the version command in CI logs:
 ./mr-milchick version
 ```
 
-Platform-only output shape:
+Default build output shape:
 
 ```text
-mr-milchick 3.0.1 (<git-sha> <build-date>)
+mr-milchick 4.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
-- notification sinks: none
+- advisory local review: not compiled
+- notification sinks: slack-app
 ```
 
-GitHub default build shape:
+GitHub-only output shape:
 
 ```text
-mr-milchick 3.0.1 (<git-sha> <build-date>)
+mr-milchick 4.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: github
+- advisory local review: not compiled
 - notification sinks: none
 ```
 
-GitLab plus Slack output shape:
+GitLab plus Slack plus local review output shape:
 
 ```text
-mr-milchick 3.0.1 (<git-sha> <build-date>)
+mr-milchick 4.0.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
+- advisory local review: llama.cpp
 - notification sinks: slack-app, slack-workflow
 ```
 

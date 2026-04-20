@@ -154,7 +154,7 @@ notification_policy = "always"
 # Message template overrides live under the sections below.
 # If omitted, Milchick uses built-in defaults.
 
-# GitLab summary comment override.
+# GitLab governance summary comment override.
 # [templates.gitlab]
 # summary = """
 # ## {{summary_title}}
@@ -167,8 +167,23 @@ notification_policy = "always"
 #
 # _{{closing_tone_message}}_
 # """
+#
+# # GitLab advisory explain comment override.
+# explain = """
+# ## {{summary_title}}
+#
+# {{summary_intro}}
+#
+# {{findings_block}}
+#
+# {{actions_block}}
+#
+# {{recommendations_block}}
+#
+# _{{closing_tone_message}}_
+# """
 
-# GitHub summary comment override.
+# GitHub governance summary comment override.
 # [templates.github]
 # summary = """
 # ## {{summary_title}}
@@ -178,6 +193,21 @@ notification_policy = "always"
 # {{findings_block}}
 #
 # {{actions_block}}
+#
+# _{{closing_tone_message}}_
+# """
+#
+# # GitHub advisory explain comment override.
+# explain = """
+# ## {{summary_title}}
+#
+# {{summary_intro}}
+#
+# {{findings_block}}
+#
+# {{actions_block}}
+#
+# {{recommendations_block}}
 #
 # _{{closing_tone_message}}_
 # """

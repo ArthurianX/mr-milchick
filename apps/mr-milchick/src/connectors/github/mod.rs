@@ -3,9 +3,9 @@ pub mod client;
 pub mod dto;
 
 use crate::core::model::{
-    Actor, AppliedReviewAction, ChangeType, ChangedFile, RepositoryRef, ReviewAction,
-    ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind, ReviewRef,
-    ReviewSnapshot, SkippedReviewAction,
+    Actor, AppliedReviewAction, ChangeType, ChangedFile, ManagedReviewComment, RepositoryRef,
+    ReviewAction, ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind,
+    ReviewRef, ReviewSnapshot, SkippedReviewAction,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, PlatformConnector};
 use async_trait::async_trait;
@@ -14,6 +14,7 @@ use self::api::{GitHubConfig, GitHubSnapshotData};
 use self::client::GitHubClient;
 
 pub const MR_MILCHICK_MARKER: &str = "<!-- mr-milchick:summary -->";
+pub const MR_MILCHICK_EXPLAIN_MARKER: &str = "<!-- mr-milchick:explain -->";
 
 pub struct GitHubPlatformConnector {
     client: GitHubClient,
@@ -66,6 +67,23 @@ impl PlatformConnector for GitHubPlatformConnector {
         ))
     }
 
+    async fn load_managed_comment(
+        &self,
+        marker: &str,
+    ) -> ConnectorResult<Option<ManagedReviewComment>> {
+        let existing_comments = self
+            .client
+            .get_issue_comments(&self.project_key, &self.review_id)
+            .await
+            .map_err(map_request_error)?;
+
+        Ok(
+            find_managed_comment(&existing_comments, marker).map(|comment| ManagedReviewComment {
+                body: comment.body.clone(),
+            }),
+        )
+    }
+
     async fn apply_review_actions(
         &self,
         actions: &[ReviewAction],
@@ -112,34 +130,32 @@ impl PlatformConnector for GitHubPlatformConnector {
                     });
                 }
                 ReviewAction::UpsertSummary { markdown } => {
-                    let body = render_github_markdown(markdown);
-                    if let Some(existing_comment) = existing_comments
-                        .iter()
-                        .find(|comment| comment.body.contains(MR_MILCHICK_MARKER))
-                    {
-                        if existing_comment.body.trim() == body.trim() {
-                            report.skipped.push(SkippedReviewAction {
-                                action: ReviewActionKind::UpsertSummary,
-                                reason: "summary unchanged".to_string(),
-                            });
-                            continue;
-                        }
-
-                        self.client
-                            .update_comment(&self.project_key, existing_comment.id, &body)
-                            .await
-                            .map_err(map_request_error)?;
-                    } else {
-                        self.client
-                            .post_comment(&self.project_key, &self.review_id, &body)
-                            .await
-                            .map_err(map_request_error)?;
-                    }
-
-                    report.applied.push(AppliedReviewAction {
-                        action: ReviewActionKind::UpsertSummary,
-                        detail: Some("comment-posted".to_string()),
-                    });
+                    upsert_managed_comment(
+                        &self.client,
+                        &self.project_key,
+                        &self.review_id,
+                        &existing_comments,
+                        MR_MILCHICK_MARKER,
+                        markdown,
+                        ReviewActionKind::UpsertSummary,
+                        "summary unchanged",
+                        &mut report,
+                    )
+                    .await?;
+                }
+                ReviewAction::UpsertExplain { markdown } => {
+                    upsert_managed_comment(
+                        &self.client,
+                        &self.project_key,
+                        &self.review_id,
+                        &existing_comments,
+                        MR_MILCHICK_EXPLAIN_MARKER,
+                        markdown,
+                        ReviewActionKind::UpsertExplain,
+                        "explain unchanged",
+                        &mut report,
+                    )
+                    .await?;
                 }
                 ReviewAction::AddLabels { .. } | ReviewAction::RemoveLabels { .. } => {
                     report.skipped.push(SkippedReviewAction {
@@ -254,11 +270,11 @@ fn repository_from_project_key(project_key: &str, web_url: &str) -> RepositoryRe
 }
 
 pub fn render_github_markdown(markdown: &str) -> String {
-    if markdown.trim().is_empty() {
-        MR_MILCHICK_MARKER.to_string()
-    } else {
-        format!("{}\n\n{}", MR_MILCHICK_MARKER, markdown.trim())
-    }
+    render_github_managed_markdown(MR_MILCHICK_MARKER, markdown)
+}
+
+pub fn render_github_explain_markdown(markdown: &str) -> String {
+    render_github_managed_markdown(MR_MILCHICK_EXPLAIN_MARKER, markdown)
 }
 
 fn map_request_error(err: anyhow::Error) -> ConnectorError {
@@ -285,4 +301,93 @@ fn merge_reviewer_usernames(
     }
 
     merged
+}
+
+fn render_github_managed_markdown(marker: &str, markdown: &str) -> String {
+    if markdown.trim().is_empty() {
+        marker.to_string()
+    } else {
+        format!("{}\n\n{}", marker, markdown.trim())
+    }
+}
+
+fn find_managed_comment<'a>(
+    comments: &'a [self::api::PullRequestComment],
+    marker: &str,
+) -> Option<&'a self::api::PullRequestComment> {
+    comments
+        .iter()
+        .find(|comment| comment.body.contains(marker))
+}
+
+async fn upsert_managed_comment(
+    client: &GitHubClient,
+    project_key: &str,
+    review_id: &str,
+    existing_comments: &[self::api::PullRequestComment],
+    marker: &str,
+    markdown: &str,
+    action_kind: ReviewActionKind,
+    unchanged_reason: &str,
+    report: &mut ReviewActionReport,
+) -> ConnectorResult<()> {
+    let body = render_github_managed_markdown(marker, markdown);
+    if let Some(existing_comment) = find_managed_comment(existing_comments, marker) {
+        if existing_comment.body.trim() == body.trim() {
+            report.skipped.push(SkippedReviewAction {
+                action: action_kind,
+                reason: unchanged_reason.to_string(),
+            });
+            return Ok(());
+        }
+
+        client
+            .update_comment(project_key, existing_comment.id, &body)
+            .await
+            .map_err(map_request_error)?;
+    } else {
+        client
+            .post_comment(project_key, review_id, &body)
+            .await
+            .map_err(map_request_error)?;
+    }
+
+    report.applied.push(AppliedReviewAction {
+        action: action_kind,
+        detail: Some("comment-posted".to_string()),
+    });
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_comment_lookup_keeps_summary_and_explain_separate() {
+        let comments = vec![
+            self::api::PullRequestComment {
+                id: 1,
+                body: render_github_markdown("## Summary"),
+            },
+            self::api::PullRequestComment {
+                id: 2,
+                body: render_github_explain_markdown("## Explain"),
+            },
+        ];
+
+        assert_eq!(
+            find_managed_comment(&comments, MR_MILCHICK_MARKER)
+                .expect("summary comment should exist")
+                .id,
+            1
+        );
+        assert_eq!(
+            find_managed_comment(&comments, MR_MILCHICK_EXPLAIN_MARKER)
+                .expect("explain comment should exist")
+                .id,
+            2
+        );
+    }
 }

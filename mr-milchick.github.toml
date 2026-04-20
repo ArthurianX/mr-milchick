@@ -133,7 +133,7 @@ kind = "github"
 # Message template overrides live under the sections below.
 # If omitted, Milchick uses built-in defaults.
 
-# GitHub summary comment override.
+# GitHub governance summary comment override.
 # [templates.github]
 # summary = """
 # ## {{summary_title}}
@@ -146,8 +146,23 @@ kind = "github"
 #
 # _{{closing_tone_message}}_
 # """
+#
+# # GitHub advisory explain comment override.
+# explain = """
+# ## {{summary_title}}
+#
+# {{summary_intro}}
+#
+# {{findings_block}}
+#
+# {{actions_block}}
+#
+# {{recommendations_block}}
+#
+# _{{closing_tone_message}}_
+# """
 
-# GitLab summary comment override.
+# GitLab governance summary comment override.
 # This section is only relevant if you intentionally point this config at a
 # GitLab-compiled binary instead of the GitHub one.
 # [templates.gitlab]
@@ -159,6 +174,21 @@ kind = "github"
 # {{findings_block}}
 #
 # {{actions_block}}
+#
+# _{{closing_tone_message}}_
+# """
+#
+# # GitLab advisory explain comment override.
+# explain = """
+# ## {{summary_title}}
+#
+# {{summary_intro}}
+#
+# {{findings_block}}
+#
+# {{actions_block}}
+#
+# {{recommendations_block}}
 #
 # _{{closing_tone_message}}_
 # """

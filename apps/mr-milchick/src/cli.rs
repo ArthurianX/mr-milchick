@@ -20,13 +20,13 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Observe the merge request and report intended actions
+    /// Observe the merge request with verbose deterministic inspection
     Observe(ObserveArgs),
 
-    /// Refine the merge request by applying approved actions
+    /// Refine the merge request with fast governance execution
     Refine(RefineArgs),
 
-    /// Explain decision-making in greater detail
+    /// Explain the merge request with slower advisory follow-up
     Explain(ExplainArgs),
 
     /// Print version, git SHA and build date
