@@ -26,7 +26,7 @@
 
 ## Overview
 
-Mr Milchick is a Rust CLI for GitLab merge request pipelines and GitHub pull request workflows. It runs as a single CI job, reads the active review context, evaluates review policy, plans reviewer and summary actions, and can sync the result back to the review platform with optional Slack notifications. It is a binary (that cares), not a bot and not a long-running service.
+Mr Milchick is a Rust CLI for GitLab merge request pipelines and GitHub pull request workflows. It runs as a single CI job, reads the active review context, evaluates review policy, plans reviewer and comment actions, and can sync the result back to the review platform with optional Slack notifications. It is a binary (that cares), not a bot and not a long-running service.
 
 ## Purpose
 
@@ -38,13 +38,13 @@ The tool exists to keep review governance where the decision already happens: in
   <img src="assets/flow.gif" alt="Mr Milchick Flow" >
 </div>
 
-`observe` runs the planning flow without mutating anything. `refine` executes the same plan for real, including reviewer assignment, summary comment sync, optional Slack delivery, and pipeline failure when blocking policy remains unresolved. `explain` adds deeper routing and CODEOWNERS detail for debugging, while `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
+`observe` is the verbose deterministic inspection path: it previews the governance summary, action plan, routing details, and fixture notifications without mutating anything or invoking inference. `refine` is the fast governance path: it assigns reviewers, syncs the deterministic governance summary comment, optionally delivers Slack notifications, and fails the pipeline when blocking policy remains unresolved. `explain` is a slower advisory follow-up: it rereads the existing Milchick governance summary comment, skips itself when the last `refine` reported no governance effect and no blocking outcome, and otherwise upserts a separate advisory explain comment. `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
 
 Today the implemented surface is intentionally focused: GitLab and GitHub are the supported platform connectors, and Slack app plus Slack workflow are optional notification sinks.
 
 One notification detail is intentionally sink-specific: Slack app update notifications try to reuse the existing thread for the same MR, while Slack workflow notifications do not do same-thread lookup and keep their workflow-driven delivery shape.
 
-Optional local review suggestions can also be enabled when the binary is built with the `llm-local` feature and pointed at a local GGUF model. In that mode, Milchick runs a local `llama.cpp`-backed advisory pass alongside the normal review flow and adds structured review hints without introducing a hosted model dependency.
+Optional local review suggestions can also be enabled when the binary is built with the `llm-local` feature and pointed at a local GGUF model. In `4.x`, that local `llama.cpp`-backed advisory pass runs only during `explain`, which keeps the normal `refine` governance flow fast and deterministic while still allowing a slower follow-up comment with structured review hints.
 
 Internally, the repository now ships as a single crate with layered modules:
 
@@ -55,7 +55,7 @@ Internally, the repository now ships as a single crate with layered modules:
 
 ## Quickstart
 
-The example below builds the binary in GitLab CI with the GitLab platform connector plus Slack app support, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
+The example below builds the binary in GitLab CI with the GitLab platform connector plus Slack app support, prints the compiled capabilities, and runs it for merge request pipelines. Start with `observe` while rolling out, then switch the review job to `refine` when you want live reviewer assignment and governance summary sync. If you later want advisory LLM commentary, add a slower follow-up `explain` job after a real `refine` run. GitHub release automation now lives in [`.github/workflows/release.yml`](.github/workflows/release.yml), and [`.github/workflows/review.yml`](.github/workflows/review.yml) uses [`mr-milchick.github.toml`](mr-milchick.github.toml) for GitHub pull request runs.
 
 Runtime settings now live in `mr-milchick.toml`. A minimal GitLab-oriented example looks like this:
 
@@ -115,7 +115,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and optional user mapping now live in `mr-milchick.toml`. With the Slack app sink, follow-up update notifications try to land in the original MR thread for the same `MR #...`; Slack workflow delivery does not currently do that thread reuse. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and optional user mapping now live in `mr-milchick.toml`. With the Slack app sink, follow-up update notifications try to land in the original MR thread for the same `MR #...`; Slack workflow delivery does not currently do that thread reuse. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, the split `refine`/`explain` model, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 Some internal teams also use an optional convention where earlier CI jobs write compact JSON files under `*/milchick-status/*.json`, and Milchick later folds those prior-job outcomes into Slack notifications. That path is intentionally optional and documented in the configuration and template guides rather than treated as a required workflow.
 
@@ -132,12 +132,14 @@ The helper installs the Rust target when needed, then uses the first available b
 - `cargo-zigbuild` plus `zig`
 
 If none of those are available, it stops with a clearer toolchain error instead of the opaque `can't find crate for core` failure.
+On macOS hosts it also forwards the active Xcode SDK path to bindgen, which avoids `llama-cpp-sys` header discovery failures when building `--features llm-local` for `x86_64-unknown-linux-musl`.
+If you include `llm-local`, the native `llama.cpp` build also requires `cmake` on the host.
 
 You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
 
 ## Local LLM Review
 
-Mr Milchick can attach advisory local review suggestions from a GGUF model when compiled with `--features llm-local`. The current local inference path uses each model's built-in chat template when available, falls back safely when a template is missing, and supports repeatable smoke tests plus model benchmarking.
+Mr Milchick can attach advisory local review suggestions from a GGUF model when compiled with `--features llm-local`. That inference path is now explain-only: `observe` and `refine` stay inference-free, while `explain` can add a separate advisory comment after a prior `refine` run has produced a governance summary worth following up on. The current local inference path uses each model's built-in chat template when available, falls back safely when a template is missing, and supports repeatable smoke tests plus model benchmarking.
 
 The main runtime knobs now live under `[inference]` in `mr-milchick.toml`:
 

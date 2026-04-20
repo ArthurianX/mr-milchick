@@ -32,8 +32,8 @@ Messages are stored as static arrays in the tone registry and selected by index 
 Tone shows up in three main places:
 
 - the command-line output shown during execution
-- the rendered GitLab summary message
-- Slack notification messages built during reviewer assignment
+- the rendered governance summary and advisory explain comments
+- Slack notification messages built during `refine`
 
 With connector templates enabled, those connector messages may now reference the selected tone through placeholders such as `{{tone_message}}`, `{{tone_category}}`, `{{closing_tone_message}}`, and `{{closing_tone_category}}`.
 

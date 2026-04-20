@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewPlatformKind {
     GitLab,
@@ -128,15 +130,18 @@ pub struct ReviewMetadata {
 pub enum ReviewAction {
     AssignReviewers { reviewers: Vec<Actor> },
     UpsertSummary { markdown: String },
+    UpsertExplain { markdown: String },
     AddLabels { labels: Vec<String> },
     RemoveLabels { labels: Vec<String> },
     FailPipeline { reason: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ReviewActionKind {
     AssignReviewers,
     UpsertSummary,
+    UpsertExplain,
     AddLabels,
     RemoveLabels,
     FailPipeline,
@@ -147,6 +152,7 @@ impl ReviewAction {
         match self {
             Self::AssignReviewers { .. } => ReviewActionKind::AssignReviewers,
             Self::UpsertSummary { .. } => ReviewActionKind::UpsertSummary,
+            Self::UpsertExplain { .. } => ReviewActionKind::UpsertExplain,
             Self::AddLabels { .. } => ReviewActionKind::AddLabels,
             Self::RemoveLabels { .. } => ReviewActionKind::RemoveLabels,
             Self::FailPipeline { .. } => ReviewActionKind::FailPipeline,
@@ -214,6 +220,13 @@ pub struct ReviewActionReport {
     pub skipped: Vec<SkippedReviewAction>,
 }
 
+impl ReviewActionReport {
+    pub fn extend(&mut self, other: Self) {
+        self.applied.extend(other.applied);
+        self.skipped.extend(other.skipped);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedReviewAction {
     pub action: ReviewActionKind,
@@ -232,4 +245,9 @@ pub struct NotificationDeliveryReport {
     pub delivered: bool,
     pub destination: Option<String>,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedReviewComment {
+    pub body: String,
 }

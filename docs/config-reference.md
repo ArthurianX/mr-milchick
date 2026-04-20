@@ -115,11 +115,22 @@ search_root = "${CI_PROJECT_DIR}"
 [templates.gitlab]
 summary = """## {{summary_title}}
 
-{{tone_message}}
+{{summary_intro}}
 
 {{findings_block}}
 
 {{actions_block}}
+
+_{{closing_tone_message}}_"""
+explain = """## {{summary_title}}
+
+{{summary_intro}}
+
+{{findings_block}}
+
+{{actions_block}}
+
+{{recommendations_block}}
 
 _{{closing_tone_message}}_"""
 ```
@@ -145,8 +156,8 @@ If `all_pipelines_pass_label` is configured but Milchick does not find any `*/mi
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `dry_run` | No | `false` | Only affects `refine`. |
-| `notification_policy` | No | `always` | `always` or `on-applied-action`. |
+| `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`; `observe` is preview-only already. |
+| `notification_policy` | No | `always` | `always` or `on-applied-action`. Only affects `refine`, because `explain` never sends notifications. |
 
 ### `[reviewers]` and `[[reviewers.definitions]]`
 
@@ -176,12 +187,16 @@ Auto-discovery order:
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `enabled` | No | `false` | Enables advisory local review. |
+| `enabled` | No | `false` | Enables advisory local review for `explain`. |
 | `model_path` | No | none | Required when `enabled = true`. |
 | `timeout_ms` | No | `15000` | Must be greater than zero. |
 | `max_patch_bytes` | No | `32768` | Must be greater than zero. |
 | `context_tokens` | No | `4096` | Must be greater than zero. |
-| `trace` | No | `false` | Prints detailed inference output in CLI flows. |
+| `trace` | No | `false` | Prints detailed inference output during `explain`. |
+
+`observe` and `refine` never invoke inference, even when this section is enabled.
+
+Live `explain` runs first reload Milchick's managed governance summary comment from the review platform and parse its hidden metadata. If that metadata is missing, malformed, or says the latest `refine` had no governance effect and no blocking outcome, `explain` skips by design. In practice, that means a live advisory follow-up expects a prior non-dry-run `refine` run.
 
 ### `[notifications.slack_app]`
 
@@ -238,7 +253,9 @@ Unknown extra fields are ignored. Today `blocking`, `job_url`, and `pipeline_url
 Template overrides stay field-by-field and keep built-in defaults when omitted.
 
 - `[templates.gitlab].summary`
+- `[templates.gitlab].explain`
 - `[templates.github].summary`
+- `[templates.github].explain`
 - `[templates.slack_app].first_root`
 - `[templates.slack_app].first_thread`
 - `[templates.slack_app].update_root`
@@ -255,6 +272,24 @@ Useful notification placeholders include:
 - `pipeline_status_passed_count`
 - `pipeline_status_failed_count`
 - `pipeline_status_unknown_count`
+
+Useful review-comment placeholders include:
+
+- `summary_title`
+- `summary_intro`
+- `summary_footer`
+- `tone_message`
+- `tone_category`
+- `closing_tone_message`
+- `closing_tone_category`
+- `llm_summary`
+- `recommendations_block`
+
+`[templates.*].summary` controls the deterministic governance comment owned by `refine`.
+
+`[templates.*].explain` controls the advisory comment owned by `explain`.
+
+For backward compatibility, `summary` templates may still reference `llm` placeholders, but `refine` renders them empty. Milchick appends the hidden governance metadata block to summary comments automatically, so template authors should not include it manually.
 
 Template placeholder validation still happens at render time. Invalid placeholders warn and fall back to the built-in field template.
 

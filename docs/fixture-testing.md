@@ -10,6 +10,8 @@ cargo run -- explain --fixture fixtures/first-notification.toml
 cargo run -- refine --fixture fixtures/first-notification.toml
 ```
 
+In fixture mode, `explain` does not need a previously posted platform comment. Milchick synthesizes the governance gate from the fixture outcome itself, so `explain` runs when the fixture would have applied governance actions or remained blocking and skips otherwise.
+
 ## Preview Notifications
 
 Enable a sink in config to preview it during fixture runs:
@@ -43,6 +45,8 @@ Slack workflow example:
 MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... \
 cargo run -- refine --fixture fixtures/update-notification.toml --send-notifications
 ```
+
+`explain` never sends notifications, even in fixture mode.
 
 ## Alternate Config
 

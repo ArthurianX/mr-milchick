@@ -7,6 +7,38 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [4.0.0] — 2026-04-20
+
+This release splits fast governance execution from slower advisory review so CI can keep `refine` lean while still supporting rich follow-up commentary.
+
+### Added
+
+- A second managed review-comment lane for advisory `explain` output, separate from the deterministic governance summary comment.
+- Hidden machine-readable governance metadata appended to `refine` summary comments so later `explain` runs can decide whether the last governance pass actually did anything worth analyzing.
+- New connector template fields for advisory explain comments under both `[templates.gitlab].explain` and `[templates.github].explain`.
+
+### Changed
+
+- `observe` is now the verbose deterministic inspection path: it prints the governance plan, summary preview, snapshot details, CODEOWNERS details, and fixture notification previews without invoking inference or mutating review platforms.
+- `refine` is now the fast governance path: it evaluates rules, routes reviewers, applies governance actions, always upserts the deterministic summary comment, and remains the only command that can deliver notifications.
+- `explain` is now a slower advisory follow-up: it rereads Milchick's managed governance summary comment, skips itself when the latest `refine` reported no governance effect and no blocking outcome, and otherwise runs local inference before updating only the advisory explain comment.
+- Advisory inference is no longer part of the normal `refine` path; `observe` and `refine` do not build or call the inference backend anymore.
+- Built-in summary and notification rendering now treat inference placeholders as empty in `refine`, preserving template compatibility while keeping governance output deterministic.
+
+### Docs
+
+- Rewrote the README and operator docs to describe the governance/advisory split, the separate comment ownership model, the explain gate, the explain-only local LLM path, and the updated template/config surface.
+- Updated the checked-in example TOMLs to show both governance-summary and advisory-explain template overrides.
+
+### Breaking Changes
+
+- Command semantics changed materially:
+  - `observe` no longer means "dry-run with inference detail"
+  - `refine` no longer performs advisory LLM analysis
+  - `explain` is now the only advisory LLM command path
+- Review-platform automation now owns two distinct Milchick comments instead of a single summary comment that can be rewritten by advisory output.
+- Live `explain` runs now depend on a previously posted governance summary comment from a non-dry-run `refine` execution; if that metadata is missing or says the prior run had no governance effect and no blocking outcome, `explain` skips by design.
+
 ## [3.3.2] — 2026-04-08
 
 This release lets Milchick act as the final enforcement point for upstream job summaries that were intentionally allowed to fail earlier in the pipeline.

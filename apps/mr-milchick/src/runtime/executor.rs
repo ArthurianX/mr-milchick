@@ -1,7 +1,7 @@
 use crate::core::inference::ReviewInferenceOutcome;
 use crate::core::model::{
-    NotificationDeliveryReport, NotificationMessage, ReviewAction, ReviewActionReport,
-    ReviewPlatformKind,
+    ManagedReviewComment, NotificationDeliveryReport, NotificationMessage, ReviewAction,
+    ReviewActionReport, ReviewPlatformKind,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -35,6 +35,11 @@ pub trait PlatformConnector: Send + Sync {
     fn kind(&self) -> ReviewPlatformKind;
 
     async fn load_snapshot(&self) -> ConnectorResult<crate::core::model::ReviewSnapshot>;
+
+    async fn load_managed_comment(
+        &self,
+        marker: &str,
+    ) -> ConnectorResult<Option<ManagedReviewComment>>;
 
     async fn apply_review_actions(
         &self,

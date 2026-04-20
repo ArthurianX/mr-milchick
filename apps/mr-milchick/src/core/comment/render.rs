@@ -75,7 +75,7 @@ fn describe_action(action: &ReviewAction) -> Option<String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
-        ReviewAction::UpsertSummary { .. } => None,
+        ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. } => None,
         ReviewAction::AddLabels { labels } => Some(format!("Add labels: {}", labels.join(", "))),
         ReviewAction::RemoveLabels { labels } => {
             Some(format!("Remove labels: {}", labels.join(", ")))

@@ -25,13 +25,47 @@ CI / event payload
   -> platform snapshot load
   -> rules
   -> reviewer routing + optional CODEOWNERS override
-  -> summary render
   -> action plan
-  -> execution
+  -> governance summary render
+
+observe
+  -> print deterministic diagnostics only
+
+refine
+  -> execute governance actions
+  -> upsert deterministic summary comment + hidden governance metadata
   -> optional notification fanout
+
+explain
+  -> reload Milchick governance summary comment
+  -> gate on prior governance metadata
+  -> optional advisory inference
+  -> upsert separate advisory explain comment
 ```
 
-`observe`, `explain`, and `refine` share the same planning path. Only the last step changes.
+The three commands still share one deterministic planning path, but they now diverge more intentionally at the end.
+
+## Command Semantics
+
+- `observe`: verbose deterministic inspection only. It prints findings, the governance action plan, the rendered governance summary preview, snapshot details, CODEOWNERS details, and fixture notification previews. It never mutates review platforms and never invokes inference.
+- `refine`: fast governance execution. It applies reviewer or label actions, always upserts the deterministic governance summary comment, can deliver configured notifications, and fails the current pipeline when blocking policy remains unresolved.
+- `explain`: slow advisory follow-up. It first reloads Milchick's managed governance summary comment, parses the hidden metadata appended by `refine`, and skips itself when the latest governance pass reported no applied effect and no blocking outcome. When the gate passes, it runs advisory inference and upserts only the managed explain comment.
+
+## Managed Comments
+
+Milchick now owns two separate platform comments:
+
+- the governance summary comment, marked with `<!-- mr-milchick:summary -->`
+- the advisory explain comment, marked with `<!-- mr-milchick:explain -->`
+
+`refine` owns the summary comment and `explain` owns the explain comment. `explain` does not rewrite the governance summary.
+
+The summary comment also carries a hidden JSON metadata block that records:
+
+- whether the last `refine` ran as `real` or `dry-run`
+- whether the outcome remained blocked
+- which governance action kinds were applied
+- whether the run had a governance effect worth explaining later
 
 ## Config Boundary
 
@@ -48,8 +82,10 @@ This keeps merge logic out of `app.rs` and makes new features land in one place 
 - Core rules stay pure and side-effect free.
 - Platform reads and writes always go through the same compiled connector.
 - Notification sinks never change planning decisions.
-- `dry_run` affects execution only.
+- `dry_run` affects platform writes in `refine` and `explain`; `observe` is preview-only already.
 - Notification delivery follows the resolved notification policy, not sink-specific heuristics.
+- `observe` and `refine` do not wire the inference backend.
+- `explain` never assigns reviewers, changes labels, fails the pipeline, or sends notifications.
 
 ## Current Implemented Surface
 

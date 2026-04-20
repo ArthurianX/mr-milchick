@@ -3,9 +3,9 @@ pub mod client;
 pub mod dto;
 
 use crate::core::model::{
-    Actor, AppliedReviewAction, ChangeType, ChangedFile, RepositoryRef, ReviewAction,
-    ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind, ReviewRef,
-    ReviewSnapshot, SkippedReviewAction,
+    Actor, AppliedReviewAction, ChangeType, ChangedFile, ManagedReviewComment, RepositoryRef,
+    ReviewAction, ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind,
+    ReviewRef, ReviewSnapshot, SkippedReviewAction,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, PlatformConnector};
 use async_trait::async_trait;
@@ -14,6 +14,7 @@ use self::api::{GitLabConfig, GitLabSnapshotData};
 use self::client::GitLabClient;
 
 pub const MR_MILCHICK_MARKER: &str = "<!-- mr-milchick:summary -->";
+pub const MR_MILCHICK_EXPLAIN_MARKER: &str = "<!-- mr-milchick:explain -->";
 
 pub struct GitLabPlatformConnector {
     client: GitLabClient,
@@ -64,6 +65,23 @@ impl PlatformConnector for GitLabPlatformConnector {
             &self.target_branch,
             &self.labels,
         ))
+    }
+
+    async fn load_managed_comment(
+        &self,
+        marker: &str,
+    ) -> ConnectorResult<Option<ManagedReviewComment>> {
+        let existing_notes = self
+            .client
+            .get_merge_request_notes(&self.project_id, &self.merge_request_iid)
+            .await
+            .map_err(map_request_error)?;
+
+        Ok(
+            find_managed_note(&existing_notes, marker).map(|note| ManagedReviewComment {
+                body: note.body.clone(),
+            }),
+        )
     }
 
     async fn apply_review_actions(
@@ -117,39 +135,32 @@ impl PlatformConnector for GitLabPlatformConnector {
                     });
                 }
                 ReviewAction::UpsertSummary { markdown } => {
-                    let body = render_gitlab_markdown(markdown);
-                    if let Some(existing_note) = existing_notes
-                        .iter()
-                        .find(|note| note.body.contains(MR_MILCHICK_MARKER))
-                    {
-                        if existing_note.body.trim() == body.trim() {
-                            report.skipped.push(SkippedReviewAction {
-                                action: ReviewActionKind::UpsertSummary,
-                                reason: "summary unchanged".to_string(),
-                            });
-                            continue;
-                        }
-
-                        self.client
-                            .update_comment(
-                                &self.project_id,
-                                &self.merge_request_iid,
-                                existing_note.id,
-                                &body,
-                            )
-                            .await
-                            .map_err(map_request_error)?;
-                    } else {
-                        self.client
-                            .post_comment(&self.project_id, &self.merge_request_iid, &body)
-                            .await
-                            .map_err(map_request_error)?;
-                    }
-
-                    report.applied.push(AppliedReviewAction {
-                        action: ReviewActionKind::UpsertSummary,
-                        detail: Some("comment-posted".to_string()),
-                    });
+                    upsert_managed_note(
+                        &self.client,
+                        &self.project_id,
+                        &self.merge_request_iid,
+                        &existing_notes,
+                        MR_MILCHICK_MARKER,
+                        markdown,
+                        ReviewActionKind::UpsertSummary,
+                        "summary unchanged",
+                        &mut report,
+                    )
+                    .await?;
+                }
+                ReviewAction::UpsertExplain { markdown } => {
+                    upsert_managed_note(
+                        &self.client,
+                        &self.project_id,
+                        &self.merge_request_iid,
+                        &existing_notes,
+                        MR_MILCHICK_EXPLAIN_MARKER,
+                        markdown,
+                        ReviewActionKind::UpsertExplain,
+                        "explain unchanged",
+                        &mut report,
+                    )
+                    .await?;
                 }
                 ReviewAction::AddLabels { labels } => {
                     let existing_labels = match &current_labels {
@@ -353,11 +364,11 @@ fn repository_from_web_url(web_url: &str) -> RepositoryRef {
 }
 
 pub fn render_gitlab_markdown(markdown: &str) -> String {
-    if markdown.trim().is_empty() {
-        MR_MILCHICK_MARKER.to_string()
-    } else {
-        format!("{}\n\n{}", MR_MILCHICK_MARKER, markdown.trim())
-    }
+    render_gitlab_managed_markdown(MR_MILCHICK_MARKER, markdown)
+}
+
+pub fn render_gitlab_explain_markdown(markdown: &str) -> String {
+    render_gitlab_managed_markdown(MR_MILCHICK_EXPLAIN_MARKER, markdown)
 }
 
 fn map_request_error(err: anyhow::Error) -> ConnectorError {
@@ -384,4 +395,91 @@ fn merge_reviewer_usernames(
     }
 
     merged
+}
+
+fn render_gitlab_managed_markdown(marker: &str, markdown: &str) -> String {
+    if markdown.trim().is_empty() {
+        marker.to_string()
+    } else {
+        format!("{}\n\n{}", marker, markdown.trim())
+    }
+}
+
+fn find_managed_note<'a>(
+    notes: &'a [self::api::MergeRequestNote],
+    marker: &str,
+) -> Option<&'a self::api::MergeRequestNote> {
+    notes.iter().find(|note| note.body.contains(marker))
+}
+
+async fn upsert_managed_note(
+    client: &GitLabClient,
+    project_id: &str,
+    merge_request_iid: &str,
+    existing_notes: &[self::api::MergeRequestNote],
+    marker: &str,
+    markdown: &str,
+    action_kind: ReviewActionKind,
+    unchanged_reason: &str,
+    report: &mut ReviewActionReport,
+) -> ConnectorResult<()> {
+    let body = render_gitlab_managed_markdown(marker, markdown);
+    if let Some(existing_note) = find_managed_note(existing_notes, marker) {
+        if existing_note.body.trim() == body.trim() {
+            report.skipped.push(SkippedReviewAction {
+                action: action_kind,
+                reason: unchanged_reason.to_string(),
+            });
+            return Ok(());
+        }
+
+        client
+            .update_comment(project_id, merge_request_iid, existing_note.id, &body)
+            .await
+            .map_err(map_request_error)?;
+    } else {
+        client
+            .post_comment(project_id, merge_request_iid, &body)
+            .await
+            .map_err(map_request_error)?;
+    }
+
+    report.applied.push(AppliedReviewAction {
+        action: action_kind,
+        detail: Some("comment-posted".to_string()),
+    });
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_note_lookup_keeps_summary_and_explain_separate() {
+        let notes = vec![
+            self::api::MergeRequestNote {
+                id: 1,
+                body: render_gitlab_markdown("## Summary"),
+            },
+            self::api::MergeRequestNote {
+                id: 2,
+                body: render_gitlab_explain_markdown("## Explain"),
+            },
+        ];
+
+        assert_eq!(
+            find_managed_note(&notes, MR_MILCHICK_MARKER)
+                .expect("summary note should exist")
+                .id,
+            1
+        );
+        assert_eq!(
+            find_managed_note(&notes, MR_MILCHICK_EXPLAIN_MARKER)
+                .expect("explain note should exist")
+                .id,
+            2
+        );
+    }
 }

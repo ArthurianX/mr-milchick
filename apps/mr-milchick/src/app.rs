@@ -8,14 +8,24 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 #[cfg(feature = "github")]
-use crate::connectors::github::{GitHubPlatformConnector, render_github_markdown};
+use crate::connectors::github::{
+    GitHubPlatformConnector, MR_MILCHICK_MARKER, render_github_explain_markdown,
+    render_github_markdown,
+};
 #[cfg(feature = "gitlab")]
-use crate::connectors::gitlab::{GitLabPlatformConnector, render_gitlab_markdown};
+use crate::connectors::gitlab::{
+    GitLabPlatformConnector, MR_MILCHICK_MARKER, render_gitlab_explain_markdown,
+    render_gitlab_markdown,
+};
 #[cfg(feature = "slack-app")]
 use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
 use crate::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
 use crate::core::actions::planner::enrich_with_reviewer_assignment;
+use crate::core::comment::metadata::{
+    GovernanceExecutionStrategy, GovernanceSummaryMetadata, append_governance_summary_metadata,
+    parse_governance_summary_metadata,
+};
 use crate::core::domain::codeowners::context::CodeownersContext;
 use crate::core::domain::codeowners::matcher::{
     collect_matched_rules_for_snapshot, match_usernames,
@@ -32,9 +42,11 @@ use crate::core::inference::{
     NoopReviewInferenceEngine, ReviewInferenceEngine, ReviewInferenceOutcome, analyze_with_timeout,
 };
 use crate::core::message_templates::{
-    PipelineStatusState, PipelineStatusTemplateEntry, build_notification_template_context,
-    build_summary_template_context, notification_template_variant, render_review_summary,
-    render_slack_app_notification, render_slack_workflow_notification, resolve_template_catalog,
+    PipelineStatusState, PipelineStatusTemplateEntry, TemplateCatalog,
+    build_explain_template_context, build_notification_template_context,
+    build_summary_template_context, notification_template_variant, render_review_explain,
+    render_review_summary, render_slack_app_notification, render_slack_workflow_notification,
+    resolve_template_catalog,
 };
 use crate::core::model::{
     NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
@@ -73,6 +85,23 @@ struct FixturePlatformConnector;
 struct ReviewInferenceConnectorAdapter {
     engine: Box<dyn ReviewInferenceEngine>,
     timeout: Duration,
+}
+
+struct PreparedRun {
+    ctx: crate::context::model::CiContext,
+    snapshot: crate::core::model::ReviewSnapshot,
+    outcome: RuleOutcome,
+    pipeline_statuses: Vec<PipelineStatusTemplateEntry>,
+    wiring: RuntimeWiring,
+    fixture_mode: bool,
+    fixture_notification_variant:
+        Option<crate::core::message_templates::NotificationTemplateVariant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManagedCommentKind {
+    Summary,
+    Explain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -141,6 +170,13 @@ impl PlatformConnector for FixturePlatformConnector {
         ))
     }
 
+    async fn load_managed_comment(
+        &self,
+        _marker: &str,
+    ) -> std::result::Result<Option<crate::core::model::ManagedReviewComment>, ConnectorError> {
+        Ok(None)
+    }
+
     async fn apply_review_actions(
         &self,
         actions: &[ReviewAction],
@@ -157,6 +193,7 @@ impl PlatformConnector for FixturePlatformConnector {
                         .join(", "),
                 ),
                 ReviewAction::UpsertSummary { .. } => Some("fixture".to_string()),
+                ReviewAction::UpsertExplain { .. } => Some("fixture".to_string()),
                 ReviewAction::AddLabels { labels } | ReviewAction::RemoveLabels { labels } => {
                     Some(labels.join(", "))
                 }
@@ -196,13 +233,95 @@ fn compiled_platform_kind() -> ReviewPlatformKind {
     }
 }
 
-fn render_summary_for_platform(markdown: &str, platform: ReviewPlatformKind) -> String {
+fn render_managed_comment_for_platform(
+    markdown: &str,
+    platform: ReviewPlatformKind,
+    kind: ManagedCommentKind,
+) -> String {
     match platform {
         #[cfg(feature = "gitlab")]
-        ReviewPlatformKind::GitLab => render_gitlab_markdown(markdown),
+        ReviewPlatformKind::GitLab => match kind {
+            ManagedCommentKind::Summary => render_gitlab_markdown(markdown),
+            ManagedCommentKind::Explain => render_gitlab_explain_markdown(markdown),
+        },
         #[cfg(feature = "github")]
-        ReviewPlatformKind::GitHub => render_github_markdown(markdown),
+        ReviewPlatformKind::GitHub => match kind {
+            ManagedCommentKind::Summary => render_github_markdown(markdown),
+            ManagedCommentKind::Explain => render_github_explain_markdown(markdown),
+        },
         _ => unreachable!("unsupported compiled review platform"),
+    }
+}
+
+fn strategy_metadata(strategy: ExecutionStrategy) -> GovernanceExecutionStrategy {
+    match strategy {
+        ExecutionStrategy::DryRun => GovernanceExecutionStrategy::DryRun,
+        ExecutionStrategy::Real => GovernanceExecutionStrategy::Real,
+    }
+}
+
+fn governance_metadata_from_report(
+    strategy: ExecutionStrategy,
+    blocked: bool,
+    report: &crate::core::model::ReviewActionReport,
+) -> GovernanceSummaryMetadata {
+    let applied_action_kinds = report
+        .applied
+        .iter()
+        .map(|action| action.action)
+        .filter(|action| {
+            !matches!(
+                action,
+                ReviewActionKind::UpsertSummary | ReviewActionKind::UpsertExplain
+            )
+        })
+        .collect::<Vec<_>>();
+    let had_governance_effect =
+        strategy == ExecutionStrategy::Real && !applied_action_kinds.is_empty();
+
+    GovernanceSummaryMetadata {
+        execution_strategy: strategy_metadata(strategy),
+        blocked,
+        applied_action_kinds,
+        had_governance_effect,
+    }
+}
+
+fn governance_summary_markdown(
+    template_catalog: &TemplateCatalog,
+    outcome: &RuleOutcome,
+    snapshot: &crate::core::model::ReviewSnapshot,
+    selector: &ToneSelector,
+    ctx: &crate::context::model::CiContext,
+    metadata: Option<&GovernanceSummaryMetadata>,
+) -> Result<String> {
+    let summary = render_review_summary(
+        template_catalog,
+        &build_summary_template_context(outcome, snapshot, selector, ctx),
+        compiled_platform_kind(),
+    );
+
+    match metadata {
+        Some(metadata) => append_governance_summary_metadata(&summary, metadata).map_err(|err| {
+            anyhow::anyhow!("failed to serialize governance summary metadata: {err}")
+        }),
+        None => Ok(summary),
+    }
+}
+
+fn execution_strategy_for_mode(
+    fixture_mode: bool,
+    send_notifications: bool,
+    app_config: &AppConfigContext,
+) -> ExecutionStrategy {
+    if fixture_mode {
+        if send_notifications {
+            ExecutionStrategy::Real
+        } else {
+            ExecutionStrategy::DryRun
+        }
+    } else {
+        ExecutionStrategy::from_dry_run(app_config.config.execution.dry_run)
     }
 }
 
@@ -242,62 +361,399 @@ pub async fn run_mode(
     let selector = ToneSelector::default();
     let app_config = load_app_config_context()?;
     let template_catalog = resolve_template_catalog(&app_config.config.templates);
-    let fixture_mode = fixture_path.is_some();
-    let mut fixture_notification_variant = fixture_variant.map(map_fixture_variant_arg);
+    let preview_sink_kinds = configured_notification_sink_kinds(&app_config);
+    let Some(prepared) = prepare_run(
+        mode,
+        fixture_path,
+        fixture_variant.map(map_fixture_variant_arg),
+        &selector,
+        &app_config,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
 
-    let ctx;
-    let snapshot;
-    let mut outcome;
-    let wiring;
-    if let Some(fixture_path) = fixture_path {
+    match mode {
+        ExecutionMode::Observe => {
+            run_observe_mode(
+                &prepared,
+                &app_config,
+                &template_catalog,
+                &selector,
+                &prepared.pipeline_statuses,
+                &preview_sink_kinds,
+            )?;
+        }
+        ExecutionMode::Explain => {
+            run_explain_mode(
+                &prepared,
+                &app_config,
+                &template_catalog,
+                &selector,
+                send_notifications,
+            )
+            .await?;
+        }
+        ExecutionMode::Refine => {
+            run_refine_mode(
+                &prepared,
+                &app_config,
+                &template_catalog,
+                &selector,
+                send_notifications,
+                &prepared.pipeline_statuses,
+                &preview_sink_kinds,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn prepare_run(
+    mode: ExecutionMode,
+    fixture_path: Option<&str>,
+    fixture_notification_variant: Option<
+        crate::core::message_templates::NotificationTemplateVariant,
+    >,
+    selector: &ToneSelector,
+    app_config: &AppConfigContext,
+) -> Result<Option<PreparedRun>> {
+    let fixture_mode = fixture_path.is_some();
+    let include_inference = matches!(mode, ExecutionMode::Explain);
+    let pipeline_statuses = load_pipeline_status_entries(&app_config.config);
+
+    let prepared = if let Some(fixture_path) = fixture_path {
         let fixture = load_review_fixture(fixture_path)?;
-        fixture_notification_variant =
-            fixture_notification_variant.or_else(|| fixture.notification_template_variant());
-        ctx = fixture.to_ci_context()?;
-        snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
-        outcome = fixture.to_rule_outcome()?;
-        wiring = build_fixture_runtime_wiring(&app_config)?;
+        let ctx = fixture.to_ci_context()?;
+        let snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
+        let outcome = finalize_outcome(
+            fixture.to_rule_outcome()?,
+            &snapshot,
+            &app_config.config,
+            &pipeline_statuses,
+        );
+
+        PreparedRun {
+            ctx,
+            snapshot,
+            outcome,
+            pipeline_statuses,
+            wiring: build_fixture_runtime_wiring(app_config, include_inference)?,
+            fixture_mode,
+            fixture_notification_variant: fixture_notification_variant
+                .or_else(|| fixture.notification_template_variant()),
+        }
     } else {
-        ctx = build_ci_context()?;
+        let ctx = build_ci_context()?;
         println!("{}", selector.select(ToneCategory::Observation, &ctx));
         print_compiled_capabilities();
 
         if !ctx.is_review_pipeline() {
             println!("This pipeline does not currently present review responsibilities.");
-            return Ok(());
+            return Ok(None);
         }
 
-        let live_wiring = build_runtime_wiring(&ctx, &app_config)?;
-        snapshot = live_wiring.platform_connector.load_snapshot().await?;
-        outcome = enrich_with_reviewer_assignment(
-            evaluate_rules(&ctx),
+        let live_wiring = build_runtime_wiring(&ctx, app_config, include_inference)?;
+        let snapshot = live_wiring.platform_connector.load_snapshot().await?;
+        let outcome = finalize_outcome(
+            enrich_with_reviewer_assignment(
+                evaluate_rules(&ctx),
+                &snapshot,
+                &app_config.routing_config,
+                &app_config.codeowners,
+            ),
             &snapshot,
-            &app_config.routing_config,
-            &app_config.codeowners,
+            &app_config.config,
+            &pipeline_statuses,
         );
-        wiring = live_wiring;
-    }
 
-    if fixture_mode {
-        println!("{}", selector.select(ToneCategory::Observation, &ctx));
+        PreparedRun {
+            ctx,
+            snapshot,
+            outcome,
+            pipeline_statuses,
+            wiring: live_wiring,
+            fixture_mode,
+            fixture_notification_variant,
+        }
+    };
+
+    if prepared.fixture_mode {
+        println!(
+            "{}",
+            selector.select(ToneCategory::Observation, &prepared.ctx)
+        );
         print_compiled_capabilities();
     }
 
-    let preview_sink_kinds = configured_notification_sink_kinds(&app_config);
-    let pipeline_statuses = load_pipeline_status_entries(&app_config.config);
-    outcome = enrich_with_pipeline_success_label(
-        outcome,
-        &snapshot,
-        &app_config.config,
-        &pipeline_statuses,
+    Ok(Some(prepared))
+}
+
+fn finalize_outcome(
+    outcome: RuleOutcome,
+    snapshot: &crate::core::model::ReviewSnapshot,
+    config: &ResolvedConfig,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
+) -> RuleOutcome {
+    let outcome = enrich_with_pipeline_success_label(outcome, snapshot, config, pipeline_statuses);
+    enrich_with_pipeline_failure_gate(outcome, config, pipeline_statuses)
+}
+
+fn run_observe_mode(
+    prepared: &PreparedRun,
+    app_config: &AppConfigContext,
+    template_catalog: &TemplateCatalog,
+    selector: &ToneSelector,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
+    preview_sink_kinds: &[NotificationSinkKind],
+) -> Result<()> {
+    let summary = governance_summary_markdown(
+        template_catalog,
+        &prepared.outcome,
+        &prepared.snapshot,
+        selector,
+        &prepared.ctx,
+        None,
+    )?;
+
+    print_outcome(&prepared.outcome);
+    print_observe_action_plan(&prepared.outcome);
+    println!("Governance summary comment preview:");
+    println!("---");
+    println!(
+        "{}",
+        render_managed_comment_for_platform(
+            &summary,
+            compiled_platform_kind(),
+            ManagedCommentKind::Summary,
+        )
     );
-    outcome = enrich_with_pipeline_failure_gate(outcome, &app_config.config, &pipeline_statuses);
+    println!("---");
+    print_snapshot_details(&prepared.snapshot);
+    print_codeowners_details(&prepared.snapshot, app_config);
+
+    if prepared.fixture_mode {
+        let notifications = build_notifications(
+            &prepared.outcome,
+            &prepared.snapshot,
+            template_catalog,
+            selector,
+            &prepared.ctx,
+            pipeline_statuses,
+            preview_sink_kinds,
+            prepared.fixture_notification_variant,
+        );
+        print_notification_previews(&notifications);
+    }
+
+    Ok(())
+}
+
+async fn run_refine_mode(
+    prepared: &PreparedRun,
+    app_config: &AppConfigContext,
+    template_catalog: &TemplateCatalog,
+    selector: &ToneSelector,
+    send_notifications: bool,
+    pipeline_statuses: &[PipelineStatusTemplateEntry],
+    preview_sink_kinds: &[NotificationSinkKind],
+) -> Result<()> {
+    print_outcome(&prepared.outcome);
+    print_action_plan(&prepared.outcome, false);
+
+    let strategy =
+        execution_strategy_for_mode(prepared.fixture_mode, send_notifications, app_config);
+    let blocked = prepared.outcome.action_plan.has_fail_pipeline()
+        || prepared.outcome.has_blocking_findings();
+    let governance_report = prepared
+        .wiring
+        .execute_review_actions(strategy, &prepared.outcome.action_plan.actions)
+        .await?;
+    let summary_metadata = governance_metadata_from_report(strategy, blocked, &governance_report);
+    let summary = governance_summary_markdown(
+        template_catalog,
+        &prepared.outcome,
+        &prepared.snapshot,
+        selector,
+        &prepared.ctx,
+        Some(&summary_metadata),
+    )?;
+    let summary_report = prepared
+        .wiring
+        .execute_review_actions(
+            strategy,
+            &[ReviewAction::UpsertSummary {
+                markdown: summary.clone(),
+            }],
+        )
+        .await?;
+
+    let mut review_report = governance_report;
+    review_report.extend(summary_report);
+    let notifications = build_notifications(
+        &prepared.outcome,
+        &prepared.snapshot,
+        template_catalog,
+        selector,
+        &prepared.ctx,
+        pipeline_statuses,
+        preview_sink_kinds,
+        prepared.fixture_notification_variant,
+    );
+    if prepared.fixture_mode {
+        print_notification_previews(&notifications);
+    }
+    let notification_reports = prepared
+        .wiring
+        .deliver_notifications(
+            strategy,
+            app_config.config.execution.notification_policy,
+            &notifications,
+            &review_report,
+        )
+        .await?;
+    let report = crate::runtime::ExecutionReport {
+        review_report,
+        notification_reports,
+    };
+
+    print_execution_report(&report);
+
+    if blocked {
+        warn!("failing command because blocking findings or fail-pipeline action remain");
+        anyhow::bail!("merge request policy requirements were not satisfied");
+    }
+
+    Ok(())
+}
+
+async fn run_explain_mode(
+    prepared: &PreparedRun,
+    app_config: &AppConfigContext,
+    template_catalog: &TemplateCatalog,
+    selector: &ToneSelector,
+    send_notifications: bool,
+) -> Result<()> {
+    print_outcome(&prepared.outcome);
+    print_action_plan(&prepared.outcome, false);
+    print_snapshot_details(&prepared.snapshot);
+    print_codeowners_details(&prepared.snapshot, app_config);
+
+    let Some(governance_metadata) = load_explain_gate(prepared).await? else {
+        println!("Skipping `explain`: no prior governance summary metadata was available.");
+        return Ok(());
+    };
+    if !governance_metadata.should_run_explain() {
+        println!(
+            "Skipping `explain`: the last `refine` run reported no applied governance effect and no blocking outcome."
+        );
+        return Ok(());
+    }
+
+    let inference_outcome = analyze_review_with_logging(&prepared.wiring, &prepared.snapshot).await;
+    if app_config.config.inference.trace {
+        print_inference_details(&inference_outcome);
+    }
+
+    let explain_markdown = render_review_explain(
+        template_catalog,
+        &build_explain_template_context(
+            &prepared.outcome,
+            &prepared.snapshot,
+            &inference_outcome,
+            selector,
+            &prepared.ctx,
+        ),
+        compiled_platform_kind(),
+    );
+    println!("Advisory explain comment preview:");
+    println!("---");
+    println!(
+        "{}",
+        render_managed_comment_for_platform(
+            &explain_markdown,
+            compiled_platform_kind(),
+            ManagedCommentKind::Explain,
+        )
+    );
+    println!("---");
+
+    let strategy =
+        execution_strategy_for_mode(prepared.fixture_mode, send_notifications, app_config);
+    let review_report = prepared
+        .wiring
+        .execute_review_actions(
+            strategy,
+            &[ReviewAction::UpsertExplain {
+                markdown: explain_markdown,
+            }],
+        )
+        .await?;
+
+    print_execution_report(&crate::runtime::ExecutionReport {
+        review_report,
+        notification_reports: Vec::new(),
+    });
+
+    Ok(())
+}
+
+async fn load_explain_gate(prepared: &PreparedRun) -> Result<Option<GovernanceSummaryMetadata>> {
+    if prepared.fixture_mode {
+        let action_kinds = prepared
+            .outcome
+            .action_plan
+            .actions
+            .iter()
+            .map(ReviewAction::kind)
+            .filter(|action| {
+                !matches!(
+                    action,
+                    ReviewActionKind::UpsertSummary | ReviewActionKind::UpsertExplain
+                )
+            })
+            .collect::<Vec<_>>();
+
+        return Ok(Some(GovernanceSummaryMetadata {
+            execution_strategy: GovernanceExecutionStrategy::DryRun,
+            blocked: prepared.outcome.has_blocking_findings()
+                || prepared.outcome.action_plan.has_fail_pipeline(),
+            had_governance_effect: !action_kinds.is_empty(),
+            applied_action_kinds: action_kinds,
+        }));
+    }
+
+    let Some(comment) = prepared
+        .wiring
+        .platform_connector
+        .load_managed_comment(MR_MILCHICK_MARKER)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    match parse_governance_summary_metadata(&comment.body) {
+        Ok(metadata) => Ok(metadata),
+        Err(err) => {
+            warn!("failed to parse governance summary metadata: {err}");
+            Ok(None)
+        }
+    }
+}
+
+async fn analyze_review_with_logging(
+    wiring: &RuntimeWiring,
+    snapshot: &crate::core::model::ReviewSnapshot,
+) -> ReviewInferenceOutcome {
     info!(
         inference_available = wiring.capabilities.inference_available,
         changed_files = snapshot.changed_file_count(),
         "starting advisory local review analysis"
     );
-    let inference_outcome = match wiring.analyze_review(&snapshot).await {
+    let inference_outcome = match wiring.analyze_review(snapshot).await {
         Ok(outcome) => outcome,
         Err(err) => {
             warn!("local review inference failed: {err}");
@@ -318,124 +774,13 @@ pub async fn run_mode(
             "advisory local review produced structured suggestions"
         );
     }
-    if app_config.config.inference.trace {
-        print_inference_details(&inference_outcome);
-    }
 
-    let summary = render_review_summary(
-        &template_catalog,
-        &build_summary_template_context(&outcome, &snapshot, &inference_outcome, &selector, &ctx),
-        compiled_platform_kind(),
-    );
-    outcome.action_plan.push(ReviewAction::UpsertSummary {
-        markdown: summary.clone(),
-    });
-
-    match mode {
-        ExecutionMode::Observe => {
-            print_outcome(&outcome);
-            print_observe_action_plan(&outcome);
-            if fixture_mode {
-                let notifications = build_notifications(
-                    &outcome,
-                    &snapshot,
-                    &template_catalog,
-                    &selector,
-                    &ctx,
-                    &inference_outcome,
-                    &pipeline_statuses,
-                    &preview_sink_kinds,
-                    fixture_notification_variant,
-                );
-                print_notification_previews(&notifications);
-            }
-        }
-        ExecutionMode::Explain => {
-            print_outcome(&outcome);
-            print_action_plan(&outcome, true);
-            println!("Structured summary comment preview:");
-            println!("---");
-            if let Some(ReviewAction::UpsertSummary { markdown }) = outcome
-                .action_plan
-                .actions
-                .iter()
-                .find(|action| matches!(action, ReviewAction::UpsertSummary { .. }))
-            {
-                println!(
-                    "{}",
-                    render_summary_for_platform(markdown, compiled_platform_kind())
-                );
-            }
-            println!("---");
-            print_snapshot_details(&snapshot);
-            print_inference_details(&inference_outcome);
-            let notifications = build_notifications(
-                &outcome,
-                &snapshot,
-                &template_catalog,
-                &selector,
-                &ctx,
-                &inference_outcome,
-                &pipeline_statuses,
-                &preview_sink_kinds,
-                fixture_notification_variant,
-            );
-            if fixture_mode {
-                print_notification_previews(&notifications);
-            }
-            print_codeowners_details(&snapshot, &app_config);
-        }
-        ExecutionMode::Refine => {
-            print_outcome(&outcome);
-            print_action_plan(&outcome, true);
-
-            let strategy = if fixture_mode {
-                if send_notifications {
-                    ExecutionStrategy::Real
-                } else {
-                    ExecutionStrategy::DryRun
-                }
-            } else {
-                ExecutionStrategy::from_dry_run(app_config.config.execution.dry_run)
-            };
-            let notification_policy = app_config.config.execution.notification_policy;
-            let notifications = build_notifications(
-                &outcome,
-                &snapshot,
-                &template_catalog,
-                &selector,
-                &ctx,
-                &inference_outcome,
-                &pipeline_statuses,
-                &preview_sink_kinds,
-                fixture_notification_variant,
-            );
-            if fixture_mode {
-                print_notification_previews(&notifications);
-            }
-            let report = wiring
-                .execute(
-                    strategy,
-                    notification_policy,
-                    &outcome.action_plan.actions,
-                    &notifications,
-                )
-                .await?;
-
-            print_execution_report(&report);
-
-            if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
-                warn!("failing command because blocking findings or fail-pipeline action remain");
-                anyhow::bail!("merge request policy requirements were not satisfied");
-            }
-        }
-    }
-
-    Ok(())
+    inference_outcome
 }
 fn build_runtime_wiring(
     ctx: &crate::context::model::CiContext,
     app_config: &AppConfigContext,
+    include_inference: bool,
 ) -> Result<RuntimeWiring> {
     let review_id = ctx
         .review_id()
@@ -476,23 +821,32 @@ fn build_runtime_wiring(
         ctx.labels.iter().map(|label| label.0.clone()).collect(),
     ));
 
-    let (inference_connector, inference_available) = build_inference_connector(&app_config.config)?;
+    let inference_connector = if include_inference {
+        Some(build_inference_connector(&app_config.config)?.0)
+    } else {
+        None
+    };
 
     Ok(RuntimeWiring::new(
         platform_connector,
         inference_connector,
-        inference_available,
         build_notification_sinks(app_config),
     ))
 }
 
-fn build_fixture_runtime_wiring(app_config: &AppConfigContext) -> Result<RuntimeWiring> {
-    let (inference_connector, inference_available) = build_inference_connector(&app_config.config)?;
+fn build_fixture_runtime_wiring(
+    app_config: &AppConfigContext,
+    include_inference: bool,
+) -> Result<RuntimeWiring> {
+    let inference_connector = if include_inference {
+        Some(build_inference_connector(&app_config.config)?.0)
+    } else {
+        None
+    };
 
     Ok(RuntimeWiring::new(
         Box::new(FixturePlatformConnector),
         inference_connector,
-        inference_available,
         build_notification_sinks(app_config),
     ))
 }
@@ -689,7 +1043,13 @@ fn print_action_plan(outcome: &RuleOutcome, include_summary: bool) {
         .action_plan
         .actions
         .iter()
-        .filter(|action| include_summary || !matches!(action, ReviewAction::UpsertSummary { .. }))
+        .filter(|action| {
+            include_summary
+                || !matches!(
+                    action,
+                    ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. }
+                )
+        })
         .map(describe_planned_action)
         .collect::<Vec<_>>();
 
@@ -715,7 +1075,10 @@ fn describe_planned_action(action: &ReviewAction) -> String {
                 .join(", ")
         ),
         ReviewAction::UpsertSummary { .. } => {
-            "[UpsertSummary] Update Mr. Milchick summary comment".to_string()
+            "[UpsertSummary] Update Mr. Milchick governance summary comment".to_string()
+        }
+        ReviewAction::UpsertExplain { .. } => {
+            "[UpsertExplain] Update Mr. Milchick advisory explain comment".to_string()
         }
         ReviewAction::AddLabels { labels } => format!("[AddLabels] {}", labels.join(", ")),
         ReviewAction::RemoveLabels { labels } => {
@@ -738,6 +1101,9 @@ fn print_execution_report(report: &crate::runtime::ExecutionReport) {
             ReviewActionKind::UpsertSummary => {
                 println!("- [CommentPosted] Mr. Milchick summary comment");
             }
+            ReviewActionKind::UpsertExplain => {
+                println!("- [ExplainCommentPosted] Mr. Milchick advisory explain comment");
+            }
             ReviewActionKind::FailPipeline => {
                 println!(
                     "- [PipelineFailurePlanned] {}",
@@ -755,6 +1121,11 @@ fn print_execution_report(report: &crate::runtime::ExecutionReport) {
         match skipped.action {
             ReviewActionKind::UpsertSummary => {
                 println!("- [CommentSkippedAlreadyPresent] Mr. Milchick summary comment");
+            }
+            ReviewActionKind::UpsertExplain => {
+                println!(
+                    "- [ExplainCommentSkippedAlreadyPresent] Mr. Milchick advisory explain comment"
+                );
             }
             ReviewActionKind::AssignReviewers => {
                 println!("- [ReviewersSkippedAlreadyPresent] {}", skipped.reason);
@@ -793,7 +1164,6 @@ fn build_notifications(
     template_catalog: &crate::core::message_templates::TemplateCatalog,
     selector: &ToneSelector,
     ctx: &crate::context::model::CiContext,
-    inference_outcome: &ReviewInferenceOutcome,
     pipeline_statuses: &[PipelineStatusTemplateEntry],
     sink_kinds: &[NotificationSinkKind],
     variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
@@ -808,7 +1178,6 @@ fn build_notifications(
     let notification_context = build_notification_template_context(
         outcome,
         snapshot,
-        inference_outcome,
         selector,
         ctx,
         variant,
@@ -1192,7 +1561,12 @@ fn print_observe_action_plan(outcome: &RuleOutcome) {
         .action_plan
         .actions
         .iter()
-        .filter(|action| !matches!(action, ReviewAction::UpsertSummary { .. }))
+        .filter(|action| {
+            !matches!(
+                action,
+                ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. }
+            )
+        })
         .map(describe_planned_action)
         .collect();
 
@@ -1324,9 +1698,6 @@ mod tests {
         BranchInfo, BranchName, CiContext, PipelineInfo, PipelineSource, ProjectKey,
         ReviewContextRef, ReviewId,
     };
-    use crate::core::inference::{
-        RecommendationCategory, ReviewInferenceOutcome, ReviewInsights, ReviewRecommendation,
-    };
     use crate::core::model::{
         Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
     };
@@ -1392,18 +1763,6 @@ mod tests {
             default_branch: Some("develop".to_string()),
             metadata: ReviewMetadata::default(),
         }
-    }
-
-    fn sample_inference_outcome() -> ReviewInferenceOutcome {
-        ReviewInferenceOutcome::ready(ReviewInsights {
-            summary: Some("The change adds advisory local review suggestions.".to_string()),
-            recommendations: vec![ReviewRecommendation {
-                category: RecommendationCategory::Risk,
-                message:
-                    "Double-check that notification sinks render recommendations consistently."
-                        .to_string(),
-            }],
-        })
     }
 
     fn sample_resolved_config() -> ResolvedConfig {
@@ -1483,6 +1842,64 @@ mod tests {
     }
 
     #[test]
+    fn explain_action_is_described() {
+        let text = describe_planned_action(&ReviewAction::UpsertExplain {
+            markdown: "## Explain".to_string(),
+        });
+
+        assert!(text.contains("UpsertExplain"));
+        assert!(text.to_lowercase().contains("explain"));
+    }
+
+    #[test]
+    fn governance_metadata_uses_real_applied_actions_only() {
+        let metadata = governance_metadata_from_report(
+            ExecutionStrategy::Real,
+            false,
+            &crate::core::model::ReviewActionReport {
+                applied: vec![
+                    crate::core::model::AppliedReviewAction {
+                        action: ReviewActionKind::AssignReviewers,
+                        detail: None,
+                    },
+                    crate::core::model::AppliedReviewAction {
+                        action: ReviewActionKind::UpsertSummary,
+                        detail: None,
+                    },
+                ],
+                skipped: Vec::new(),
+            },
+        );
+
+        assert!(metadata.had_governance_effect);
+        assert_eq!(
+            metadata.applied_action_kinds,
+            vec![ReviewActionKind::AssignReviewers]
+        );
+    }
+
+    #[test]
+    fn governance_metadata_keeps_dry_run_as_no_effect() {
+        let metadata = governance_metadata_from_report(
+            ExecutionStrategy::DryRun,
+            false,
+            &crate::core::model::ReviewActionReport {
+                applied: vec![crate::core::model::AppliedReviewAction {
+                    action: ReviewActionKind::AssignReviewers,
+                    detail: None,
+                }],
+                skipped: Vec::new(),
+            },
+        );
+
+        assert!(!metadata.had_governance_effect);
+        assert_eq!(
+            metadata.execution_strategy,
+            GovernanceExecutionStrategy::DryRun
+        );
+    }
+
+    #[test]
     fn slack_notifications_include_existing_and_new_reviewers() {
         let mut outcome = RuleOutcome::new();
         outcome.action_plan.push(ReviewAction::AssignReviewers {
@@ -1501,7 +1918,6 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
-            &sample_inference_outcome(),
             &[],
             &[NotificationSinkKind::SlackApp],
             None,
@@ -1514,9 +1930,9 @@ mod tests {
                 .contains("_Assigned reviewers_ *@principal-reviewer* *@bob*")
         );
         assert!(
-            notifications[0].body.contains(
-                "Double-check that notification sinks render recommendations consistently."
-            )
+            !notifications[0]
+                .body
+                .contains("Local review recommendations")
         );
     }
 
@@ -1533,7 +1949,6 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
-            &sample_inference_outcome(),
             &[PipelineStatusTemplateEntry {
                 label: "unit_tests".to_string(),
                 state: PipelineStatusState::Passed,
@@ -1548,11 +1963,6 @@ mod tests {
         assert!(notifications[0]
             .body
             .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
-        assert!(
-            notifications[0]
-                .body
-                .contains("The change adds advisory local review suggestions.")
-        );
         assert!(
             notifications[0]
                 .body

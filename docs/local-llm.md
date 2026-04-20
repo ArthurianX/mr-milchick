@@ -16,18 +16,21 @@ trace = false
 
 Notes:
 
-- `enabled = true` turns on advisory review suggestions during normal CLI runs.
+- `enabled = true` turns on advisory review suggestions for `explain`.
 - `model_path` is required when inference is enabled.
-- `trace = true` prints the detailed inference result in `observe`, `explain`, and `refine`.
+- `trace = true` prints the detailed inference result during `explain`.
+- `observe` and `refine` never invoke inference.
 - If the binary is built without `llm-local`, Milchick reports that inference was configured but not compiled in.
 
 ## Secrets And Context
 
-Inference still runs inside the normal application flow, so live review runs also need the usual platform token and CI context.
+Live advisory runs still need the usual platform token and CI review context because `explain` reloads the review snapshot and Milchick's managed governance summary comment from the review platform.
+
+`explain` only runs advisory analysis when the latest governance summary metadata says the prior `refine` run either applied governance actions or remained blocked. If the metadata is missing, malformed, or reports no governance effect, `explain` skips by design.
 
 ## Smoke Tests
 
-The ignored smoke tests in [`tests/llm_local_smoke.rs`](/Users/arthurianxxx/Documents/mr-milchick/tests/llm_local_smoke.rs) still use dedicated smoke-test env inputs because they exercise the local inference engine in isolation rather than the full app config loader.
+The ignored smoke tests in [`tests/llm_local_smoke.rs`](/Users/arthur.kovacs/Work/mr-milchick/tests/llm_local_smoke.rs) still use dedicated smoke-test env inputs because they exercise the local inference engine in isolation rather than the full app config loader.
 
 Smoke-test env vars:
 
@@ -38,6 +41,9 @@ Smoke-test env vars:
 
 ## Practical Guidance
 
+- Building with `--features llm-local` requires `cmake` because `llama-cpp-sys` compiles vendored `llama.cpp` during the build.
+- On macOS hosts, prefer [`scripts/build_linux_release.sh`](/Users/arthur.kovacs/Work/mr-milchick/scripts/build_linux_release.sh) for Linux-musl artifacts so the active Xcode SDK path is forwarded to bindgen automatically.
+- If `explain` skips because the last `refine` had no governance effect and no blocking outcome, that is expected behavior rather than an inference failure.
 - Raise `max_patch_bytes` when review quality drops because the prompt loses multi-file context.
 - Raise `context_tokens` when prompts still overflow after patch budgeting.
 - Use `trace = true` temporarily when tuning prompts or verifying that a model is actually contributing useful output.

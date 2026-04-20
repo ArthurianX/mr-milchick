@@ -15,23 +15,31 @@ const GITLAB_SUMMARY_TEMPLATE: &str = r#"## {{summary_title}}
 
 {{findings_block}}
 
-{{recommendations_block}}
-
 {{actions_block}}
 
 _{{closing_tone_message}}_"#;
+const GITLAB_EXPLAIN_TEMPLATE: &str = r#"## {{summary_title}}
+
+{{summary_intro}}
+
+{{findings_block}}
+
+{{actions_block}}
+
+{{recommendations_block}}
+
+_{{closing_tone_message}}_"#;
 const GITHUB_SUMMARY_TEMPLATE: &str = GITLAB_SUMMARY_TEMPLATE;
+const GITHUB_EXPLAIN_TEMPLATE: &str = GITLAB_EXPLAIN_TEMPLATE;
 
 const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_FIRST_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Merge request: {{mr_link}}
 {{reviewers_line}}
-{{recommendations_block}}
 {{pipeline_status_block}}"#;
 const SLACK_APP_UPDATE_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
-{{recommendations_block}}
 {{actions_block}}
 {{pipeline_status_block}}
 _{{summary_footer}}_"#;
@@ -40,12 +48,10 @@ const SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE: &str = r#"{{notification_title}}
 Merge request: {{mr_link}}
 {{reviewers_line}}
-{{recommendations_block}}
 {{pipeline_status_block}}"#;
 const SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{findings_block}}
-{{recommendations_block}}
 {{actions_block}}
 {{pipeline_status_block}}
 {{summary_footer}}"#;
@@ -145,9 +151,11 @@ impl Default for TemplateCatalog {
         Self {
             gitlab: GitLabTemplateCatalog {
                 summary: GITLAB_SUMMARY_TEMPLATE.to_string(),
+                explain: GITLAB_EXPLAIN_TEMPLATE.to_string(),
             },
             github: GitHubTemplateCatalog {
                 summary: GITHUB_SUMMARY_TEMPLATE.to_string(),
+                explain: GITHUB_EXPLAIN_TEMPLATE.to_string(),
             },
             slack_app: SlackAppTemplateCatalog {
                 first_root: SLACK_APP_FIRST_ROOT_TEMPLATE.to_string(),
@@ -168,11 +176,13 @@ impl Default for TemplateCatalog {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitLabTemplateCatalog {
     pub summary: String,
+    pub explain: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubTemplateCatalog {
     pub summary: String,
+    pub explain: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,6 +203,7 @@ pub struct SlackWorkflowTemplateCatalog {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryTemplateContext {
+    summary_title: String,
     snapshot: SnapshotFacts,
     findings: Vec<FindingView>,
     actions: Vec<String>,
@@ -278,7 +289,9 @@ pub enum NotificationTemplateVariant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TemplateField {
     GitLabSummary,
+    GitLabExplain,
     GitHubSummary,
+    GitHubExplain,
     SlackAppFirstRoot,
     SlackAppFirstThread,
     SlackAppUpdateRoot,
@@ -301,7 +314,9 @@ impl TemplateField {
     fn config_path(self) -> &'static str {
         match self {
             Self::GitLabSummary => "templates.gitlab.summary",
+            Self::GitLabExplain => "templates.gitlab.explain",
             Self::GitHubSummary => "templates.github.summary",
+            Self::GitHubExplain => "templates.github.explain",
             Self::SlackAppFirstRoot => "templates.slack_app.first_root",
             Self::SlackAppFirstThread => "templates.slack_app.first_thread",
             Self::SlackAppUpdateRoot => "templates.slack_app.update_root",
@@ -316,7 +331,9 @@ impl TemplateField {
     fn allowed_placeholders(self) -> &'static [&'static str] {
         match self {
             Self::GitLabSummary => GITLAB_SUMMARY_PLACEHOLDERS,
+            Self::GitLabExplain => GITLAB_SUMMARY_PLACEHOLDERS,
             Self::GitHubSummary => GITHUB_SUMMARY_PLACEHOLDERS,
+            Self::GitHubExplain => GITHUB_SUMMARY_PLACEHOLDERS,
             Self::SlackAppFirstRoot
             | Self::SlackAppFirstThread
             | Self::SlackAppUpdateRoot
@@ -338,9 +355,19 @@ pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog 
         TemplateField::GitLabSummary,
     );
     apply_template_override(
+        &mut catalog.gitlab.explain,
+        templates.gitlab.explain.as_deref(),
+        TemplateField::GitLabExplain,
+    );
+    apply_template_override(
         &mut catalog.github.summary,
         templates.github.summary.as_deref(),
         TemplateField::GitHubSummary,
+    );
+    apply_template_override(
+        &mut catalog.github.explain,
+        templates.github.explain.as_deref(),
+        TemplateField::GitHubExplain,
     );
     apply_template_override(
         &mut catalog.slack_app.first_root,
@@ -389,32 +416,39 @@ pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog 
 pub fn build_summary_template_context(
     outcome: &RuleOutcome,
     snapshot: &ReviewSnapshot,
+    selector: &ToneSelector,
+    ctx: &CiContext,
+) -> SummaryTemplateContext {
+    build_review_comment_template_context(
+        "Mr. Milchick Review Summary",
+        outcome,
+        snapshot,
+        &ReviewInferenceOutcome::ready(Default::default()),
+        selector,
+        ctx,
+    )
+}
+
+pub fn build_explain_template_context(
+    outcome: &RuleOutcome,
+    snapshot: &ReviewSnapshot,
     inference_outcome: &ReviewInferenceOutcome,
     selector: &ToneSelector,
     ctx: &CiContext,
 ) -> SummaryTemplateContext {
-    SummaryTemplateContext {
-        snapshot: SnapshotFacts::from_snapshot(snapshot),
-        findings: findings_from_outcome(outcome),
-        actions: actions_from_outcome(outcome),
-        inference: inference_from_outcome(inference_outcome),
-        tone: SelectedTone {
-            category: ToneCategory::Observation,
-            message: selector.select(ToneCategory::Observation, ctx).to_string(),
-        },
-        closing_tone: SelectedTone {
-            category: summary_closing_category(outcome),
-            message: selector
-                .select(summary_closing_category(outcome), ctx)
-                .to_string(),
-        },
-    }
+    build_review_comment_template_context(
+        "Mr. Milchick Advisory Explain",
+        outcome,
+        snapshot,
+        inference_outcome,
+        selector,
+        ctx,
+    )
 }
 
 pub fn build_notification_template_context(
     outcome: &RuleOutcome,
     snapshot: &ReviewSnapshot,
-    inference_outcome: &ReviewInferenceOutcome,
     selector: &ToneSelector,
     ctx: &CiContext,
     variant: NotificationTemplateVariant,
@@ -435,7 +469,7 @@ pub fn build_notification_template_context(
         snapshot: snapshot_facts.clone(),
         findings: findings_from_outcome(outcome),
         actions: actions_from_outcome(outcome),
-        inference: inference_from_outcome(inference_outcome),
+        inference: InferenceTemplateContext::default(),
         tone: SelectedTone {
             category: notification_tone_category,
             message: selector.select(notification_tone_category, ctx).to_string(),
@@ -456,6 +490,33 @@ pub fn build_notification_template_context(
     }
 }
 
+fn build_review_comment_template_context(
+    summary_title: impl Into<String>,
+    outcome: &RuleOutcome,
+    snapshot: &ReviewSnapshot,
+    inference_outcome: &ReviewInferenceOutcome,
+    selector: &ToneSelector,
+    ctx: &CiContext,
+) -> SummaryTemplateContext {
+    SummaryTemplateContext {
+        summary_title: summary_title.into(),
+        snapshot: SnapshotFacts::from_snapshot(snapshot),
+        findings: findings_from_outcome(outcome),
+        actions: actions_from_outcome(outcome),
+        inference: inference_from_outcome(inference_outcome),
+        tone: SelectedTone {
+            category: ToneCategory::Observation,
+            message: selector.select(ToneCategory::Observation, ctx).to_string(),
+        },
+        closing_tone: SelectedTone {
+            category: summary_closing_category(outcome),
+            message: selector
+                .select(summary_closing_category(outcome), ctx)
+                .to_string(),
+        },
+    }
+}
+
 pub fn render_review_summary(
     catalog: &TemplateCatalog,
     context: &SummaryTemplateContext,
@@ -464,6 +525,19 @@ pub fn render_review_summary(
     let (template, style) = match platform {
         ReviewPlatformKind::GitLab => (&catalog.gitlab.summary, RenderStyle::GitLab),
         ReviewPlatformKind::GitHub => (&catalog.github.summary, RenderStyle::GitHub),
+    };
+
+    render_template(template, &context.variables(style, true))
+}
+
+pub fn render_review_explain(
+    catalog: &TemplateCatalog,
+    context: &SummaryTemplateContext,
+    platform: ReviewPlatformKind,
+) -> String {
+    let (template, style) = match platform {
+        ReviewPlatformKind::GitLab => (&catalog.gitlab.explain, RenderStyle::GitLab),
+        ReviewPlatformKind::GitHub => (&catalog.github.explain, RenderStyle::GitHub),
     };
 
     render_template(template, &context.variables(style, true))
@@ -673,7 +747,7 @@ impl SummaryTemplateContext {
             &self.tone,
         );
 
-        values.insert("summary_title", "Mr. Milchick Review Summary".to_string());
+        values.insert("summary_title", self.summary_title.clone());
         values.insert("summary_intro", self.tone.message.clone());
         values.insert("summary_footer", self.closing_tone.message.clone());
         values.insert("notification_title", String::new());
@@ -925,7 +999,7 @@ fn describe_action(action: &ReviewAction) -> Option<String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
-        ReviewAction::UpsertSummary { .. } => None,
+        ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. } => None,
         ReviewAction::AddLabels { labels } => Some(format!("Add labels: {}", labels.join(", "))),
         ReviewAction::RemoveLabels { labels } => {
             Some(format!("Remove labels: {}", labels.join(", ")))
@@ -1264,7 +1338,6 @@ mod tests {
             &build_summary_template_context(
                 &outcome,
                 &sample_snapshot(),
-                &sample_inference_outcome(),
                 &ToneSelector::default(),
                 &sample_context(),
             ),
@@ -1273,9 +1346,29 @@ mod tests {
 
         assert!(rendered.contains("Mr. Milchick Review Summary"));
         assert!(rendered.contains("Warning"));
+        assert!(rendered.contains("Assigned reviewers: @bob"));
+        assert!(!rendered.contains("Local review recommendations"));
+    }
+
+    #[test]
+    fn renders_default_gitlab_explain_template() {
+        let outcome = RuleOutcome::new();
+
+        let rendered = render_review_explain(
+            &TemplateCatalog::default(),
+            &build_explain_template_context(
+                &outcome,
+                &sample_snapshot(),
+                &sample_inference_outcome(),
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+            ReviewPlatformKind::GitLab,
+        );
+
+        assert!(rendered.contains("Mr. Milchick Advisory Explain"));
         assert!(rendered.contains("Local review recommendations"));
         assert!(rendered.contains("Check that first-time reviewer notifications"));
-        assert!(rendered.contains("Assigned reviewers: @bob"));
     }
 
     #[test]
@@ -1286,7 +1379,6 @@ mod tests {
             &build_notification_template_context(
                 &outcome,
                 &sample_snapshot(),
-                &sample_inference_outcome(),
                 &ToneSelector::default(),
                 &sample_context(),
                 NotificationTemplateVariant::First,
@@ -1304,11 +1396,10 @@ mod tests {
 
         assert!(subject.contains("took a first look at"));
         assert!(body.contains("Assigned reviewers @principal-reviewer @bob"));
-        assert!(body.contains("Local review recommendations"));
-        assert!(body.contains("advisory inference text appearing in summary"));
         assert!(body.contains("CI task status"));
         assert!(body.contains(":large_green_circle: unit_tests: 12 tests passed"));
         assert!(!body.contains("No findings were produced."));
+        assert!(!body.contains("Local review recommendations"));
     }
 
     #[test]

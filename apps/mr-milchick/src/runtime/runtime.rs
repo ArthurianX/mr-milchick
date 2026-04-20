@@ -1,7 +1,8 @@
 use crate::config::NotificationPolicy;
 use crate::core::inference::ReviewInferenceOutcome;
 use crate::core::model::{
-    NotificationMessage, NotificationSinkKind, ReviewAction, ReviewActionKind, ReviewPlatformKind,
+    NotificationDeliveryReport, NotificationMessage, NotificationSinkKind, ReviewAction,
+    ReviewActionKind, ReviewPlatformKind,
 };
 use anyhow::Result;
 
@@ -37,7 +38,7 @@ pub struct RuntimeCapabilities {
 
 pub struct RuntimeWiring {
     pub platform_connector: Box<dyn PlatformConnector>,
-    pub inference_connector: Box<dyn ReviewInferenceConnector>,
+    pub inference_connector: Option<Box<dyn ReviewInferenceConnector>>,
     pub notification_sinks: Vec<Box<dyn NotificationSink>>,
     pub capabilities: RuntimeCapabilities,
 }
@@ -45,14 +46,13 @@ pub struct RuntimeWiring {
 impl RuntimeWiring {
     pub fn new(
         platform_connector: Box<dyn PlatformConnector>,
-        inference_connector: Box<dyn ReviewInferenceConnector>,
-        inference_available: bool,
+        inference_connector: Option<Box<dyn ReviewInferenceConnector>>,
         notification_sinks: Vec<Box<dyn NotificationSink>>,
     ) -> Self {
         let capabilities = RuntimeCapabilities {
             platform_connector: platform_connector.kind(),
             notification_sinks: notification_sinks.iter().map(|sink| sink.kind()).collect(),
-            inference_available,
+            inference_available: inference_connector.is_some(),
         };
 
         Self {
@@ -67,27 +67,37 @@ impl RuntimeWiring {
         &self,
         snapshot: &crate::core::model::ReviewSnapshot,
     ) -> Result<ReviewInferenceOutcome> {
-        Ok(self.inference_connector.analyze(snapshot).await?)
+        let connector = self.inference_connector.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("review inference is not wired for this execution mode")
+        })?;
+
+        Ok(connector.analyze(snapshot).await?)
     }
 
-    pub async fn execute(
+    pub async fn execute_review_actions(
         &self,
         strategy: ExecutionStrategy,
-        notification_policy: NotificationPolicy,
         review_actions: &[ReviewAction],
-        notifications: &[NotificationMessage],
-    ) -> Result<ExecutionReport> {
-        let review_report = if strategy == ExecutionStrategy::DryRun {
+    ) -> Result<crate::core::model::ReviewActionReport> {
+        Ok(if strategy == ExecutionStrategy::DryRun {
             dry_run_review_report(review_actions)
         } else {
             self.platform_connector
                 .apply_review_actions(review_actions)
                 .await?
-        };
+        })
+    }
 
+    pub async fn deliver_notifications(
+        &self,
+        strategy: ExecutionStrategy,
+        notification_policy: NotificationPolicy,
+        notifications: &[NotificationMessage],
+        review_report: &crate::core::model::ReviewActionReport,
+    ) -> Result<Vec<NotificationDeliveryReport>> {
         let mut notification_reports = Vec::new();
         let notification_skip_reason =
-            notification_skip_reason(notification_policy, strategy, &review_report);
+            notification_skip_reason(notification_policy, strategy, review_report);
 
         for sink in &self.notification_sinks {
             for notification in notifications
@@ -123,6 +133,23 @@ impl RuntimeWiring {
             }
         }
 
+        Ok(notification_reports)
+    }
+
+    pub async fn execute(
+        &self,
+        strategy: ExecutionStrategy,
+        notification_policy: NotificationPolicy,
+        review_actions: &[ReviewAction],
+        notifications: &[NotificationMessage],
+    ) -> Result<ExecutionReport> {
+        let review_report = self
+            .execute_review_actions(strategy, review_actions)
+            .await?;
+        let notification_reports = self
+            .deliver_notifications(strategy, notification_policy, notifications, &review_report)
+            .await?;
+
         Ok(ExecutionReport {
             review_report,
             notification_reports,
@@ -157,7 +184,7 @@ fn notification_skip_reason(
     if review_report
         .applied
         .iter()
-        .any(|action| action.action == ReviewActionKind::UpsertSummary)
+        .any(|action| action.action != ReviewActionKind::UpsertExplain)
     {
         return None;
     }
@@ -165,6 +192,6 @@ fn notification_skip_reason(
     review_report
         .skipped
         .iter()
-        .find(|action| action.action == ReviewActionKind::UpsertSummary)
+        .find(|action| action.action != ReviewActionKind::UpsertExplain)
         .map(|action| format!("skipped because {}", action.reason))
 }
