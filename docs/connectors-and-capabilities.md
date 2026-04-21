@@ -127,7 +127,7 @@ Use the version command in CI logs:
 Default build output shape:
 
 ```text
-mr-milchick 4.0.0 (<git-sha> <build-date>)
+mr-milchick 4.0.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - advisory local review: not compiled
@@ -137,7 +137,7 @@ Compiled capabilities:
 GitHub-only output shape:
 
 ```text
-mr-milchick 4.0.0 (<git-sha> <build-date>)
+mr-milchick 4.0.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: github
 - advisory local review: not compiled
@@ -147,7 +147,7 @@ Compiled capabilities:
 GitLab plus Slack plus local review output shape:
 
 ```text
-mr-milchick 4.0.0 (<git-sha> <build-date>)
+mr-milchick 4.0.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - advisory local review: llama.cpp

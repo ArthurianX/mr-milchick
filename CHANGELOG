@@ -7,6 +7,14 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [4.0.1] — 2026-04-21
+
+This patch release makes a common GitLab config-shape mistake much easier to diagnose in CI logs.
+
+### Fixed
+
+- Config parse failures now add a targeted hint when `base_url` is mistakenly placed under `[platform.gitlab]` instead of `[platform]`, which previously surfaced as a confusing unknown-field error against `all_pipelines_pass_label`.
+
 ## [4.0.0] — 2026-04-20
 
 This release splits fast governance execution from slower advisory review so CI can keep `refine` lean while still supporting rich follow-up commentary.

@@ -181,8 +181,14 @@ fn load_config_file(path_override: Option<&str>) -> Result<schema::ConfigFile> {
         .with_context(|| format!("failed to read config file '{}'", path))?;
     let raw = interpolate_env_vars(&raw)
         .with_context(|| format!("failed to interpolate config file '{}'", path))?;
-    toml::from_str::<schema::ConfigFile>(&raw)
-        .with_context(|| format!("failed to parse config file '{}'", path))
+    toml::from_str::<schema::ConfigFile>(&raw).map_err(|error| {
+        let mut message = format!("failed to parse config file '{}'", path);
+        if let Some(hint) = config_parse_hint(&raw, &error) {
+            message.push_str(": ");
+            message.push_str(&hint);
+        }
+        anyhow!(error).context(message)
+    })
 }
 
 fn resolve_platform_config(
@@ -417,6 +423,17 @@ where
     }
 
     Ok(output)
+}
+
+fn config_parse_hint(_raw: &str, error: &toml::de::Error) -> Option<&'static str> {
+    let message = error.to_string();
+    if message.contains("unknown field `base_url`, expected `all_pipelines_pass_label`") {
+        return Some(
+            "`base_url` belongs under `[platform]`, not `[platform.gitlab]`; move it above the `[platform.gitlab]` section",
+        );
+    }
+
+    None
 }
 
 fn resolve_interpolation_expression<F>(expression: &str, lookup: &mut F) -> Result<String>
@@ -744,6 +761,25 @@ model_path = "${CI_PROJECT_DIR}/models/review.gguf"
                 .to_string()
                 .contains("missing environment variable 'CI_PROJECT_DIR'")
         );
+    }
+
+    #[test]
+    fn hints_when_platform_base_url_is_nested_under_platform_gitlab() {
+        let raw = r#"
+[platform]
+kind = "gitlab"
+
+[platform.gitlab]
+all_pipelines_pass_label = "ready-to-merge"
+base_url = "https://gitlab.example.com/api/v4"
+"#;
+
+        let error = toml::from_str::<schema::ConfigFile>(raw)
+            .expect_err("config file should reject misplaced platform base_url");
+        let hint = config_parse_hint(raw, &error).expect("parse hint should be available");
+
+        assert!(hint.contains("`base_url` belongs under `[platform]`"));
+        assert!(hint.contains("move it above the `[platform.gitlab]` section"));
     }
 
     #[test]
