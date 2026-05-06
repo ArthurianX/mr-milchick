@@ -1,10 +1,12 @@
 workflow:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_TAG'
     - when: never
 
 stages:
   - verify
+  - code_check
   - test
   - build
   - release
@@ -28,6 +30,9 @@ cache:
 verify_release_tag:
   stage: verify
   image: alpine/git:2.47.2
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
   script:
     - git fetch origin master:refs/remotes/origin/master
     - git merge-base --is-ancestor "$CI_COMMIT_SHA" origin/master
@@ -35,12 +40,18 @@ verify_release_tag:
 test:
   stage: test
   needs: ["verify_release_tag"]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
   script:
     - cargo test --workspace --locked
 
 build_release_binary:
   stage: build
   needs: ["test"]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
   before_script:
     - apt-get update
     - apt-get install -y -o Dpkg::Options::=--force-confold --no-install-recommends clang cmake libclang-dev llvm-dev pkg-config tzdata
@@ -61,6 +72,9 @@ build_release_binary:
 release_binary:
   stage: release
   image: registry.gitlab.com/gitlab-org/cli:latest
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
   needs:
     - job: build_release_binary
       artifacts: true
@@ -82,3 +96,92 @@ release_binary:
           url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/raw/dist/mr-milchick"
         - name: "mr-milchick.toml"
           url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/raw/dist/mr-milchick.toml"
+
+secret_detection:
+  stage: code_check
+  image: registry.gitlab.com/security-products/secrets:latest
+  script:
+    - /analyzer run
+  artifacts:
+    when: always
+    reports:
+      secret_detection: gl-secret-detection-report.json
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - when: never
+
+coverage:
+  stage: code_check
+  before_script:
+    - rustup component add llvm-tools-preview
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
+  script:
+    - mkdir -p coverage
+    - cargo llvm-cov --workspace --locked --lcov --output-path coverage/lcov.info
+  artifacts:
+    when: always
+    paths:
+      - coverage/lcov.info
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - when: never
+
+sonarqube_check:
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  stage: code_check
+  allow_failure: true
+  needs:
+    - job: coverage
+      artifacts: true
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+  script:
+    - |
+      set -eu
+
+      if [ -z "${SONAR_HOST_URL:-}" ] || [ -z "${SONAR_TOKEN:-}" ] || [ -z "${SONAR_PROJECT_KEY:-}" ]; then
+        echo "Skipping SonarQube scan because SONAR_HOST_URL, SONAR_TOKEN, or SONAR_PROJECT_KEY is not set."
+        exit 0
+      fi
+
+      if [ ! -f coverage/lcov.info ]; then
+        echo "Expected Rust coverage report at coverage/lcov.info, but it was not found."
+        exit 1
+      fi
+
+      set --
+      if [ -n "${CI_MERGE_REQUEST_IID:-}" ] \
+        && [ -n "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-}" ] \
+        && [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ]; then
+        set -- "$@" \
+          "-Dsonar.pullrequest.key=${CI_MERGE_REQUEST_IID}" \
+          "-Dsonar.pullrequest.branch=${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}" \
+          "-Dsonar.pullrequest.base=${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+      fi
+
+      sonar-scanner \
+        -Dsonar.qualitygate.wait=true \
+        -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
+        -Dsonar.projectName="mr-milchick" \
+        -Dsonar.host.url="${SONAR_HOST_URL}" \
+        -Dsonar.token="${SONAR_TOKEN}" \
+        -Dsonar.sourceEncoding="UTF-8" \
+        -Dsonar.sources="apps/mr-milchick/src,tests" \
+        -Dsonar.exclusions="target/**,.cargo/**,assets/**,docs/**,fixture/**,fixtures/**,scripts/**" \
+        -Dsonar.rust.lcov.reportPaths="coverage/lcov.info" \
+        -Dsonar.scm.provider="git" \
+        "$@"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - when: never
