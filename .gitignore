@@ -4,3 +4,5 @@
 /CODEOWNERS
 /test-models
 *.profraw
+/coverage
+/.sonar

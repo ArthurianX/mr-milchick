@@ -114,11 +114,13 @@ secret_detection:
 coverage:
   stage: code_check
   before_script:
+    - rm -rf coverage
+    - mkdir -p coverage
+    - touch coverage/lcov.info
     - rustup component add llvm-tools-preview
     - export PATH="$CARGO_HOME/bin:$PATH"
-    - cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
+    - cargo llvm-cov --version | grep -F "0.6.21" >/dev/null 2>&1 || cargo install cargo-llvm-cov --version 0.6.21 --locked --force
   script:
-    - mkdir -p coverage
     - cargo llvm-cov --workspace --locked --lcov --output-path coverage/lcov.info
   artifacts:
     when: always
