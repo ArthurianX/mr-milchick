@@ -51,3 +51,11 @@ pub struct MergeRequestNoteDto {
     pub id: u64,
     pub body: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeRequestApprovalsDto {
+    #[serde(default)]
+    pub approvals_required: Option<u32>,
+    #[serde(default)]
+    pub approvals_left: Option<u32>,
+}

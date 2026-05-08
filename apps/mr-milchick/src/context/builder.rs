@@ -17,6 +17,7 @@ pub fn build_ci_context_from(raw: RawCiEnv) -> Result<CiContext> {
         .map(ProjectKey)?;
 
     let pipeline_source = parse_pipeline_source(raw.pipeline_source);
+    let pipeline_state = parse_pipeline_state(raw.pipeline_state);
 
     let review = raw
         .review_id
@@ -46,6 +47,7 @@ pub fn build_ci_context_from(raw: RawCiEnv) -> Result<CiContext> {
         review,
         pipeline: PipelineInfo {
             source: pipeline_source,
+            state: pipeline_state,
         },
         branches: BranchInfo {
             source: BranchName(source_branch),
@@ -63,6 +65,26 @@ pub fn parse_pipeline_source(src: Option<String>) -> PipelineSource {
         Some("push") => PipelineSource::Push,
         Some("schedule") => PipelineSource::Schedule,
         _ => PipelineSource::Unknown,
+    }
+}
+
+pub fn parse_pipeline_state(src: Option<String>) -> PipelineState {
+    match src.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
+        Some(value) if matches!(value.as_str(), "passed" | "success" | "succeeded") => {
+            PipelineState::Passed
+        }
+        Some(value) if matches!(value.as_str(), "failed" | "failure" | "errored") => {
+            PipelineState::Failed
+        }
+        Some(value)
+            if matches!(
+                value.as_str(),
+                "running" | "pending" | "created" | "waiting_for_resource" | "preparing"
+            ) =>
+        {
+            PipelineState::Running
+        }
+        _ => PipelineState::Unknown,
     }
 }
 
@@ -105,6 +127,7 @@ mod tests {
             project_key: Some("123".to_string()),
             review_id: None,
             pipeline_source: Some("push".to_string()),
+            pipeline_state: Some("passed".to_string()),
             source_branch: Some("feat/test".to_string()),
             target_branch: Some("develop".to_string()),
             labels: Some("backend, needs-review".to_string()),
@@ -115,6 +138,7 @@ mod tests {
         assert_eq!(ctx.project_key.0, "123");
         assert!(ctx.review.is_none());
         assert_eq!(ctx.pipeline.source, PipelineSource::Push);
+        assert_eq!(ctx.pipeline.state, PipelineState::Passed);
         assert_eq!(ctx.branches.source.0, "feat/test");
         assert_eq!(ctx.branches.target.0, "develop");
         assert_eq!(ctx.labels.len(), 2);
@@ -128,6 +152,7 @@ mod tests {
             project_key: None,
             review_id: Some("456".to_string()),
             pipeline_source: Some("merge_request_event".to_string()),
+            pipeline_state: None,
             source_branch: Some("feat/test".to_string()),
             target_branch: Some("develop".to_string()),
             labels: None,

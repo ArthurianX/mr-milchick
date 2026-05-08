@@ -274,6 +274,7 @@ fn map_snapshot(
 ) -> ReviewSnapshot {
     let project_key = project_id.to_string();
     let merge_request = data.merge_request;
+    let approval_summary = data.approval_summary;
     let web_url = Some(merge_request.web_url.clone());
     let repository = repository_from_web_url(&merge_request.web_url);
 
@@ -334,9 +335,12 @@ fn map_snapshot(
         metadata: ReviewMetadata {
             source_branch: Some(source_branch.to_string()),
             target_branch: Some(target_branch.to_string()),
+            merge_request_state: Some(merge_request.state),
             commit_count: None,
-            approvals_required: None,
-            approvals_given: None,
+            approvals_required: approval_summary
+                .as_ref()
+                .and_then(|summary| summary.approvals_required),
+            approvals_given: approval_summary.and_then(|summary| summary.approvals_given),
         },
     }
 }

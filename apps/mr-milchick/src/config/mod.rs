@@ -9,6 +9,7 @@ pub use resolver::{
     load_resolved_config, resolve_codeowners_path,
 };
 pub use schema::{
-    GitHubTemplates, GitLabTemplates, NotificationPolicy, SlackAppTemplates,
-    SlackWorkflowTemplates, TemplatesConfig,
+    GitHubTemplates, GitLabLabelRuleConfig, GitLabTemplates, LabelRuleConditionConfig,
+    LabelRulePredicateConfig, NotificationPolicy, SlackAppTemplates, SlackWorkflowTemplates,
+    TemplatesConfig,
 };

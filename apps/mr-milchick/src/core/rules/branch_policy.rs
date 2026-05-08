@@ -34,8 +34,8 @@ mod tests {
     use super::*;
     use crate::core::actions::model::Action;
     use crate::core::context::model::{
-        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
-        ReviewContextRef, ReviewId,
+        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, PipelineState,
+        ProjectKey, ReviewContextRef, ReviewId,
     };
 
     fn base_context() -> CiContext {
@@ -46,6 +46,7 @@ mod tests {
             }),
             pipeline: PipelineInfo {
                 source: PipelineSource::ReviewEvent,
+                state: PipelineState::Unknown,
             },
             branches: BranchInfo {
                 source: BranchName("epic/big-thing".to_string()),

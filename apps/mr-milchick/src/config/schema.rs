@@ -52,6 +52,49 @@ pub struct PlatformConfig {
 pub struct GitLabPlatformConfig {
     #[serde(default)]
     pub all_pipelines_pass_label: Option<String>,
+    #[serde(default)]
+    pub label_rules: Vec<GitLabLabelRuleConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitLabLabelRuleConfig {
+    pub name: String,
+    #[serde(default)]
+    pub add: Vec<String>,
+    #[serde(default)]
+    pub remove: Vec<String>,
+    pub when: LabelRuleConditionConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LabelRuleConditionConfig {
+    #[serde(default)]
+    pub all: Vec<LabelRulePredicateConfig>,
+    #[serde(default)]
+    pub any: Vec<LabelRulePredicateConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LabelRulePredicateConfig {
+    #[serde(default)]
+    pub draft: Option<bool>,
+    #[serde(default)]
+    pub merge_request_state: Option<String>,
+    #[serde(default)]
+    pub pipeline_state: Option<String>,
+    #[serde(default)]
+    pub approvals: Option<String>,
+    #[serde(default)]
+    pub has_label: Option<String>,
+    #[serde(default)]
+    pub source_branch: Option<String>,
+    #[serde(default)]
+    pub target_branch: Option<String>,
+    #[serde(default)]
+    pub source_branch_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

@@ -103,6 +103,7 @@ mod llm_local_smoke {
             metadata: ReviewMetadata {
                 source_branch: Some("feat/local-llm-smoke".to_string()),
                 target_branch: Some("main".to_string()),
+                merge_request_state: Some("opened".to_string()),
                 commit_count: Some(2),
                 approvals_required: Some(1),
                 approvals_given: Some(0),

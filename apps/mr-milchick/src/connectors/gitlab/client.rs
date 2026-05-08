@@ -3,9 +3,12 @@ use reqwest::Client;
 use tracing::{debug, instrument};
 
 use super::api::{
-    GitLabChangedFile, GitLabConfig, GitLabMergeRequest, GitLabSnapshotData, MergeRequestNote,
+    GitLabApprovalSummary, GitLabChangedFile, GitLabConfig, GitLabMergeRequest, GitLabSnapshotData,
+    MergeRequestNote,
 };
-use super::dto::{ChangedFileDto, MergeRequestChangesDto, MergeRequestDto};
+use super::dto::{
+    ChangedFileDto, MergeRequestApprovalsDto, MergeRequestChangesDto, MergeRequestDto,
+};
 
 #[derive(Debug, Clone)]
 pub struct GitLabClient {
@@ -163,6 +166,19 @@ impl GitLabClient {
         let changed_files = self
             .get_merge_request_changes(project_id, merge_request_iid)
             .await?;
+        let approval_summary = match self
+            .get_merge_request_approvals(project_id, merge_request_iid)
+            .await
+        {
+            Ok(summary) => Some(summary),
+            Err(err) => {
+                debug!(
+                    error = %err,
+                    "GitLab approval summary unavailable; snapshot approvals will be empty"
+                );
+                None
+            }
+        };
         debug!(
             changed_files = changed_files.len(),
             "assembled merge request snapshot"
@@ -171,6 +187,44 @@ impl GitLabClient {
         Ok(GitLabSnapshotData {
             merge_request,
             changed_files,
+            approval_summary,
+        })
+    }
+
+    #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
+    pub async fn get_merge_request_approvals(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+    ) -> Result<GitLabApprovalSummary> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}/approvals",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        let dto = self
+            .http
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .send()
+            .await
+            .context("failed to send approvals request to GitLab")?
+            .error_for_status()
+            .context("GitLab returned an error status while fetching merge request approvals")?
+            .json::<MergeRequestApprovalsDto>()
+            .await
+            .context("failed to deserialize merge request approvals response")?;
+
+        let approvals_given = match (dto.approvals_required, dto.approvals_left) {
+            (Some(required), Some(left)) => Some(required.saturating_sub(left)),
+            _ => None,
+        };
+
+        Ok(GitLabApprovalSummary {
+            approvals_required: dto.approvals_required,
+            approvals_given,
         })
     }
 

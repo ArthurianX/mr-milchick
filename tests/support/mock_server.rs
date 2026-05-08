@@ -356,6 +356,7 @@ fn write_http_response(stream: &mut TcpStream, status_code: u16, body: &str) {
 fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse {
     let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
     let notes_path = format!("{mr_path}/notes");
+    let approvals_path = format!("{mr_path}/approvals");
     let changes_path = format!("{mr_path}/changes");
     let pr_path = format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}");
     let requested_reviewers_path = format!("{pr_path}/requested_reviewers");
@@ -394,6 +395,14 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                         "diff": "@@ -1,2 +1,2 @@"
                     }
                 ]
+            })
+            .to_string(),
+        },
+        ("GET", path) if path == approvals_path => HttpResponse {
+            status_code: 200,
+            body: json!({
+                "approvals_required": 2,
+                "approvals_left": 0
             })
             .to_string(),
         },

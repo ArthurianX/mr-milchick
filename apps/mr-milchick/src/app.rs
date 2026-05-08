@@ -21,6 +21,7 @@ use crate::connectors::gitlab::{
 use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
 #[cfg(feature = "slack-workflow")]
 use crate::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
+use crate::core::actions::label_rules::enrich_with_gitlab_label_rules;
 use crate::core::actions::planner::enrich_with_reviewer_assignment;
 use crate::core::comment::metadata::{
     GovernanceExecutionStrategy, GovernanceSummaryMetadata, append_governance_summary_metadata,
@@ -431,6 +432,7 @@ async fn prepare_run(
         let snapshot = fixture.to_review_snapshot(compiled_platform_kind())?;
         let outcome = finalize_outcome(
             fixture.to_rule_outcome()?,
+            &ctx,
             &snapshot,
             &app_config.config,
             &pipeline_statuses,
@@ -465,6 +467,7 @@ async fn prepare_run(
                 &app_config.routing_config,
                 &app_config.codeowners,
             ),
+            &ctx,
             &snapshot,
             &app_config.config,
             &pipeline_statuses,
@@ -494,11 +497,23 @@ async fn prepare_run(
 
 fn finalize_outcome(
     outcome: RuleOutcome,
+    ctx: &crate::context::model::CiContext,
     snapshot: &crate::core::model::ReviewSnapshot,
     config: &ResolvedConfig,
     pipeline_statuses: &[PipelineStatusTemplateEntry],
 ) -> RuleOutcome {
-    let outcome = enrich_with_pipeline_success_label(outcome, snapshot, config, pipeline_statuses);
+    let outcome = if config.platform.gitlab.label_rules.is_empty() {
+        enrich_with_pipeline_success_label(outcome, snapshot, config, pipeline_statuses)
+    } else {
+        outcome
+    };
+    let outcome = enrich_with_gitlab_label_rules(
+        outcome,
+        ctx,
+        snapshot,
+        &config.platform.gitlab.label_rules,
+        pipeline_statuses,
+    );
     enrich_with_pipeline_failure_gate(outcome, config, pipeline_statuses)
 }
 
@@ -1712,6 +1727,7 @@ mod tests {
             }),
             pipeline: PipelineInfo {
                 source: PipelineSource::ReviewEvent,
+                state: crate::core::context::model::PipelineState::Unknown,
             },
             branches: BranchInfo {
                 source: BranchName("feat/test".to_string()),
@@ -1773,6 +1789,7 @@ mod tests {
                 token: Some("gitlab-token".to_string()),
                 gitlab: ResolvedGitLabPlatformConfig {
                     all_pipelines_pass_label: None,
+                    label_rules: Vec::new(),
                 },
             },
             execution: ExecutionConfig {

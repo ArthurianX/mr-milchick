@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::context::model::{
-    BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
-    ReviewContextRef, ReviewId,
+    BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, PipelineState,
+    ProjectKey, ReviewContextRef, ReviewId,
 };
 use crate::core::actions::model::ActionPlan;
 use crate::core::message_templates::NotificationTemplateVariant;
@@ -113,6 +113,7 @@ impl ReviewFixture {
             }),
             pipeline: PipelineInfo {
                 source: parse_pipeline_source(&self.pipeline_source)?,
+                state: PipelineState::Unknown,
             },
             branches: BranchInfo {
                 source: BranchName(self.merge_request.source_branch.clone()),
@@ -173,6 +174,7 @@ impl ReviewFixture {
             metadata: ReviewMetadata {
                 source_branch: Some(self.merge_request.source_branch.clone()),
                 target_branch: Some(self.merge_request.target_branch.clone()),
+                merge_request_state: Some("opened".to_string()),
                 commit_count: None,
                 approvals_required: None,
                 approvals_given: None,

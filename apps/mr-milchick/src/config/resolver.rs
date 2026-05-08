@@ -3,8 +3,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::core::context::model::{BranchKind, PipelineState};
 use crate::core::domain::code_area::CodeArea;
 use crate::core::model::{
+    ApprovalRuleState, GitLabLabelRule, LabelRuleCondition, LabelRulePredicate,
     NotificationSinkKind, ReviewPlatformKind, ReviewerConfig, ReviewerDefinition,
 };
 
@@ -48,6 +50,7 @@ pub struct PlatformConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitLabPlatformConfig {
     pub all_pipelines_pass_label: Option<String>,
+    pub label_rules: Vec<GitLabLabelRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,8 +220,195 @@ fn resolve_platform_config(
             all_pipelines_pass_label: sanitize_optional(
                 file.gitlab.all_pipelines_pass_label.clone(),
             ),
+            label_rules: resolve_gitlab_label_rules(&file.gitlab.label_rules)?,
         },
     })
+}
+
+fn resolve_gitlab_label_rules(
+    rules: &[schema::GitLabLabelRuleConfig],
+) -> Result<Vec<GitLabLabelRule>> {
+    rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            let name = sanitize_value(&rule.name).ok_or_else(|| {
+                anyhow!(
+                    "label rule {} in 'platform.gitlab.label_rules' is missing a name",
+                    index
+                )
+            })?;
+            let add = sanitize_label_list(&rule.add);
+            let remove = sanitize_label_list(&rule.remove);
+
+            if add.is_empty() && remove.is_empty() {
+                bail!(
+                    "GitLab label rule '{}' must define at least one add or remove label",
+                    name
+                );
+            }
+
+            if add
+                .iter()
+                .any(|label| remove.iter().any(|removed| removed == label))
+            {
+                bail!(
+                    "GitLab label rule '{}' cannot add and remove the same label",
+                    name
+                );
+            }
+
+            let condition = resolve_label_rule_condition(&name, &rule.when)?;
+            if condition.all.is_empty() && condition.any.is_empty() {
+                bail!(
+                    "GitLab label rule '{}' must define at least one predicate",
+                    name
+                );
+            }
+
+            Ok(GitLabLabelRule {
+                name,
+                add,
+                remove,
+                when: condition,
+            })
+        })
+        .collect()
+}
+
+fn resolve_label_rule_condition(
+    rule_name: &str,
+    condition: &schema::LabelRuleConditionConfig,
+) -> Result<LabelRuleCondition> {
+    Ok(LabelRuleCondition {
+        all: condition
+            .all
+            .iter()
+            .enumerate()
+            .map(|(index, predicate)| {
+                resolve_label_rule_predicate(rule_name, "all", index, predicate)
+            })
+            .collect::<Result<Vec<_>>>()?,
+        any: condition
+            .any
+            .iter()
+            .enumerate()
+            .map(|(index, predicate)| {
+                resolve_label_rule_predicate(rule_name, "any", index, predicate)
+            })
+            .collect::<Result<Vec<_>>>()?,
+    })
+}
+
+fn resolve_label_rule_predicate(
+    rule_name: &str,
+    group: &str,
+    index: usize,
+    predicate: &schema::LabelRulePredicateConfig,
+) -> Result<LabelRulePredicate> {
+    let mut resolved = Vec::new();
+
+    if let Some(value) = predicate.draft {
+        resolved.push(LabelRulePredicate::Draft(value));
+    }
+    if let Some(value) = sanitize_optional(predicate.merge_request_state.clone()) {
+        resolved.push(LabelRulePredicate::MergeRequestState(
+            parse_merge_request_state(&value, rule_name)?,
+        ));
+    }
+    if let Some(value) = sanitize_optional(predicate.pipeline_state.clone()) {
+        resolved.push(LabelRulePredicate::PipelineState(
+            parse_label_pipeline_state(&value, rule_name)?,
+        ));
+    }
+    if let Some(value) = sanitize_optional(predicate.approvals.clone()) {
+        resolved.push(LabelRulePredicate::Approvals(parse_approval_rule_state(
+            &value, rule_name,
+        )?));
+    }
+    if let Some(value) = sanitize_optional(predicate.has_label.clone()) {
+        resolved.push(LabelRulePredicate::HasLabel(value));
+    }
+    if let Some(value) = sanitize_optional(predicate.source_branch.clone()) {
+        resolved.push(LabelRulePredicate::SourceBranch(value));
+    }
+    if let Some(value) = sanitize_optional(predicate.target_branch.clone()) {
+        resolved.push(LabelRulePredicate::TargetBranch(value));
+    }
+    if let Some(value) = sanitize_optional(predicate.source_branch_kind.clone()) {
+        resolved.push(LabelRulePredicate::SourceBranchKind(parse_branch_kind(
+            &value, rule_name,
+        )?));
+    }
+
+    match resolved.len() {
+        1 => Ok(resolved.remove(0)),
+        0 => bail!(
+            "GitLab label rule '{}' has an empty predicate at when.{}[{}]",
+            rule_name,
+            group,
+            index
+        ),
+        _ => bail!(
+            "GitLab label rule '{}' predicate at when.{}[{}] must contain exactly one condition",
+            rule_name,
+            group,
+            index
+        ),
+    }
+}
+
+fn parse_label_pipeline_state(value: &str, rule_name: &str) -> Result<PipelineState> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "passed" => Ok(PipelineState::Passed),
+        "failed" => Ok(PipelineState::Failed),
+        "running" => Ok(PipelineState::Running),
+        "unknown" => Ok(PipelineState::Unknown),
+        other => bail!(
+            "GitLab label rule '{}' uses unknown pipeline_state '{}'",
+            rule_name,
+            other
+        ),
+    }
+}
+
+fn parse_merge_request_state(value: &str, rule_name: &str) -> Result<String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "opened" | "closed" | "merged" | "locked" => Ok(value.trim().to_ascii_lowercase()),
+        other => bail!(
+            "GitLab label rule '{}' uses unknown merge_request_state '{}'",
+            rule_name,
+            other
+        ),
+    }
+}
+
+fn parse_approval_rule_state(value: &str, rule_name: &str) -> Result<ApprovalRuleState> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "satisfied" => Ok(ApprovalRuleState::Satisfied),
+        "missing" => Ok(ApprovalRuleState::Missing),
+        "unavailable" => Ok(ApprovalRuleState::Unavailable),
+        other => bail!(
+            "GitLab label rule '{}' uses unknown approvals state '{}'",
+            rule_name,
+            other
+        ),
+    }
+}
+
+fn parse_branch_kind(value: &str, rule_name: &str) -> Result<BranchKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "epic" => Ok(BranchKind::Epic),
+        "feature" => Ok(BranchKind::Feature),
+        "fix" => Ok(BranchKind::Fix),
+        "chore" => Ok(BranchKind::Chore),
+        "other" => Ok(BranchKind::Other),
+        other => bail!(
+            "GitLab label rule '{}' uses unknown source_branch_kind '{}'",
+            rule_name,
+            other
+        ),
+    }
 }
 
 fn resolve_execution_config(file: &schema::ExecutionConfig) -> ExecutionConfig {
@@ -375,6 +565,24 @@ fn sanitize_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn sanitize_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn sanitize_label_list(values: &[String]) -> Vec<String> {
+    let mut labels = Vec::new();
+    for value in values {
+        let Some(label) = sanitize_value(value) else {
+            continue;
+        };
+        if !labels.iter().any(|existing| existing == &label) {
+            labels.push(label);
+        }
+    }
+    labels
+}
+
 fn sanitize_user_map(raw: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     let mut sanitized = BTreeMap::new();
     for (username, user_id) in raw {
@@ -514,6 +722,7 @@ mod tests {
         assert!(config.reviewers.definitions.is_empty());
         assert!(config.codeowners.enabled);
         assert!(config.platform.gitlab.all_pipelines_pass_label.is_none());
+        assert!(config.platform.gitlab.label_rules.is_empty());
         assert!(!config.execution.dry_run);
         assert_eq!(
             config.execution.notification_policy,
@@ -538,6 +747,23 @@ base_url = "https://gitlab.example.com/api/v4"
 
 [platform.gitlab]
 all_pipelines_pass_label = "ready-to-merge"
+
+[[platform.gitlab.label_rules]]
+name = "ready-for-testing"
+add = ["Ready for Testing"]
+remove = ["Ready for review"]
+
+[platform.gitlab.label_rules.when]
+all = [
+  {{ draft = false }},
+  {{ merge_request_state = "opened" }},
+  {{ pipeline_state = "passed" }},
+  {{ approvals = "satisfied" }},
+  {{ has_label = "Ready for review" }},
+  {{ source_branch = "feat/test" }},
+  {{ target_branch = "develop" }},
+  {{ source_branch_kind = "feature" }},
+]
 
 [execution]
 dry_run = true
@@ -618,6 +844,20 @@ first_root = "hello"
             config.platform.gitlab.all_pipelines_pass_label.as_deref(),
             Some("ready-to-merge")
         );
+        assert_eq!(config.platform.gitlab.label_rules.len(), 1);
+        assert_eq!(
+            config.platform.gitlab.label_rules[0].name,
+            "ready-for-testing"
+        );
+        assert_eq!(
+            config.platform.gitlab.label_rules[0].add,
+            vec!["Ready for Testing".to_string()]
+        );
+        assert_eq!(
+            config.platform.gitlab.label_rules[0].remove,
+            vec!["Ready for review".to_string()]
+        );
+        assert_eq!(config.platform.gitlab.label_rules[0].when.all.len(), 8);
         assert!(config.execution.dry_run);
         assert_eq!(
             config.execution.notification_policy,
@@ -798,6 +1038,49 @@ areas = ["mystery-zone"]
         .expect_err("unknown area should fail");
 
         assert!(error.to_string().contains("unknown area"));
+    }
+
+    #[test]
+    fn rejects_label_rule_that_adds_and_removes_same_label() {
+        let error = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[platform.gitlab.label_rules]]
+name = "conflicted"
+add = ["Ready"]
+remove = ["Ready"]
+
+[platform.gitlab.label_rules.when]
+all = [{ draft = false }]
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect_err("conflicted label rule should fail");
+
+        assert!(error.to_string().contains("cannot add and remove"));
+    }
+
+    #[test]
+    fn rejects_label_rule_predicate_with_multiple_conditions() {
+        let error = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[platform.gitlab.label_rules]]
+name = "ambiguous"
+add = ["Ready"]
+
+[platform.gitlab.label_rules.when]
+all = [{ draft = false, pipeline_state = "passed" }]
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect_err("ambiguous label rule should fail");
+
+        assert!(error.to_string().contains("exactly one condition"));
     }
 
     #[test]

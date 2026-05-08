@@ -89,8 +89,8 @@ mod tests {
     use super::*;
     use crate::core::actions::model::ActionPlan;
     use crate::core::context::model::{
-        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
-        ReviewContextRef, ReviewId,
+        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, PipelineState,
+        ProjectKey, ReviewContextRef, ReviewId,
     };
     use crate::core::model::{Actor, ReviewAction};
     use crate::core::rules::model::{RuleFinding, RuleOutcome};
@@ -104,6 +104,7 @@ mod tests {
             }),
             pipeline: PipelineInfo {
                 source: PipelineSource::ReviewEvent,
+                state: PipelineState::Unknown,
             },
             branches: BranchInfo {
                 source: BranchName("feat/test".to_string()),

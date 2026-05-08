@@ -47,6 +47,12 @@ async fn loads_neutral_snapshot_from_gitlab() {
         snapshot.changed_files[0].patch.as_deref(),
         Some("@@ -1,2 +1,2 @@")
     );
+    assert_eq!(
+        snapshot.metadata.merge_request_state.as_deref(),
+        Some("opened")
+    );
+    assert_eq!(snapshot.metadata.approvals_required, Some(2));
+    assert_eq!(snapshot.metadata.approvals_given, Some(2));
     assert_eq!(snapshot.labels, vec!["frontend".to_string()]);
 }
 
@@ -174,6 +180,40 @@ async fn adds_gitlab_labels_idempotently() {
         label_update_bodies
             .iter()
             .any(|body| body.contains(r#""add_labels":"ready-to-merge""#))
+    );
+    assert_eq!(server.request_count("PUT", &mr_path), 1);
+}
+
+#[tokio::test]
+async fn removes_gitlab_labels_idempotently() {
+    let server = MockGitLabServer::start_with_labels(vec!["Ready for review", "backend"]);
+    let connector = connector(&server);
+    let mr_path = format!("/api/v4/projects/{PROJECT_ID}/merge_requests/{MERGE_REQUEST_IID}");
+
+    let actions = vec![ReviewAction::RemoveLabels {
+        labels: vec!["Ready for review".to_string()],
+    }];
+
+    let first = connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("first apply should succeed");
+    assert_eq!(first.applied.len(), 1);
+    assert_eq!(server.labels(), vec!["backend"]);
+
+    let second = connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("second apply should succeed");
+    assert_eq!(second.skipped.len(), 1);
+    assert_eq!(second.skipped[0].action, ReviewActionKind::RemoveLabels);
+    assert_eq!(server.labels(), vec!["backend"]);
+
+    let label_update_bodies = server.request_bodies("PUT", &mr_path);
+    assert!(
+        label_update_bodies
+            .iter()
+            .any(|body| body.contains(r#""remove_labels":"Ready for review""#))
     );
     assert_eq!(server.request_count("PUT", &mr_path), 1);
 }

@@ -30,7 +30,89 @@ kind = "gitlab"
 # This only works when Milchick actually found pipeline status JSON files.
 # If the label is configured but no status data is available, Milchick warns and
 # does not plan the label action.
+# Deprecated once `label_rules` are configured: the general label rule system
+# below is preferred for new setups.
 # all_pipelines_pass_label = "ready-to-merge"
+
+# Ordered GitLab label rules. Each matching rule can add and/or remove labels.
+# If multiple matching rules mention the same label, the later rule wins.
+# `pipeline_state` comes from MR_MILCHICK_PIPELINE_STATE when set
+# (passed, failed, running, unknown), otherwise Milchick falls back to parsed
+# `milchick-status` files when available.
+#
+# [[platform.gitlab.label_rules]]
+# name = "draft-clears-review-workflow"
+# add = []
+# remove = ["Ready for review", "Ready for Testing"]
+#
+# [platform.gitlab.label_rules.when]
+# all = [
+#   { draft = true },
+# ]
+#
+# [[platform.gitlab.label_rules]]
+# name = "tests-are-failing"
+# add = ["Tests are failing"]
+# remove = ["Ready for Testing"]
+#
+# [platform.gitlab.label_rules.when]
+# all = [
+#   { pipeline_state = "failed" },
+# ]
+#
+# [[platform.gitlab.label_rules]]
+# name = "ready-for-review"
+# add = ["Ready for review"]
+# remove = ["Tests are failing"]
+#
+# [platform.gitlab.label_rules.when]
+# all = [
+#   { draft = false },
+#   { merge_request_state = "opened" },
+#   { pipeline_state = "passed" },
+#   { approvals = "missing" },
+# ]
+#
+# [[platform.gitlab.label_rules]]
+# name = "ready-for-testing"
+# add = ["Ready for Testing"]
+# remove = ["Ready for review", "Tests are failing"]
+#
+# [platform.gitlab.label_rules.when]
+# all = [
+#   { draft = false },
+#   { merge_request_state = "opened" },
+#   { pipeline_state = "passed" },
+#   { approvals = "satisfied" },
+# ]
+#
+# [[platform.gitlab.label_rules]]
+# name = "closed-or-merged-cleanup"
+# add = []
+# remove = ["Ready for review", "Ready for Testing", "Tests are failing"]
+#
+# [platform.gitlab.label_rules.when]
+# any = [
+#   { merge_request_state = "closed" },
+#   { merge_request_state = "merged" },
+# ]
+#
+# [[platform.gitlab.label_rules]]
+# name = "all-predicate-examples"
+# add = ["Example label to add"]
+# remove = ["Example label to remove"]
+#
+# [platform.gitlab.label_rules.when]
+# all = [
+#   { draft = false },
+#   { merge_request_state = "opened" },
+#   { pipeline_state = "passed" },
+#   { approvals = "satisfied" },
+#   { has_label = "Ready for review" },
+#   { source_branch = "feat/example" },
+#   { target_branch = "develop" },
+#   { source_branch_kind = "feature" },
+# ]
 
 [execution]
 # When true, `refine` behaves like a dry run and will not mutate the platform.

@@ -63,6 +63,7 @@ pub struct BranchName(pub String);
 #[derive(Debug, Clone)]
 pub struct PipelineInfo {
     pub source: PipelineSource,
+    pub state: PipelineState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +71,14 @@ pub enum PipelineSource {
     ReviewEvent,
     Push,
     Schedule,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineState {
+    Passed,
+    Failed,
+    Running,
     Unknown,
 }
 
@@ -110,6 +119,7 @@ mod tests {
             }),
             pipeline: PipelineInfo {
                 source: PipelineSource::ReviewEvent,
+                state: PipelineState::Unknown,
             },
             branches: BranchInfo {
                 source: BranchName("epic/test-thing".to_string()),

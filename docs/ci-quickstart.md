@@ -184,7 +184,14 @@ If you use that pattern, enable:
 
 ```toml
 [platform.gitlab]
-all_pipelines_pass_label = "ready-to-merge"
+
+[[platform.gitlab.label_rules]]
+name = "ready-to-merge-after-green-statuses"
+add = ["ready-to-merge"]
+remove = ["tests-are-failing"]
+
+[platform.gitlab.label_rules.when]
+all = [{ pipeline_state = "passed" }]
 
 [notifications.pipeline_status]
 enabled = true
@@ -192,7 +199,7 @@ fail_pipeline_on_failed = true
 search_root = "${CI_PROJECT_DIR}"
 ```
 
-Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. If `all_pipelines_pass_label` is configured, Milchick also uses those parsed results to add the GitLab label only when every status entry passed. If `fail_pipeline_on_failed = true`, Milchick will fail the current pipeline when any parsed status entry is explicitly failed, which is useful when earlier fan-in jobs are allowed to fail and Milchick is the final enforcement point. If no status files are found, Milchick warns and skips both the label action and the failure gate.
+Milchick will recursively scan for `*/milchick-status/*.json` before rendering Slack notifications. Label rules can also use those parsed results as `pipeline_state` when `MR_MILCHICK_PIPELINE_STATE` is not set. If `fail_pipeline_on_failed = true`, Milchick will fail the current pipeline when any parsed status entry is explicitly failed, which is useful when earlier fan-in jobs are allowed to fail and Milchick is the final enforcement point. If no status files are found, Milchick warns and skips the failure gate.
 
 ## Safe Rollout
 

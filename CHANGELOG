@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [4.1.0] — 2026-05-08
+
+This minor release adds configurable GitLab label governance so teams can express MR workflow labels in TOML instead of relying on one hardcoded success-label shortcut.
+
+### Added
+
+- Ordered `[[platform.gitlab.label_rules]]` config entries with `name`, `add`, `remove`, and `when` predicates for draft state, MR state, pipeline state, approvals, existing labels, branch names, and source branch kind.
+- `MR_MILCHICK_PIPELINE_STATE` as an explicit CI context input for label rules, with fallback to parsed `milchick-status` entries when the env value is absent.
+- GitLab approval summary loading so label rules can distinguish satisfied, missing, and unavailable approval state.
+
+### Changed
+
+- GitLab label planning now prefers the general label rule system. The legacy `all_pipelines_pass_label` shortcut still works when no label rules are configured.
+- GitLab snapshots now expose merge request state and approval counts through review metadata.
+
+### Docs
+
+- Added commented TOML examples for common label workflows and every supported label-rule predicate.
+- Updated the config reference and CI quickstart to show label rules as the preferred GitLab label automation path.
+
 ## [4.0.1] — 2026-04-21
 
 This patch release makes a common GitLab config-shape mistake much easier to diagnose in CI logs.

@@ -60,6 +60,21 @@ This syntax is intentionally Milchick-specific and is not part of standard TOML.
 kind = "gitlab"
 base_url = "https://gitlab.com/api/v4"
 
+[platform.gitlab]
+
+[[platform.gitlab.label_rules]]
+name = "ready-for-testing"
+add = ["Ready for Testing"]
+remove = ["Ready for review", "Tests are failing"]
+
+[platform.gitlab.label_rules.when]
+all = [
+  { draft = false },
+  { merge_request_state = "opened" },
+  { pipeline_state = "passed" },
+  { approvals = "satisfied" },
+]
+
 [execution]
 dry_run = false
 notification_policy = "always"
@@ -148,9 +163,77 @@ _{{closing_tone_message}}_"""
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `all_pipelines_pass_label` | No | none | Adds this GitLab MR label only when parsed `milchick-status` entries exist and every entry is `Passed`. |
+| `all_pipelines_pass_label` | No | none | Legacy shortcut that adds this GitLab MR label only when parsed `milchick-status` entries exist and every entry is `Passed`. Ignored when `label_rules` are configured. |
+| `label_rules` | No | `[]` | Ordered GitLab MR label rules defined with `[[platform.gitlab.label_rules]]`. |
 
-If `all_pipelines_pass_label` is configured but Milchick does not find any `*/milchick-status/*.json` data, Milchick emits a warning and does not plan the label action.
+Each `[[platform.gitlab.label_rules]]` entry supports:
+
+- `name`: required, non-empty rule identifier used in output.
+- `add`: optional list of labels to add when the rule matches.
+- `remove`: optional list of labels to remove when the rule matches.
+- `when.all`: optional list of predicates that must all match.
+- `when.any`: optional list of predicates where at least one must match.
+
+At least one `add` or `remove` label is required, and each inline predicate table must contain exactly one predicate. If multiple matching rules mention the same label, the later rule in TOML wins. `pipeline_state` comes from `MR_MILCHICK_PIPELINE_STATE` when set, otherwise Milchick falls back to parsed `milchick-status` entries: any failed entry means `failed`, all passed entries means `passed`, and missing/mixed data means `unknown`.
+
+Supported `when` predicates:
+
+```toml
+[[platform.gitlab.label_rules]]
+name = "all-predicate-examples"
+add = ["Example label to add"]
+remove = ["Example label to remove"]
+
+[platform.gitlab.label_rules.when]
+all = [
+  { draft = false },
+  { merge_request_state = "opened" },
+  { pipeline_state = "passed" },
+  { approvals = "satisfied" },
+  { has_label = "Ready for review" },
+  { source_branch = "feat/example" },
+  { target_branch = "develop" },
+  { source_branch_kind = "feature" },
+]
+```
+
+Accepted values:
+
+- `merge_request_state`: `opened`, `closed`, `merged`, `locked`
+- `pipeline_state`: `passed`, `failed`, `running`, `unknown`
+- `approvals`: `satisfied`, `missing`, `unavailable`
+- `source_branch_kind`: `epic`, `feature`, `fix`, `chore`, `other`
+
+Common rule examples:
+
+```toml
+[[platform.gitlab.label_rules]]
+name = "draft-clears-review-workflow"
+add = []
+remove = ["Ready for review", "Ready for Testing"]
+
+[platform.gitlab.label_rules.when]
+all = [{ draft = true }]
+
+[[platform.gitlab.label_rules]]
+name = "tests-are-failing"
+add = ["Tests are failing"]
+remove = ["Ready for Testing"]
+
+[platform.gitlab.label_rules.when]
+all = [{ pipeline_state = "failed" }]
+
+[[platform.gitlab.label_rules]]
+name = "closed-or-merged-cleanup"
+add = []
+remove = ["Ready for review", "Ready for Testing", "Tests are failing"]
+
+[platform.gitlab.label_rules.when]
+any = [
+  { merge_request_state = "closed" },
+  { merge_request_state = "merged" },
+]
+```
 
 ### `[execution]`
 
@@ -313,7 +396,7 @@ These still belong to the CI context layer, not the app config layer:
 | --- | --- |
 | `CI_PROJECT_ID`, `CI_MERGE_REQUEST_IID`, `CI_PIPELINE_SOURCE`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`, `CI_MERGE_REQUEST_LABELS` | GitLab review context |
 | `GITHUB_ACTIONS`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_REPOSITORY`, `GITHUB_HEAD_REF`, `GITHUB_BASE_REF` | GitHub review context |
-| `MR_MILCHICK_PROJECT_KEY`, `MR_MILCHICK_REVIEW_ID`, `MR_MILCHICK_PIPELINE_SOURCE`, `MR_MILCHICK_SOURCE_BRANCH`, `MR_MILCHICK_TARGET_BRANCH`, `MR_MILCHICK_LABELS` | Explicit review-context overrides |
+| `MR_MILCHICK_PROJECT_KEY`, `MR_MILCHICK_REVIEW_ID`, `MR_MILCHICK_PIPELINE_SOURCE`, `MR_MILCHICK_PIPELINE_STATE`, `MR_MILCHICK_SOURCE_BRANCH`, `MR_MILCHICK_TARGET_BRANCH`, `MR_MILCHICK_LABELS` | Explicit review-context overrides. `MR_MILCHICK_PIPELINE_STATE` accepts `passed`, `failed`, `running`, or `unknown`. |
 
 ## Notes
 
