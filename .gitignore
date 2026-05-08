@@ -3,3 +3,6 @@
 .DS_Store
 /CODEOWNERS
 /test-models
+*.profraw
+/coverage
+/.sonar
