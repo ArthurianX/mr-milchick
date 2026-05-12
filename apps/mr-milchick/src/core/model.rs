@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::core::context::model::{BranchKind, PipelineState};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewPlatformKind {
     GitLab,
@@ -121,9 +123,43 @@ pub enum ChangeType {
 pub struct ReviewMetadata {
     pub source_branch: Option<String>,
     pub target_branch: Option<String>,
+    pub merge_request_state: Option<String>,
     pub commit_count: Option<u32>,
     pub approvals_required: Option<u32>,
     pub approvals_given: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitLabLabelRule {
+    pub name: String,
+    pub add: Vec<String>,
+    pub remove: Vec<String>,
+    pub when: LabelRuleCondition,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LabelRuleCondition {
+    pub all: Vec<LabelRulePredicate>,
+    pub any: Vec<LabelRulePredicate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LabelRulePredicate {
+    Draft(bool),
+    MergeRequestState(String),
+    PipelineState(PipelineState),
+    Approvals(ApprovalRuleState),
+    HasLabel(String),
+    SourceBranch(String),
+    TargetBranch(String),
+    SourceBranchKind(BranchKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalRuleState {
+    Satisfied,
+    Missing,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

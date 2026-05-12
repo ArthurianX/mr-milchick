@@ -1272,6 +1272,7 @@ mod tests {
             metadata: ReviewMetadata {
                 source_branch: Some("feat/buttons".to_string()),
                 target_branch: Some("develop".to_string()),
+                merge_request_state: Some("opened".to_string()),
                 commit_count: None,
                 approvals_required: None,
                 approvals_given: None,
@@ -1287,6 +1288,7 @@ mod tests {
             }),
             pipeline: crate::context::model::PipelineInfo {
                 source: crate::context::model::PipelineSource::ReviewEvent,
+                state: crate::context::model::PipelineState::Unknown,
             },
             branches: crate::context::model::BranchInfo {
                 source: crate::context::model::BranchName("feat/buttons".to_string()),

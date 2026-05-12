@@ -233,6 +233,7 @@ fn map_snapshot(
         metadata: ReviewMetadata {
             source_branch: Some(source_branch.to_string()),
             target_branch: Some(target_branch.to_string()),
+            merge_request_state: Some(pull_request.state),
             commit_count: None,
             approvals_required: None,
             approvals_given: None,

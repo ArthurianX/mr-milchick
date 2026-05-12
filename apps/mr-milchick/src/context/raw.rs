@@ -5,6 +5,7 @@ use serde::Deserialize;
 const PROJECT_KEY_OVERRIDE_ENV: &str = "MR_MILCHICK_PROJECT_KEY";
 const REVIEW_ID_OVERRIDE_ENV: &str = "MR_MILCHICK_REVIEW_ID";
 const PIPELINE_SOURCE_OVERRIDE_ENV: &str = "MR_MILCHICK_PIPELINE_SOURCE";
+const PIPELINE_STATE_OVERRIDE_ENV: &str = "MR_MILCHICK_PIPELINE_STATE";
 const SOURCE_BRANCH_OVERRIDE_ENV: &str = "MR_MILCHICK_SOURCE_BRANCH";
 const TARGET_BRANCH_OVERRIDE_ENV: &str = "MR_MILCHICK_TARGET_BRANCH";
 const LABELS_OVERRIDE_ENV: &str = "MR_MILCHICK_LABELS";
@@ -14,6 +15,7 @@ pub struct RawCiEnv {
     pub project_key: Option<String>,
     pub review_id: Option<String>,
     pub pipeline_source: Option<String>,
+    pub pipeline_state: Option<String>,
     pub source_branch: Option<String>,
     pub target_branch: Option<String>,
     pub labels: Option<String>,
@@ -35,6 +37,7 @@ impl RawCiEnv {
             project_key: overrides.project_key.or(provider.project_key),
             review_id: overrides.review_id.or(provider.review_id),
             pipeline_source: overrides.pipeline_source.or(provider.pipeline_source),
+            pipeline_state: overrides.pipeline_state.or(provider.pipeline_state),
             source_branch: overrides.source_branch.or(provider.source_branch),
             target_branch: overrides.target_branch.or(provider.target_branch),
             labels: overrides.labels.or(provider.labels),
@@ -78,6 +81,7 @@ fn load_override_context() -> RawCiEnv {
         project_key: env::var(PROJECT_KEY_OVERRIDE_ENV).ok(),
         review_id: env::var(REVIEW_ID_OVERRIDE_ENV).ok(),
         pipeline_source: env::var(PIPELINE_SOURCE_OVERRIDE_ENV).ok(),
+        pipeline_state: env::var(PIPELINE_STATE_OVERRIDE_ENV).ok(),
         source_branch: env::var(SOURCE_BRANCH_OVERRIDE_ENV).ok(),
         target_branch: env::var(TARGET_BRANCH_OVERRIDE_ENV).ok(),
         labels: env::var(LABELS_OVERRIDE_ENV).ok(),
@@ -89,6 +93,7 @@ fn load_gitlab_ci_context() -> RawCiEnv {
         project_key: env::var("CI_PROJECT_ID").ok(),
         review_id: env::var("CI_MERGE_REQUEST_IID").ok(),
         pipeline_source: env::var("CI_PIPELINE_SOURCE").ok(),
+        pipeline_state: None,
         source_branch: env::var("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME").ok(),
         target_branch: env::var("CI_MERGE_REQUEST_TARGET_BRANCH_NAME").ok(),
         labels: env::var("CI_MERGE_REQUEST_LABELS").ok(),
@@ -122,6 +127,7 @@ fn load_github_actions_context() -> RawCiEnv {
         project_key: repository,
         review_id,
         pipeline_source: event_name,
+        pipeline_state: None,
         source_branch: pull_request
             .as_ref()
             .map(|payload| payload.head.branch_ref.clone())

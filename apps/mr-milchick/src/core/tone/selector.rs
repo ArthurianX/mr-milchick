@@ -35,8 +35,8 @@ fn stable_index(seed: &str, len: usize) -> usize {
 mod tests {
     use super::*;
     use crate::core::context::model::{
-        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, ProjectKey,
-        ReviewContextRef, ReviewId,
+        BranchInfo, BranchName, CiContext, Label, PipelineInfo, PipelineSource, PipelineState,
+        ProjectKey, ReviewContextRef, ReviewId,
     };
 
     fn sample_context() -> CiContext {
@@ -47,6 +47,7 @@ mod tests {
             }),
             pipeline: PipelineInfo {
                 source: PipelineSource::ReviewEvent,
+                state: PipelineState::Unknown,
             },
             branches: BranchInfo {
                 source: BranchName("feat/test".to_string()),

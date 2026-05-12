@@ -18,6 +18,12 @@ pub struct GitLabMergeRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitLabApprovalSummary {
+    pub approvals_required: Option<u32>,
+    pub approvals_given: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitLabChangedFile {
     pub old_path: String,
     pub new_path: String,
@@ -31,6 +37,7 @@ pub struct GitLabChangedFile {
 pub struct GitLabSnapshotData {
     pub merge_request: GitLabMergeRequest,
     pub changed_files: Vec<GitLabChangedFile>,
+    pub approval_summary: Option<GitLabApprovalSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
