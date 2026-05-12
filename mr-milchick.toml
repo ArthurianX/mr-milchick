@@ -109,6 +109,7 @@ kind = "gitlab"
 #   { pipeline_state = "passed" },
 #   { approvals = "satisfied" },
 #   { has_label = "Ready for review" },
+#   { has_no_labels = false },
 #   { source_branch = "feat/example" },
 #   { target_branch = "develop" },
 #   { source_branch_kind = "feature" },

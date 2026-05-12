@@ -152,6 +152,7 @@ fn matches_predicate(predicate: &LabelRulePredicate, facts: &LabelRuleFacts<'_>)
         LabelRulePredicate::HasLabel(expected) => {
             facts.snapshot.labels.iter().any(|label| label == expected)
         }
+        LabelRulePredicate::HasNoLabels(expected) => facts.snapshot.labels.is_empty() == *expected,
         LabelRulePredicate::SourceBranch(expected) => facts.ctx.source_branch() == expected,
         LabelRulePredicate::TargetBranch(expected) => facts.ctx.target_branch() == expected,
         LabelRulePredicate::SourceBranchKind(expected) => {
@@ -354,6 +355,33 @@ mod tests {
         assert!(outcome.action_plan.actions.iter().any(|action| {
             matches!(action, ReviewAction::RemoveLabels { labels } if labels == &vec!["Ready for review".to_string()])
         }));
+    }
+
+    #[test]
+    fn has_no_labels_matches_empty_label_set() {
+        let outcome = enrich_with_gitlab_label_rules(
+            RuleOutcome::new(),
+            &ctx(PipelineState::Passed),
+            &snapshot(&[], false, None, None),
+            &[rule(
+                "empty-label-set",
+                &["1. Ready for review"],
+                &[],
+                LabelRuleCondition {
+                    all: vec![
+                        LabelRulePredicate::PipelineState(PipelineState::Passed),
+                        LabelRulePredicate::HasNoLabels(true),
+                    ],
+                    any: vec![],
+                },
+            )],
+            &[],
+        );
+
+        assert!(matches!(
+            outcome.action_plan.actions.as_slice(),
+            [ReviewAction::AddLabels { labels }] if labels == &vec!["1. Ready for review".to_string()]
+        ));
     }
 
     #[test]

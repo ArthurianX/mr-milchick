@@ -329,6 +329,9 @@ fn resolve_label_rule_predicate(
     if let Some(value) = sanitize_optional(predicate.has_label.clone()) {
         resolved.push(LabelRulePredicate::HasLabel(value));
     }
+    if let Some(value) = predicate.has_no_labels {
+        resolved.push(LabelRulePredicate::HasNoLabels(value));
+    }
     if let Some(value) = sanitize_optional(predicate.source_branch.clone()) {
         resolved.push(LabelRulePredicate::SourceBranch(value));
     }
@@ -760,6 +763,7 @@ all = [
   {{ pipeline_state = "passed" }},
   {{ approvals = "satisfied" }},
   {{ has_label = "Ready for review" }},
+  {{ has_no_labels = false }},
   {{ source_branch = "feat/test" }},
   {{ target_branch = "develop" }},
   {{ source_branch_kind = "feature" }},
@@ -857,7 +861,7 @@ first_root = "hello"
             config.platform.gitlab.label_rules[0].remove,
             vec!["Ready for review".to_string()]
         );
-        assert_eq!(config.platform.gitlab.label_rules[0].when.all.len(), 8);
+        assert_eq!(config.platform.gitlab.label_rules[0].when.all.len(), 9);
         assert!(config.execution.dry_run);
         assert_eq!(
             config.execution.notification_policy,
@@ -1081,6 +1085,30 @@ all = [{ draft = false, pipeline_state = "passed" }]
         .expect_err("ambiguous label rule should fail");
 
         assert!(error.to_string().contains("exactly one condition"));
+    }
+
+    #[test]
+    fn parses_has_no_labels_predicate() {
+        let config = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[platform.gitlab.label_rules]]
+name = "empty-label-set"
+add = ["1. Ready for review"]
+
+[platform.gitlab.label_rules.when]
+all = [{ has_no_labels = true }]
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect("label rule with has_no_labels should resolve");
+
+        assert!(matches!(
+            config.platform.gitlab.label_rules[0].when.all.as_slice(),
+            [LabelRulePredicate::HasNoLabels(true)]
+        ));
     }
 
     #[test]

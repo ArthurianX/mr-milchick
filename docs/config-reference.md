@@ -191,6 +191,7 @@ all = [
   { pipeline_state = "passed" },
   { approvals = "satisfied" },
   { has_label = "Ready for review" },
+  { has_no_labels = false },
   { source_branch = "feat/example" },
   { target_branch = "develop" },
   { source_branch_kind = "feature" },
@@ -202,6 +203,7 @@ Accepted values:
 - `merge_request_state`: `opened`, `closed`, `merged`, `locked`
 - `pipeline_state`: `passed`, `failed`, `running`, `unknown`
 - `approvals`: `satisfied`, `missing`, `unavailable`
+- `has_no_labels`: `true`, `false`
 - `source_branch_kind`: `epic`, `feature`, `fix`, `chore`, `other`
 
 Common rule examples:

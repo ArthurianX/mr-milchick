@@ -90,6 +90,8 @@ pub struct LabelRulePredicateConfig {
     #[serde(default)]
     pub has_label: Option<String>,
     #[serde(default)]
+    pub has_no_labels: Option<bool>,
+    #[serde(default)]
     pub source_branch: Option<String>,
     #[serde(default)]
     pub target_branch: Option<String>,
