@@ -7,6 +7,18 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [4.1.1] — 2026-05-12
+
+This patch release adds a small but important label-rule predicate for workflows that need to distinguish an unlabeled merge request from one that already carries workflow state.
+
+### Added
+
+- New `has_no_labels = true|false` GitLab label-rule predicate, so configs can explicitly target empty label sets without abusing `has_label = ""`.
+
+### Docs
+
+- Updated the checked-in TOML example and config reference to include `has_no_labels` alongside the other supported `when` predicates.
+
 ## [4.1.0] — 2026-05-08
 
 This minor release adds configurable GitLab label governance so teams can express MR workflow labels in TOML instead of relying on one hardcoded success-label shortcut.

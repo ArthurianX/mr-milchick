@@ -150,6 +150,7 @@ pub enum LabelRulePredicate {
     PipelineState(PipelineState),
     Approvals(ApprovalRuleState),
     HasLabel(String),
+    HasNoLabels(bool),
     SourceBranch(String),
     TargetBranch(String),
     SourceBranchKind(BranchKind),
