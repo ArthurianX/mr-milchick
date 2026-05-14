@@ -23,18 +23,21 @@ CI / event payload
   -> context builder
   -> resolved app config
   -> platform snapshot load
+
+observe
+  -> intake checks + repo-defined area classification
+  -> risk label + draft label planning
+  -> Slack MR-thread intake notification
+  -> fail first gate when intake requirements are missing
+
+refine
   -> rules
   -> reviewer routing + optional CODEOWNERS override
   -> action plan
   -> governance summary render
-
-observe
-  -> print deterministic diagnostics only
-
-refine
   -> execute governance actions
   -> upsert deterministic summary comment + hidden governance metadata
-  -> optional notification fanout
+  -> optional Slack MR-thread notification fanout
 
 explain
   -> reload Milchick governance summary comment
@@ -47,7 +50,7 @@ The three commands still share one deterministic planning path, but they now div
 
 ## Command Semantics
 
-- `observe`: verbose deterministic inspection only. It prints findings, the governance action plan, the rendered governance summary preview, snapshot details, CODEOWNERS details, and fixture notification previews. It never mutates review platforms and never invokes inference.
+- `observe`: deterministic intake gate. It applies draft and risk labels, validates that a meaningful description exists, sends the intake Slack message into the MR thread, and exits nonzero when the first gate is not satisfied. It never invokes inference.
 - `refine`: fast governance execution. It applies reviewer or label actions, always upserts the deterministic governance summary comment, can deliver configured notifications, and fails the current pipeline when blocking policy remains unresolved.
 - `explain`: slow advisory follow-up. It first reloads Milchick's managed governance summary comment, parses the hidden metadata appended by `refine`, and skips itself when the latest governance pass reported no applied effect and no blocking outcome. When the gate passes, it runs advisory inference and upserts only the managed explain comment.
 
@@ -82,7 +85,7 @@ This keeps merge logic out of `app.rs` and makes new features land in one place 
 - Core rules stay pure and side-effect free.
 - Platform reads and writes always go through the same compiled connector.
 - Notification sinks never change planning decisions.
-- `dry_run` affects platform writes in `refine` and `explain`; `observe` is preview-only already.
+- `dry_run` affects platform writes in `refine` and `explain`; live `observe` mutates labels by design, while fixture observe uses dry-run execution.
 - Notification delivery follows the resolved notification policy, not sink-specific heuristics.
 - `observe` and `refine` do not wire the inference backend.
 - `explain` never assigns reviewers, changes labels, fails the pipeline, or sends notifications.

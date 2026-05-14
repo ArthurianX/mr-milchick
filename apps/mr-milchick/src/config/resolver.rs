@@ -1,13 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::core::context::model::{BranchKind, PipelineState};
-use crate::core::domain::code_area::CodeArea;
 use crate::core::model::{
-    ApprovalRuleState, GitLabLabelRule, LabelRuleCondition, LabelRulePredicate,
-    NotificationSinkKind, ReviewPlatformKind, ReviewerConfig, ReviewerDefinition,
+    ApprovalRuleState, AreaDefinition, AreaRisk, AreasConfig, GitLabLabelRule, LabelRuleCondition,
+    LabelRulePredicate, NotificationSinkKind, ReviewPlatformKind, ReviewerConfig,
+    ReviewerDefinition,
 };
 
 use super::env::{self, SecretEnv};
@@ -21,6 +21,15 @@ const DEFAULT_SLACK_BASE_URL: &str = "https://slack.com/api";
 const DEFAULT_LLM_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_LLM_MAX_PATCH_BYTES: usize = 32 * 1024;
 const DEFAULT_LLM_CONTEXT_TOKENS: usize = 4_096;
+const DEFAULT_DRAFT_LABEL: &str = "status::draft";
+const DEFAULT_RISK_LOW_LABEL: &str = "risk::low";
+const DEFAULT_RISK_MEDIUM_LABEL: &str = "risk::medium";
+const DEFAULT_RISK_HIGH_LABEL: &str = "risk::high";
+const DEFAULT_MEDIUM_AREA_COUNT: usize = 2;
+const DEFAULT_HIGH_AREA_COUNT: usize = 4;
+const DEFAULT_MEDIUM_CHANGED_LINES: u32 = 250;
+const DEFAULT_HIGH_CHANGED_LINES: u32 = 800;
+const DEFAULT_HIGH_FILE_COUNT: usize = 25;
 const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
     "CODEOWNERS",
     ".github/CODEOWNERS",
@@ -31,12 +40,40 @@ const DEFAULT_CODEOWNERS_CANDIDATES: [&str; 4] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedConfig {
     pub platform: PlatformConfig,
+    pub areas: AreasConfig,
+    pub observe: ObserveConfig,
     pub execution: ExecutionConfig,
     pub reviewers: ReviewerConfig,
     pub codeowners: CodeownersConfig,
     pub inference: InferenceConfig,
     pub notifications: NotificationsConfig,
     pub templates: schema::TemplatesConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveConfig {
+    pub risk: ObserveRiskConfig,
+    pub description: ObserveDescriptionConfig,
+    pub draft_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveRiskConfig {
+    pub low_label: String,
+    pub medium_label: String,
+    pub high_label: String,
+    pub medium_area_count: usize,
+    pub high_area_count: usize,
+    pub medium_changed_lines: u32,
+    pub high_changed_lines: u32,
+    pub high_file_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveDescriptionConfig {
+    pub required: bool,
+    pub template_paths: Vec<String>,
+    pub ignore_branch_issue_key: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,8 +158,10 @@ pub fn resolve_config(file: schema::ConfigFile, secrets: SecretEnv) -> Result<Re
 
     Ok(ResolvedConfig {
         platform,
+        areas: resolve_areas_config(&file.areas)?,
+        observe: resolve_observe_config(&file.observe)?,
         execution: resolve_execution_config(&file.execution),
-        reviewers: resolve_reviewer_config(&file.reviewers)?,
+        reviewers: resolve_reviewer_config(&file.reviewers, &file.areas)?,
         codeowners: resolve_codeowners_config(&file.codeowners),
         inference: resolve_inference_config(&file.inference)?,
         notifications,
@@ -414,6 +453,121 @@ fn parse_branch_kind(value: &str, rule_name: &str) -> Result<BranchKind> {
     }
 }
 
+fn resolve_areas_config(file: &schema::AreasConfig) -> Result<AreasConfig> {
+    if file.definitions.is_empty() {
+        bail!("'areas.definitions' must define at least one repository area");
+    }
+
+    let mut seen = BTreeSet::new();
+    let definitions = file
+        .definitions
+        .iter()
+        .enumerate()
+        .map(|(index, area)| {
+            let key = sanitize_value(&area.key).ok_or_else(|| {
+                anyhow!(
+                    "area entry {} in 'areas.definitions' is missing a key",
+                    index
+                )
+            })?;
+            if !seen.insert(key.clone()) {
+                bail!("duplicate area key '{}' in 'areas.definitions'", key);
+            }
+
+            let paths = area
+                .paths
+                .iter()
+                .filter_map(|path| sanitize_value(path))
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                bail!("area '{}' must define at least one path pattern", key);
+            }
+
+            Ok(AreaDefinition {
+                key,
+                paths,
+                risk: parse_area_risk(area.risk.as_deref().unwrap_or("medium"))?,
+                critical: area.critical,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(AreasConfig { definitions })
+}
+
+fn parse_area_risk(value: &str) -> Result<AreaRisk> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" => Ok(AreaRisk::Low),
+        "medium" | "med" => Ok(AreaRisk::Medium),
+        "high" => Ok(AreaRisk::High),
+        other => bail!(
+            "unknown area risk '{}'; expected low, medium, or high",
+            other
+        ),
+    }
+}
+
+fn resolve_observe_config(file: &schema::ObserveConfig) -> Result<ObserveConfig> {
+    let risk = ObserveRiskConfig {
+        low_label: sanitize_optional(file.risk.low_label.clone())
+            .unwrap_or_else(|| DEFAULT_RISK_LOW_LABEL.to_string()),
+        medium_label: sanitize_optional(file.risk.medium_label.clone())
+            .unwrap_or_else(|| DEFAULT_RISK_MEDIUM_LABEL.to_string()),
+        high_label: sanitize_optional(file.risk.high_label.clone())
+            .unwrap_or_else(|| DEFAULT_RISK_HIGH_LABEL.to_string()),
+        medium_area_count: resolve_positive_usize(
+            file.risk.medium_area_count,
+            DEFAULT_MEDIUM_AREA_COUNT,
+            "observe.risk.medium_area_count",
+        )?,
+        high_area_count: resolve_positive_usize(
+            file.risk.high_area_count,
+            DEFAULT_HIGH_AREA_COUNT,
+            "observe.risk.high_area_count",
+        )?,
+        medium_changed_lines: resolve_positive_u32(
+            file.risk.medium_changed_lines,
+            DEFAULT_MEDIUM_CHANGED_LINES,
+            "observe.risk.medium_changed_lines",
+        )?,
+        high_changed_lines: resolve_positive_u32(
+            file.risk.high_changed_lines,
+            DEFAULT_HIGH_CHANGED_LINES,
+            "observe.risk.high_changed_lines",
+        )?,
+        high_file_count: resolve_positive_usize(
+            file.risk.high_file_count,
+            DEFAULT_HIGH_FILE_COUNT,
+            "observe.risk.high_file_count",
+        )?,
+    };
+
+    if risk.high_area_count < risk.medium_area_count {
+        bail!("'observe.risk.high_area_count' must be greater than or equal to medium_area_count");
+    }
+    if risk.high_changed_lines < risk.medium_changed_lines {
+        bail!(
+            "'observe.risk.high_changed_lines' must be greater than or equal to medium_changed_lines"
+        );
+    }
+
+    Ok(ObserveConfig {
+        risk,
+        description: ObserveDescriptionConfig {
+            required: file.description.required.unwrap_or(true),
+            template_paths: file
+                .description
+                .template_paths
+                .iter()
+                .filter_map(|path| sanitize_value(path))
+                .collect(),
+            ignore_branch_issue_key: file.description.ignore_branch_issue_key.unwrap_or(true),
+        },
+        draft_label: sanitize_optional(file.draft_label.clone())
+            .unwrap_or_else(|| DEFAULT_DRAFT_LABEL.to_string()),
+    })
+}
+
 fn resolve_execution_config(file: &schema::ExecutionConfig) -> ExecutionConfig {
     ExecutionConfig {
         dry_run: file.dry_run.unwrap_or(false),
@@ -423,12 +577,21 @@ fn resolve_execution_config(file: &schema::ExecutionConfig) -> ExecutionConfig {
     }
 }
 
-fn resolve_reviewer_config(file: &schema::ReviewersConfig) -> Result<ReviewerConfig> {
+fn resolve_reviewer_config(
+    file: &schema::ReviewersConfig,
+    areas: &schema::AreasConfig,
+) -> Result<ReviewerConfig> {
     let max_reviewers = match file.max_reviewers {
         Some(0) => bail!("'reviewers.max_reviewers' must be greater than zero"),
         Some(value) => value,
         None => DEFAULT_MAX_REVIEWERS,
     };
+
+    let known_areas = areas
+        .definitions
+        .iter()
+        .filter_map(|area| sanitize_value(&area.key))
+        .collect::<BTreeSet<_>>();
 
     let definitions = file
         .definitions
@@ -446,14 +609,17 @@ fn resolve_reviewer_config(file: &schema::ReviewersConfig) -> Result<ReviewerCon
             let areas = item
                 .areas
                 .iter()
+                .filter_map(|area| sanitize_value(area))
                 .map(|area| {
-                    CodeArea::from_config_key(area).ok_or_else(|| {
-                        anyhow!(
+                    if known_areas.contains(&area) {
+                        Ok(area)
+                    } else {
+                        bail!(
                             "reviewer '{}' uses unknown area '{}' in 'reviewers.definitions'",
                             username,
                             area
                         )
-                    })
+                    }
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -690,6 +856,14 @@ fn resolve_positive_u64(value: Option<u64>, default: u64, field: &str) -> Result
     }
 }
 
+fn resolve_positive_u32(value: Option<u32>, default: u32, field: &str) -> Result<u32> {
+    match value {
+        Some(0) => bail!("'{}' must be greater than zero", field),
+        Some(value) => Ok(value),
+        None => Ok(default),
+    }
+}
+
 fn resolve_positive_usize(value: Option<usize>, default: usize, field: &str) -> Result<usize> {
     match value {
         Some(0) => bail!("'{}' must be greater than zero", field),
@@ -716,27 +890,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolved_config_defaults_without_file_or_secrets() {
-        let config = resolve_config(schema::ConfigFile::default(), SecretEnv::default())
-            .expect("resolved config should load");
+    fn resolved_config_requires_area_definitions() {
+        let error = resolve_config(schema::ConfigFile::default(), SecretEnv::default())
+            .expect_err("area definitions are required");
 
-        assert_eq!(config.platform.kind, compiled_platform_kind());
-        assert_eq!(config.reviewers.max_reviewers, DEFAULT_MAX_REVIEWERS);
-        assert!(config.reviewers.definitions.is_empty());
-        assert!(config.codeowners.enabled);
-        assert!(config.platform.gitlab.all_pipelines_pass_label.is_none());
-        assert!(config.platform.gitlab.label_rules.is_empty());
-        assert!(!config.execution.dry_run);
-        assert_eq!(
-            config.execution.notification_policy,
-            schema::NotificationPolicy::Always
-        );
-        assert!(!config.inference.enabled);
-        assert!(!config.inference.trace);
-        assert!(!config.notifications.slack_app.enabled);
-        assert!(!config.notifications.slack_workflow.enabled);
-        assert!(!config.notifications.pipeline_status.enabled);
-        assert!(!config.notifications.pipeline_status.fail_pipeline_on_failed);
+        assert!(error.to_string().contains("areas.definitions"));
     }
 
     #[test]
@@ -750,6 +908,16 @@ base_url = "https://gitlab.example.com/api/v4"
 
 [platform.gitlab]
 all_pipelines_pass_label = "ready-to-merge"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
 
 [[platform.gitlab.label_rules]]
 name = "ready-for-testing"
@@ -914,6 +1082,11 @@ first_root = "hello"
 [platform]
 kind = "gitlab"
 
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
 [notifications.slack_app]
 enabled = true
 channel = "C123"
@@ -949,6 +1122,11 @@ channel = "C456"
         let error = resolve_config(
             toml::from_str::<schema::ConfigFile>(
                 r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
 [reviewers]
 max_reviewers = 0
 "#,
@@ -1031,6 +1209,11 @@ base_url = "https://gitlab.example.com/api/v4"
         let error = resolve_config(
             toml::from_str::<schema::ConfigFile>(
                 r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
 [[reviewers.definitions]]
 username = "alice"
 areas = ["mystery-zone"]
@@ -1045,10 +1228,56 @@ areas = ["mystery-zone"]
     }
 
     #[test]
+    fn rejects_duplicate_area_keys() {
+        let error = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/ui/**"]
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect_err("duplicate area key should fail");
+
+        assert!(error.to_string().contains("duplicate area key"));
+    }
+
+    #[test]
+    fn rejects_invalid_area_risk() {
+        let error = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "spicy"
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect_err("invalid risk should fail");
+
+        assert!(error.to_string().contains("unknown area risk"));
+    }
+
+    #[test]
     fn rejects_label_rule_that_adds_and_removes_same_label() {
         let error = resolve_config(
             toml::from_str::<schema::ConfigFile>(
                 r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
 [[platform.gitlab.label_rules]]
 name = "conflicted"
 add = ["Ready"]
@@ -1071,6 +1300,11 @@ all = [{ draft = false }]
         let error = resolve_config(
             toml::from_str::<schema::ConfigFile>(
                 r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
 [[platform.gitlab.label_rules]]
 name = "ambiguous"
 add = ["Ready"]
@@ -1092,6 +1326,11 @@ all = [{ draft = false, pipeline_state = "passed" }]
         let config = resolve_config(
             toml::from_str::<schema::ConfigFile>(
                 r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
 [[platform.gitlab.label_rules]]
 name = "empty-label-set"
 add = ["1. Ready for review"]

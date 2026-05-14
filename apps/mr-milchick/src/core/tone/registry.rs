@@ -63,5 +63,60 @@ pub fn messages_for(category: ToneCategory) -> &'static [&'static str] {
             "The department has identified suitable reviewers for this request.",
             "Reviewer participation has been arranged in an orderly fashion.",
         ],
+        ToneCategory::ObserveOpened => &[
+            "A new review has entered the department.",
+            "Observation has begun with appropriate care.",
+            "The intake record is now under orderly consideration.",
+        ],
+        ToneCategory::ObservePassed => &[
+            "The intake record is sufficiently complete.",
+            "Observation is complete; refinement may proceed.",
+            "The first gate has been satisfied.",
+        ],
+        ToneCategory::ObserveBlocked => &[
+            "The intake record is incomplete. Refinement is paused.",
+            "Observation cannot approve this request in its current form.",
+            "The first gate has identified a structural omission.",
+        ],
+        ToneCategory::ObserveDraft => &[
+            "This request remains in draft. Further ceremony is deferred.",
+            "Draft status has been observed and recorded.",
+            "The department will wait for a more final posture.",
+        ],
+        ToneCategory::RiskLow => &[
+            "Risk has been assessed as low.",
+            "The change appears pleasantly contained.",
+            "The affected surface is modest.",
+        ],
+        ToneCategory::RiskMedium => &[
+            "Risk has been assessed as medium.",
+            "This request touches enough surface to merit attention.",
+            "The department recommends a measured review posture.",
+        ],
+        ToneCategory::RiskHigh => &[
+            "Risk has been assessed as high. Please remain attentive.",
+            "This request crosses sensitive territory.",
+            "The affected surface requires elevated care.",
+        ],
+        ToneCategory::DescriptionMissing => &[
+            "The description appears ceremonial rather than informative.",
+            "The intake record lacks a meaningful description.",
+            "A clearer account of the work is required.",
+        ],
+        ToneCategory::DescriptionTemplateOnly => &[
+            "The description still resembles its original paperwork.",
+            "The template has not yet become an explanation.",
+            "The form is present, but the substance is absent.",
+        ],
+        ToneCategory::PipelinePaused => &[
+            "Further refinement is paused until the intake record is corrected.",
+            "Please complete the intake requirements, then rerun the pipeline.",
+            "Advancement will resume after the first gate is satisfied.",
+        ],
+        ToneCategory::RefineReady => &[
+            "Refinement may proceed when the remaining pipeline signals arrive.",
+            "The request is ready for the next governance stage.",
+            "The department has no objection to continuing.",
+        ],
     }
 }

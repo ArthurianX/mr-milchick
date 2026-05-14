@@ -15,11 +15,11 @@ Implemented now:
 
 ## Command Roles
 
-- `observe`: verbose deterministic inspection only
+- `observe`: mutating intake gate for risk/draft labels, description checks, and Slack thread intake notifications
 - `refine`: fast governance execution plus optional notifications
 - `explain`: slower advisory follow-up that may upsert the managed explain comment
 
-Only `refine` can assign reviewers, change labels, fail the pipeline, or deliver notifications.
+`observe` and `refine` can change labels, fail the pipeline, and deliver Slack app notifications. Only `refine` assigns reviewers and owns the governance summary comment.
 
 ## Cargo Features
 

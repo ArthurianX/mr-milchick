@@ -26,9 +26,29 @@ pub struct ReviewerConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewerDefinition {
     pub username: String,
-    pub areas: Vec<crate::core::domain::code_area::CodeArea>,
+    pub areas: Vec<String>,
     pub is_fallback: bool,
     pub is_mandatory: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AreasConfig {
+    pub definitions: Vec<AreaDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AreaDefinition {
+    pub key: String,
+    pub paths: Vec<String>,
+    pub risk: AreaRisk,
+    pub critical: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaRisk {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

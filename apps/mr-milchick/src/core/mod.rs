@@ -5,6 +5,7 @@ pub mod domain;
 pub mod inference;
 pub mod message_templates;
 pub mod model;
+pub mod observe;
 pub mod output;
 pub mod rules;
 pub mod tone;

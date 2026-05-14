@@ -31,6 +31,43 @@ kind = "github"
 # Leave this commented for normal github.com usage.
 # base_url = "https://api.github.com"
 
+[areas]
+# v5 requires each repository to define its own area map. Reviewer routing and
+# observe risk labels use these keys.
+
+[[areas.definitions]]
+key = "apps"
+paths = ["apps/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**", "libs/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".github/**", ".gitlab-ci.yml", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "docs"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe]
+draft_label = "status::draft"
+
+[observe.risk]
+low_label = "risk::low"
+medium_label = "risk::medium"
+high_label = "risk::high"
+
+[observe.description]
+required = true
+template_paths = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md"]
+ignore_branch_issue_key = true
+
 [reviewers]
 # Maximum number of area-routed reviewers to assign from `reviewers.definitions`.
 # Mandatory reviewers and fallback behavior are resolved independently of this cap.

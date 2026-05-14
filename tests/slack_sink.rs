@@ -124,7 +124,6 @@ async fn replies_to_existing_new_mr_thread_for_update_notifications() {
     let update_text = update_payload["text"]
         .as_str()
         .expect("update text should be a string");
-    assert!(update_text.contains("Mr. Milchick - updates on <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>"));
     assert!(update_text.contains("Merge request: <https://gitlab.example.com/group/project/-/merge_requests/3995|Frontend adjustments>"));
     assert!(update_text.contains("No findings were produced."));
 }

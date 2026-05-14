@@ -10,12 +10,10 @@ use tracing::{info, warn};
 #[cfg(feature = "github")]
 use crate::connectors::github::{
     GitHubPlatformConnector, MR_MILCHICK_MARKER, render_github_explain_markdown,
-    render_github_markdown,
 };
 #[cfg(feature = "gitlab")]
 use crate::connectors::gitlab::{
     GitLabPlatformConnector, MR_MILCHICK_MARKER, render_gitlab_explain_markdown,
-    render_gitlab_markdown,
 };
 #[cfg(feature = "slack-app")]
 use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
@@ -45,14 +43,15 @@ use crate::core::inference::{
 use crate::core::message_templates::{
     PipelineStatusState, PipelineStatusTemplateEntry, TemplateCatalog,
     build_explain_template_context, build_notification_template_context,
-    build_summary_template_context, notification_template_variant, render_review_explain,
-    render_review_summary, render_slack_app_notification, render_slack_workflow_notification,
-    resolve_template_catalog,
+    build_observe_template_context, build_summary_template_context, notification_template_variant,
+    render_review_explain, render_review_summary, render_slack_app_notification,
+    render_slack_app_observe_notification, render_slack_app_thread_root, resolve_template_catalog,
 };
 use crate::core::model::{
     NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
     ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
+use crate::core::observe::{ObservePlan, plan_observe};
 use crate::core::rules::engine::evaluate_rules;
 use crate::core::rules::model::{RuleFinding, RuleOutcome};
 use crate::core::tone::{ToneCategory, ToneSelector};
@@ -97,12 +96,6 @@ struct PreparedRun {
     fixture_mode: bool,
     fixture_notification_variant:
         Option<crate::core::message_templates::NotificationTemplateVariant>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ManagedCommentKind {
-    Summary,
-    Explain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -234,22 +227,12 @@ fn compiled_platform_kind() -> ReviewPlatformKind {
     }
 }
 
-fn render_managed_comment_for_platform(
-    markdown: &str,
-    platform: ReviewPlatformKind,
-    kind: ManagedCommentKind,
-) -> String {
+fn render_explain_comment_for_platform(markdown: &str, platform: ReviewPlatformKind) -> String {
     match platform {
         #[cfg(feature = "gitlab")]
-        ReviewPlatformKind::GitLab => match kind {
-            ManagedCommentKind::Summary => render_gitlab_markdown(markdown),
-            ManagedCommentKind::Explain => render_gitlab_explain_markdown(markdown),
-        },
+        ReviewPlatformKind::GitLab => render_gitlab_explain_markdown(markdown),
         #[cfg(feature = "github")]
-        ReviewPlatformKind::GitHub => match kind {
-            ManagedCommentKind::Summary => render_github_markdown(markdown),
-            ManagedCommentKind::Explain => render_github_explain_markdown(markdown),
-        },
+        ReviewPlatformKind::GitHub => render_github_explain_markdown(markdown),
         _ => unreachable!("unsupported compiled review platform"),
     }
 }
@@ -382,9 +365,9 @@ pub async fn run_mode(
                 &app_config,
                 &template_catalog,
                 &selector,
-                &prepared.pipeline_statuses,
                 &preview_sink_kinds,
-            )?;
+            )
+            .await?;
         }
         ExecutionMode::Explain => {
             run_explain_mode(
@@ -464,6 +447,7 @@ async fn prepare_run(
             enrich_with_reviewer_assignment(
                 evaluate_rules(&ctx),
                 &snapshot,
+                &app_config.config.areas,
                 &app_config.routing_config,
                 &app_config.codeowners,
             ),
@@ -517,51 +501,64 @@ fn finalize_outcome(
     enrich_with_pipeline_failure_gate(outcome, config, pipeline_statuses)
 }
 
-fn run_observe_mode(
+async fn run_observe_mode(
     prepared: &PreparedRun,
     app_config: &AppConfigContext,
     template_catalog: &TemplateCatalog,
     selector: &ToneSelector,
-    pipeline_statuses: &[PipelineStatusTemplateEntry],
     preview_sink_kinds: &[NotificationSinkKind],
 ) -> Result<()> {
-    let summary = governance_summary_markdown(
-        template_catalog,
-        &prepared.outcome,
-        &prepared.snapshot,
-        selector,
+    let observe_plan = plan_observe(
         &prepared.ctx,
-        None,
-    )?;
-
-    print_outcome(&prepared.outcome);
-    print_observe_action_plan(&prepared.outcome);
-    println!("Governance summary comment preview:");
-    println!("---");
-    println!(
-        "{}",
-        render_managed_comment_for_platform(
-            &summary,
-            compiled_platform_kind(),
-            ManagedCommentKind::Summary,
-        )
+        &prepared.snapshot,
+        &app_config.config.areas,
+        &app_config.config.observe,
     );
-    println!("---");
+    let observe_outcome = observe_plan.to_outcome();
+
+    print_observe_plan(&observe_plan);
+    print_action_plan(&observe_outcome, false);
     print_snapshot_details(&prepared.snapshot);
     print_codeowners_details(&prepared.snapshot, app_config);
 
+    let notifications = build_observe_notifications(
+        &observe_plan,
+        &prepared.snapshot,
+        template_catalog,
+        selector,
+        &prepared.ctx,
+        preview_sink_kinds,
+    );
     if prepared.fixture_mode {
-        let notifications = build_notifications(
-            &prepared.outcome,
-            &prepared.snapshot,
-            template_catalog,
-            selector,
-            &prepared.ctx,
-            pipeline_statuses,
-            preview_sink_kinds,
-            prepared.fixture_notification_variant,
-        );
         print_notification_previews(&notifications);
+    }
+
+    let strategy = if prepared.fixture_mode {
+        ExecutionStrategy::DryRun
+    } else {
+        ExecutionStrategy::Real
+    };
+    let review_report = prepared
+        .wiring
+        .execute_review_actions(strategy, &observe_plan.actions)
+        .await?;
+    let notification_reports = prepared
+        .wiring
+        .deliver_notifications(
+            strategy,
+            app_config.config.execution.notification_policy,
+            &notifications,
+            &review_report,
+        )
+        .await?;
+    print_execution_report(&crate::runtime::ExecutionReport {
+        review_report,
+        notification_reports,
+    });
+
+    if observe_plan.should_fail() {
+        warn!("failing observe because intake requirements were not satisfied");
+        anyhow::bail!("merge request intake requirements were not satisfied");
     }
 
     Ok(())
@@ -688,11 +685,7 @@ async fn run_explain_mode(
     println!("---");
     println!(
         "{}",
-        render_managed_comment_for_platform(
-            &explain_markdown,
-            compiled_platform_kind(),
-            ManagedCommentKind::Explain,
-        )
+        render_explain_comment_for_platform(&explain_markdown, compiled_platform_kind())
     );
     println!("---");
 
@@ -1173,6 +1166,68 @@ fn print_notification_previews(notifications: &[NotificationMessage]) {
     }
 }
 
+fn print_observe_plan(plan: &ObservePlan) {
+    println!("Observe intake status: {}", plan.status.as_str());
+    println!(
+        "- [Risk] {} ({})",
+        plan.risk.level.as_str(),
+        plan.risk.label
+    );
+    if !plan.risk.matched_areas.is_empty() {
+        println!("- [MatchedAreas] {}", plan.risk.matched_areas.join(", "));
+    }
+    if !plan.risk.unmatched_paths.is_empty() {
+        println!(
+            "- [UnmatchedPaths] {}",
+            plan.risk.unmatched_paths.join(", ")
+        );
+    }
+    println!("- [Description] {}", plan.description.status.as_str());
+    if plan.blocking_reasons.is_empty() {
+        println!("- [IntakeBlockers] none");
+    } else {
+        println!("Intake blockers:");
+        for reason in &plan.blocking_reasons {
+            println!("- {}", reason);
+        }
+    }
+}
+
+fn build_observe_notifications(
+    plan: &ObservePlan,
+    snapshot: &crate::core::model::ReviewSnapshot,
+    template_catalog: &crate::core::message_templates::TemplateCatalog,
+    selector: &ToneSelector,
+    ctx: &crate::context::model::CiContext,
+    sink_kinds: &[NotificationSinkKind],
+) -> Vec<NotificationMessage> {
+    let notification_context = build_observe_template_context(plan, snapshot, selector, ctx);
+    let thread_key = Some(format!("MR #{}", snapshot.review_ref.review_id));
+
+    sink_kinds
+        .iter()
+        .filter_map(|sink| match sink {
+            NotificationSinkKind::SlackApp => Some(NotificationMessage {
+                sink: *sink,
+                subject: render_slack_app_thread_root(template_catalog, &notification_context),
+                body: render_slack_app_observe_notification(
+                    template_catalog,
+                    &notification_context,
+                ),
+                audience: NotificationAudience::Default,
+                severity: if plan.should_fail() {
+                    NotificationSeverity::Critical
+                } else {
+                    NotificationSeverity::Info
+                },
+                thread_key: thread_key.clone(),
+                prefer_thread_reply: true,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 fn build_notifications(
     outcome: &RuleOutcome,
     snapshot: &crate::core::model::ReviewSnapshot,
@@ -1215,28 +1270,10 @@ fn build_notifications(
                     audience: NotificationAudience::Default,
                     severity: NotificationSeverity::Info,
                     thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
-                    prefer_thread_reply: matches!(
-                        variant,
-                        crate::core::message_templates::NotificationTemplateVariant::Update
-                    ),
+                    prefer_thread_reply: true,
                 })
             }
-            NotificationSinkKind::SlackWorkflow => {
-                let (subject, body) = render_slack_workflow_notification(
-                    template_catalog,
-                    &notification_context,
-                    variant,
-                );
-                Some(NotificationMessage {
-                    sink: *sink,
-                    subject,
-                    body,
-                    audience: NotificationAudience::Default,
-                    severity: NotificationSeverity::Info,
-                    thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
-                    prefer_thread_reply: false,
-                })
-            }
+            NotificationSinkKind::SlackWorkflow => None,
             _ => None,
         })
         .collect()
@@ -1571,31 +1608,6 @@ fn reviewers_for_notification(
     }
 }
 
-fn print_observe_action_plan(outcome: &RuleOutcome) {
-    let rendered_actions: Vec<String> = outcome
-        .action_plan
-        .actions
-        .iter()
-        .filter(|action| {
-            !matches!(
-                action,
-                ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. }
-            )
-        })
-        .map(describe_planned_action)
-        .collect();
-
-    if rendered_actions.is_empty() {
-        println!("No follow-up actions would be taken by `refine`.");
-        return;
-    }
-
-    println!("If you run `refine`, it would:");
-    for action in rendered_actions {
-        println!("- {}", action);
-    }
-}
-
 fn print_snapshot_details(snapshot: &crate::core::model::ReviewSnapshot) {
     println!("Merge request details:");
     println!("- [Title] {}", snapshot.title);
@@ -1645,10 +1657,16 @@ fn print_codeowners_details(
     snapshot: &crate::core::model::ReviewSnapshot,
     app_config: &AppConfigContext,
 ) {
-    let area_summary = summarize_areas(snapshot);
+    let area_summary = summarize_areas(snapshot, &app_config.config.areas);
     println!("Area summary:");
     for (area, count) in &area_summary.counts {
-        println!("- [{}] {}", area.as_str(), count);
+        println!("- [{}] {}", area, count);
+    }
+    if !area_summary.unmatched_paths.is_empty() {
+        println!("Unmatched paths:");
+        for path in &area_summary.unmatched_paths {
+            println!("- {}", path);
+        }
     }
 
     let excluded_reviewers = vec![snapshot.author.username.clone()];
@@ -1704,8 +1722,9 @@ mod tests {
     use super::*;
     use crate::config::{
         CodeownersConfig, ExecutionConfig, GitLabPlatformConfig as ResolvedGitLabPlatformConfig,
-        InferenceConfig, NotificationsConfig, PipelineStatusConfig as ResolvedPipelineStatusConfig,
-        PlatformConfig, ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig,
+        InferenceConfig, NotificationsConfig, ObserveConfig, ObserveDescriptionConfig,
+        ObserveRiskConfig, PipelineStatusConfig as ResolvedPipelineStatusConfig, PlatformConfig,
+        ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig,
         SlackWorkflowConfig as ResolvedSlackWorkflowConfig, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
@@ -1791,6 +1810,32 @@ mod tests {
                     all_pipelines_pass_label: None,
                     label_rules: Vec::new(),
                 },
+            },
+            areas: crate::core::model::AreasConfig {
+                definitions: vec![crate::core::model::AreaDefinition {
+                    key: "frontend".to_string(),
+                    paths: vec!["apps/frontend/**".to_string()],
+                    risk: crate::core::model::AreaRisk::Medium,
+                    critical: false,
+                }],
+            },
+            observe: ObserveConfig {
+                risk: ObserveRiskConfig {
+                    low_label: "risk::low".to_string(),
+                    medium_label: "risk::medium".to_string(),
+                    high_label: "risk::high".to_string(),
+                    medium_area_count: 2,
+                    high_area_count: 4,
+                    medium_changed_lines: 250,
+                    high_changed_lines: 800,
+                    high_file_count: 25,
+                },
+                description: ObserveDescriptionConfig {
+                    required: false,
+                    template_paths: Vec::new(),
+                    ignore_branch_issue_key: true,
+                },
+                draft_label: "status::draft".to_string(),
             },
             execution: ExecutionConfig {
                 dry_run: false,
@@ -1971,15 +2016,19 @@ mod tests {
                 state: PipelineStatusState::Passed,
                 detail: Some("18 tests passed".to_string()),
             }],
-            &[NotificationSinkKind::SlackWorkflow],
+            &[NotificationSinkKind::SlackApp],
             None,
         );
 
         assert_eq!(notifications.len(), 1);
-        assert!(notifications[0].subject.contains("Mr. Milchick - updates"));
+        assert!(
+            notifications[0]
+                .subject
+                .contains("Mr. Milchick is observing")
+        );
         assert!(notifications[0]
             .body
-            .contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
+            .contains("Merge request: <https://gitlab.example.com/group/project/-/merge_requests/456|Frontend adjustments>"));
         assert!(
             notifications[0]
                 .body

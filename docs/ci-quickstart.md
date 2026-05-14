@@ -78,14 +78,14 @@ milchick:observe:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-Once the output looks right, switch `observe` to `refine`.
+`observe` is now the intake gate. It may apply labels, send the Slack intake thread reply, and fail early when intake requirements are not met.
 
 ## Recommended Job Shape
 
 The intended rollout now looks like this:
 
-1. Start with `observe` to preview deterministic governance output.
-2. Switch to `refine` for the fast path once reviewer assignment, summary upsert, and optional notification behavior look correct.
+1. Run `observe` first to label risk, handle drafts, validate the description, and open/update the Slack MR thread.
+2. Run `refine` after the other CI jobs have produced their status signals.
 3. If you want advisory LLM commentary, add a separate slower `explain` job after a real `refine` run.
 
 That split keeps the main governance job quick while leaving richer advisory analysis to a later follow-up stage or pipeline.

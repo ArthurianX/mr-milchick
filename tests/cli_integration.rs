@@ -52,8 +52,45 @@ fn write_temp_config(contents: &str) -> String {
         .expect("clock should be after epoch")
         .as_nanos();
     let path = std::env::temp_dir().join(format!("mr-milchick-config-{unique}.toml"));
+    let contents = if contents.contains("[[areas.definitions]]") {
+        contents.to_string()
+    } else {
+        format!("{}\n{}", contents, minimal_area_config())
+    };
     fs::write(&path, contents).expect("temp config should be written");
     path.display().to_string()
+}
+
+fn minimal_area_config() -> &'static str {
+    r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "backend"
+paths = ["services/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["libs/**", "packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "devops"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "documentation"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe.description]
+required = false
+"#
 }
 
 fn build_test_config(envs: &[(&str, &str)]) -> String {
@@ -72,6 +109,39 @@ fn build_test_config(envs: &[(&str, &str)]) -> String {
         legacy_bool(env_value(envs, "MR_MILCHICK_DRY_RUN")).unwrap_or(false),
         toml_string(env_value(envs, "MR_MILCHICK_NOTIFICATION_POLICY").unwrap_or("always"))
     ));
+
+    sections.push(
+        r#"[areas]
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "backend"
+paths = ["services/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["libs/**", "packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "devops"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "documentation"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe.description]
+required = false
+"#
+        .to_string(),
+    );
 
     sections.push(build_reviewers_config(envs));
     sections.push(format!(
@@ -316,7 +386,7 @@ fn observe_mode_skips_github_for_non_review_pipelines() {
 }
 
 #[test]
-fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
+fn observe_mode_applies_intake_labels_without_posting_comments() {
     let server = MockGitLabServer::start();
     let envs = review_env(&server);
     let output = run_cli("observe", &[], &borrow_env(&envs));
@@ -329,11 +399,10 @@ fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("No findings were produced."));
-    assert!(stdout.contains("If you run `refine`, it would:"));
-    assert!(stdout.contains("[AssignReviewers] principal-reviewer, bob"));
+    assert!(stdout.contains("Observe intake status:"));
+    assert!(stdout.contains("[AddLabels] risk::"));
 
-    assert_eq!(server.request_count("GET", &review_path()), 1);
+    assert_eq!(server.request_count("GET", &review_path()), 2);
     assert_eq!(server.request_count_prefix("GET", &review_files_path()), 1);
     assert_eq!(server.request_count("POST", &review_comments_path()), 0);
 }
@@ -564,7 +633,7 @@ base_url = "__SLACK_BASE_URL__"
 enabled = false
 
 [templates.slack_app]
-update_root = "Template override for {{mr_ref}}"
+thread_root = "Template override for {{mr_ref}}"
 "#
     .replace("__PLATFORM__", compiled_platform_connector_kind())
     .replace("__BASE_URL__", &server.api_base_url())
@@ -666,7 +735,7 @@ fn observe_mode_supports_fixture_without_ci_env_without_notification_sinks() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("If you run `refine`, it would:"));
+    assert!(stdout.contains("Observe intake status:"));
     assert!(stdout.contains("No notification previews were produced."));
 }
 
@@ -708,8 +777,8 @@ channel = "C0ALY38CW3X"
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Notification previews:"));
-    assert!(stdout.contains("Mr. Milchick - updates"));
-    assert!(!stdout.contains("took a first look at"));
+    assert!(stdout.contains("Mr. Milchick is observing"));
+    assert!(stdout.contains("Status: passed"));
 
     let _ = fs::remove_file(config_path);
 }
@@ -748,7 +817,7 @@ channel = "C0ALY38CW3X"
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Notification previews:"));
     assert!(stdout.contains("SlackApp"));
-    assert!(stdout.contains("took a first look at"));
+    assert!(stdout.contains("Mr. Milchick is observing"));
 
     let _ = fs::remove_file(config_path);
 }
@@ -876,7 +945,7 @@ base_url = {slack_base_url}
 
     assert_eq!(
         server.request_count_prefix("GET", "/slack/api/conversations.history"),
-        1
+        2
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
@@ -892,8 +961,6 @@ base_url = {slack_base_url}
     let update_text = update_payload["text"]
         .as_str()
         .expect("update text should be a string");
-    assert!(update_text.contains("Mr. Milchick - updates on"));
-    assert!(update_text.contains("MR #3997"));
     assert!(update_text.contains("Button spacing changed near the CTA"));
 
     let _ = fs::remove_file(config_path);

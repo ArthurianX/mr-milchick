@@ -28,7 +28,9 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
 - Default path: `mr-milchick.toml`
 - Override path: `MR_MILCHICK_CONFIG_PATH`
 
-If the file is missing, Milchick uses defaults:
+In v5, repository areas are required. If the file is missing or `[areas]` is empty, Milchick exits with a config error instead of guessing your repo layout.
+
+When a valid file is present, omitted optional settings use defaults:
 
 - platform kind: compiled platform
 - platform base URL: GitLab `https://gitlab.com/api/v4`, GitHub `https://api.github.com`
@@ -61,6 +63,25 @@ kind = "gitlab"
 base_url = "https://gitlab.com/api/v4"
 
 [platform.gitlab]
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[observe.description]
+required = true
+template_paths = [".gitlab/merge_request_templates/Default.md"]
 
 [[platform.gitlab.label_rules]]
 name = "ready-for-testing"
@@ -241,8 +262,46 @@ any = [
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`; `observe` is preview-only already. |
+| `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`. Live `observe` mutates intake labels by design. |
 | `notification_policy` | No | `always` | `always` or `on-applied-action`. Only affects `refine`, because `explain` never sends notifications. |
+
+### `[areas]` and `[[areas.definitions]]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `key` | Yes | none | Stable repo area key used by risk assessment and reviewer routing. |
+| `paths` | Yes | none | Repository-relative exact paths or prefix globs ending in `/**`. First matching area wins. |
+| `risk` | No | `medium` | `low`, `medium`, or `high`. High-risk areas make observe apply the high risk label. |
+| `critical` | No | `false` | Equivalent to high risk for observe classification. |
+
+`areas.definitions` must contain at least one entry. Reviewer `areas` must reference these keys exactly.
+
+### `[observe]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `draft_label` | No | `status::draft` | Added by `observe` when the review is draft. |
+
+### `[observe.risk]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `low_label` | No | `risk::low` | Scoped label applied for low-risk reviews. |
+| `medium_label` | No | `risk::medium` | Scoped label applied for medium-risk reviews. |
+| `high_label` | No | `risk::high` | Scoped label applied for high-risk reviews. |
+| `medium_area_count` | No | `2` | Touched area count that escalates to medium. |
+| `high_area_count` | No | `4` | Touched area count that escalates to high. |
+| `medium_changed_lines` | No | `250` | Reported additions plus deletions that escalates to medium. |
+| `high_changed_lines` | No | `800` | Reported additions plus deletions that escalates to high. |
+| `high_file_count` | No | `25` | Changed file count that escalates to high. |
+
+### `[observe.description]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `required` | No | `true` | When true, observe blocks non-draft reviews without meaningful description text. |
+| `template_paths` | No | `[]` | Local MR/PR template paths to compare against when present. |
+| `ignore_branch_issue_key` | No | `true` | Ignores branch-derived issue keys such as `ABC-123` when judging meaningful text. |
 
 ### `[reviewers]` and `[[reviewers.definitions]]`
 
@@ -250,7 +309,7 @@ any = [
 | --- | --- | --- | --- |
 | `max_reviewers` | No | `2` | Caps only non-mandatory area-routed reviewers. |
 | `username` | Yes | none | Reviewer username. |
-| `areas` | No | `[]` | Area keys such as `frontend`, `backend`, `packages`, `devops`, `docs`, `tests`, `unknown`. |
+| `areas` | No | `[]` | Area keys from `[[areas.definitions]]`. Unknown keys are rejected. |
 | `fallback` | No | `false` | Marks fallback reviewer. |
 | `mandatory` | No | `false` | Always prepend this reviewer when eligible. |
 
@@ -402,7 +461,7 @@ These still belong to the CI context layer, not the app config layer:
 
 ## Notes
 
-- `observe` and `explain` are already non-mutating. `dry_run` only changes `refine`.
-- Slack notifications are planned from resolved config but only sent during real `refine`.
+- Live `observe` mutates intake labels by design. `dry_run` only changes `refine` and `explain`; fixture observe remains dry-run.
+- Slack app notifications are sent during live `observe` and `refine`; `explain` does not notify Slack.
 - Config validation is strict. Unknown TOML fields fail parsing, and legacy app-config env vars fail startup.
 - Platform and sink configuration must agree with compiled capabilities.

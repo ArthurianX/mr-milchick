@@ -7,6 +7,29 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.0.0] — 2026-05-14
+
+This major release turns `observe` into the first pipeline intake gate instead of a preview-only command.
+
+### Breaking
+
+- `observe` now mutates review state by applying risk labels and draft labels, sends Slack app intake notifications, and exits nonzero when intake requirements are not met.
+- Repository areas are now required in `mr-milchick.toml` under `[[areas.definitions]]`; Milchick no longer ships hardcoded default area classification.
+- Reviewer `areas` must reference configured area keys exactly.
+- Slack's v5 one-root-thread notification contract is supported through the Slack app sink; Slack workflow delivery does not perform MR thread lookup.
+
+### Added
+
+- Deterministic observe risk assessment with mutually exclusive `risk::low`, `risk::medium`, and `risk::high` labels.
+- Required-description intake checks that ignore branch-derived issue keys and can compare descriptions against configured local MR/PR templates.
+- Observe-specific Slack templates for thread root, passed intake, blocked intake, draft intake, and refine thread replies.
+- New tone categories for observe intake, risk levels, description failures, paused pipelines, and refine readiness.
+
+### Changed
+
+- `refine` continues to own reviewer assignment, governance summary comments, pipeline-status governance, and reviewer mentions in Slack threads.
+- GitHub label add/remove actions are implemented for parity with observe risk/draft labeling.
+
 ## [4.1.1] — 2026-05-12
 
 This patch release adds a small but important label-rule predicate for workflows that need to distinguish an unlabeled merge request from one that already carries workflow state.

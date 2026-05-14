@@ -1,14 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::core::domain::area_summary::MergeRequestAreaSummary;
-use crate::core::domain::code_area::CodeArea;
 use crate::core::model::ReviewerConfig;
 #[cfg(test)]
 use crate::core::model::ReviewerDefinition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewerRoutingConfig {
-    pub reviewers_by_area: HashMap<CodeArea, Vec<String>>,
+    pub reviewers_by_area: HashMap<String, Vec<String>>,
     pub fallback_reviewers: Vec<String>,
     pub mandatory_reviewers: Vec<String>,
     pub max_reviewers: usize,
@@ -31,7 +30,7 @@ impl ReviewerRoutingConfig {
 
             for area in &definition.areas {
                 reviewers_by_area
-                    .entry(*area)
+                    .entry(area.clone())
                     .or_insert_with(Vec::new)
                     .push(definition.username.clone());
             }
@@ -63,55 +62,55 @@ impl ReviewerRoutingConfig {
                 },
                 ReviewerDefinition {
                     username: "alice".to_string(),
-                    areas: vec![CodeArea::Frontend],
+                    areas: vec!["frontend".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "bob".to_string(),
-                    areas: vec![CodeArea::Frontend],
+                    areas: vec!["frontend".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "carol".to_string(),
-                    areas: vec![CodeArea::Backend],
+                    areas: vec!["backend".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "dave".to_string(),
-                    areas: vec![CodeArea::Backend],
+                    areas: vec!["backend".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "erin".to_string(),
-                    areas: vec![CodeArea::Shared],
+                    areas: vec!["packages".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "frank".to_string(),
-                    areas: vec![CodeArea::Shared],
+                    areas: vec!["packages".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "grace".to_string(),
-                    areas: vec![CodeArea::DevOps],
+                    areas: vec!["devops".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "heidi".to_string(),
-                    areas: vec![CodeArea::Documentation],
+                    areas: vec!["documentation".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
                 ReviewerDefinition {
                     username: "ivan".to_string(),
-                    areas: vec![CodeArea::Tests],
+                    areas: vec!["tests".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
                 },
@@ -179,20 +178,16 @@ pub fn recommend_reviewers(
                 selected.insert(candidate.clone());
                 reasons.push(format!(
                     "Selected reviewer '{}' for area '{}'.",
-                    candidate,
-                    area.as_str()
+                    candidate, area
                 ));
             } else {
                 reasons.push(format!(
                     "No eligible reviewer remained for area '{}'.",
-                    area.as_str()
+                    area
                 ));
             }
         } else {
-            reasons.push(format!(
-                "No reviewer pool configured for area '{}'.",
-                area.as_str()
-            ));
+            reasons.push(format!("No reviewer pool configured for area '{}'.", area));
         }
     }
 
@@ -298,11 +293,11 @@ mod tests {
     #[test]
     fn recommends_multiple_reviewers_for_highest_priority_areas() {
         let mut summary = MergeRequestAreaSummary::new();
-        summary.add(CodeArea::Frontend);
-        summary.add(CodeArea::Frontend);
-        summary.add(CodeArea::Backend);
-        summary.add(CodeArea::Backend);
-        summary.add(CodeArea::Shared);
+        summary.add("frontend");
+        summary.add("frontend");
+        summary.add("backend");
+        summary.add("backend");
+        summary.add("packages");
 
         let config = ReviewerRoutingConfig::example();
         let recommendation = recommend_reviewers(&summary, &config, &[]);
@@ -316,7 +311,7 @@ mod tests {
     #[test]
     fn skips_excluded_reviewer_and_uses_next_candidate() {
         let mut summary = MergeRequestAreaSummary::new();
-        summary.add(CodeArea::Frontend);
+        summary.add("frontend");
 
         let config = ReviewerRoutingConfig::example();
         let excluded = vec!["alice".to_string()];
@@ -333,15 +328,15 @@ mod tests {
         let mut config = ReviewerRoutingConfig::example();
         config
             .reviewers_by_area
-            .insert(CodeArea::Frontend, vec!["alice".to_string()]);
+            .insert("frontend".to_string(), vec!["alice".to_string()]);
         config
             .reviewers_by_area
-            .insert(CodeArea::Documentation, vec!["alice".to_string()]);
+            .insert("documentation".to_string(), vec!["alice".to_string()]);
         config.max_reviewers = 3;
 
         let mut summary = MergeRequestAreaSummary::new();
-        summary.add(CodeArea::Frontend);
-        summary.add(CodeArea::Documentation);
+        summary.add("frontend");
+        summary.add("documentation");
 
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
@@ -370,9 +365,9 @@ mod tests {
     #[test]
     fn respects_max_reviewer_limit() {
         let mut summary = MergeRequestAreaSummary::new();
-        summary.add(CodeArea::Frontend);
-        summary.add(CodeArea::Backend);
-        summary.add(CodeArea::Shared);
+        summary.add("frontend");
+        summary.add("backend");
+        summary.add("packages");
 
         let mut config = ReviewerRoutingConfig::example();
         config.max_reviewers = 2;

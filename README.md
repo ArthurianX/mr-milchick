@@ -38,13 +38,11 @@ The tool exists to keep review governance where the decision already happens: in
   <img src="assets/flow.gif" alt="Mr Milchick Flow" >
 </div>
 
-`observe` is the verbose deterministic inspection path: it previews the governance summary, action plan, routing details, and fixture notifications without mutating anything or invoking inference. `refine` is the fast governance path: it assigns reviewers, syncs the deterministic governance summary comment, optionally delivers Slack notifications, and fails the pipeline when blocking policy remains unresolved. `explain` is a slower advisory follow-up: it rereads the existing Milchick governance summary comment, skips itself when the last `refine` reported no governance effect and no blocking outcome, and otherwise upserts a separate advisory explain comment. `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
+`observe` is the first intake gate: it classifies changed paths through required repo-defined areas, applies one scoped risk label, applies a draft label for draft reviews, sends the Slack intake update into the MR thread, and exits nonzero when intake requirements such as a meaningful description are not met. `refine` is the fast governance path after prior CI signals exist: it assigns reviewers, syncs the deterministic governance summary comment, optionally delivers Slack thread replies, and fails the pipeline when blocking policy remains unresolved. `explain` is a slower advisory follow-up: it rereads the existing Milchick governance summary comment, skips itself when the last `refine` reported no governance effect and no blocking outcome, and otherwise upserts a separate advisory explain comment. `version` prints build metadata and the compiled capabilities in the artifact you are actually running.
 
-Today the implemented surface is intentionally focused: GitLab and GitHub are the supported platform connectors, and Slack app plus Slack workflow are optional notification sinks.
+Today the implemented surface is intentionally focused: GitLab and GitHub are the supported platform connectors. The v5 threaded Slack contract uses the Slack app sink; Slack workflow delivery remains available for older notification shapes but does not support the one-root-thread MR contract.
 
-One notification detail is intentionally sink-specific: Slack app update notifications try to reuse the existing thread for the same MR, while Slack workflow notifications do not do same-thread lookup and keep their workflow-driven delivery shape.
-
-Optional local review suggestions can also be enabled when the binary is built with the `llm-local` feature and pointed at a local GGUF model. In `4.x`, that local `llama.cpp`-backed advisory pass runs only during `explain`, which keeps the normal `refine` governance flow fast and deterministic while still allowing a slower follow-up comment with structured review hints.
+Optional local review suggestions can also be enabled when the binary is built with the `llm-local` feature and pointed at a local GGUF model. That local `llama.cpp`-backed advisory pass runs only during `explain`, which keeps the normal `observe` and `refine` governance flow fast and deterministic while still allowing a slower follow-up comment with structured review hints.
 
 Internally, the repository now ships as a single crate with layered modules:
 
@@ -62,6 +60,25 @@ Runtime settings now live in `mr-milchick.toml`. A minimal GitLab-oriented examp
 ```toml
 [platform]
 kind = "gitlab"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[observe.description]
+required = true
+template_paths = [".gitlab/merge_request_templates/Default.md"]
 
 [reviewers]
 max_reviewers = 2
@@ -115,7 +132,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and optional user mapping now live in `mr-milchick.toml`. With the Slack app sink, follow-up update notifications try to land in the original MR thread for the same `MR #...`; Slack workflow delivery does not currently do that thread reuse. If you prefer Slack workflow delivery instead, switch the feature set and notification config intentionally. A deeper setup guide, including `mr-milchick.toml`, rollout steps, the split `refine`/`explain` model, and both Slack variants, lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and optional user mapping now live in `mr-milchick.toml`. With the Slack app sink, all observe/refine notifications are kept under one root MR thread for the same `MR #...`; Slack workflow delivery does not currently support that v5 thread contract. A deeper setup guide lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 Some internal teams also use an optional convention where earlier CI jobs write compact JSON files under `*/milchick-status/*.json`, and Milchick later folds those prior-job outcomes into Slack notifications. That path is intentionally optional and documented in the configuration and template guides rather than treated as a required workflow.
 

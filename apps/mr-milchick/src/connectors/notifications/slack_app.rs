@@ -124,7 +124,11 @@ impl NotificationSink for SlackAppSink {
                 .await
                 {
                     Ok(Some(root_ts)) => {
-                        let reply_text = combine_subject_and_body(&subject, &text);
+                        let reply_text = if text.trim().is_empty() {
+                            subject.clone()
+                        } else {
+                            text.clone()
+                        };
                         let reply_ts = post_message(
                             &self.http,
                             &post_message_endpoint,
@@ -310,18 +314,6 @@ async fn find_existing_thread_root_ts(
     }
 }
 
-fn combine_subject_and_body(subject: &str, body: &str) -> String {
-    let subject = subject.trim();
-    let body = body.trim();
-
-    match (subject.is_empty(), body.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => subject.to_string(),
-        (true, false) => body.to_string(),
-        (false, false) => format!("{subject}\n\n{body}"),
-    }
-}
-
 fn replace_gitlab_mentions(text: &str, user_map: &BTreeMap<String, String>) -> String {
     let mut rendered = String::with_capacity(text.len());
     let chars = text.chars().collect::<Vec<_>>();
@@ -437,13 +429,6 @@ mod tests {
         let rendered = replace_gitlab_mentions("Assign @alice", &user_map);
 
         assert_eq!(rendered, "Assign @alice");
-    }
-
-    #[test]
-    fn combines_subject_and_body_for_thread_reply() {
-        let combined = combine_subject_and_body("Updates on MR #12", "Merge request: MR #12");
-
-        assert_eq!(combined, "Updates on MR #12\n\nMerge request: MR #12");
     }
 
     #[test]

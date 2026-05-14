@@ -183,6 +183,73 @@ impl GitHubClient {
         Ok(())
     }
 
+    #[instrument(skip(self, labels), fields(project_key = %project_key, review_id = %review_id, label_count = labels.len()))]
+    pub async fn add_labels(
+        &self,
+        project_key: &str,
+        review_id: &str,
+        labels: &[String],
+    ) -> Result<()> {
+        if labels.is_empty() {
+            return Ok(());
+        }
+        let url = format!(
+            "{}/repos/{}/issues/{}/labels",
+            self.config.base_url.trim_end_matches('/'),
+            project_key,
+            review_id
+        );
+
+        let response = self
+            .request(Method::POST, url)
+            .json(&serde_json::json!({ "labels": labels }))
+            .send()
+            .await
+            .context("failed to send add labels request to GitHub")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("GitHub add labels failed: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, labels), fields(project_key = %project_key, review_id = %review_id, label_count = labels.len()))]
+    pub async fn remove_labels(
+        &self,
+        project_key: &str,
+        review_id: &str,
+        labels: &[String],
+    ) -> Result<()> {
+        for label in labels {
+            let encoded = label.replace('/', "%2F").replace(' ', "%20");
+            let url = format!(
+                "{}/repos/{}/issues/{}/labels/{}",
+                self.config.base_url.trim_end_matches('/'),
+                project_key,
+                review_id,
+                encoded
+            );
+            let response = self
+                .request(Method::DELETE, url)
+                .send()
+                .await
+                .context("failed to send remove label request to GitHub")?;
+            if response.status().as_u16() == 404 {
+                continue;
+            }
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("GitHub remove label failed: {} - {}", status, body);
+            }
+        }
+
+        Ok(())
+    }
+
     async fn paginate<T>(&self, url: &str, context: &str) -> Result<Vec<T>>
     where
         T: serde::de::DeserializeOwned,

@@ -95,6 +95,7 @@ impl PlatformConnector for GitHubPlatformConnector {
             .map_err(map_request_error)?;
 
         let mut report = ReviewActionReport::default();
+        let mut current_labels: Option<Vec<String>> = None;
 
         for action in actions {
             match action {
@@ -157,10 +158,92 @@ impl PlatformConnector for GitHubPlatformConnector {
                     )
                     .await?;
                 }
-                ReviewAction::AddLabels { .. } | ReviewAction::RemoveLabels { .. } => {
-                    report.skipped.push(SkippedReviewAction {
-                        action: action.kind(),
-                        reason: "not implemented for GitHub yet".to_string(),
+                ReviewAction::AddLabels { labels } => {
+                    let existing_labels = match &current_labels {
+                        Some(labels) => labels.clone(),
+                        None => {
+                            let labels = self
+                                .client
+                                .get_pull_request(&self.project_key, &self.review_id)
+                                .await
+                                .map_err(map_request_error)?
+                                .labels;
+                            current_labels = Some(labels.clone());
+                            labels
+                        }
+                    };
+                    let labels_to_add = labels
+                        .iter()
+                        .filter(|label| !existing_labels.iter().any(|existing| existing == *label))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if labels_to_add.is_empty() {
+                        report.skipped.push(SkippedReviewAction {
+                            action: ReviewActionKind::AddLabels,
+                            reason: "labels already present".to_string(),
+                        });
+                        continue;
+                    }
+
+                    self.client
+                        .add_labels(&self.project_key, &self.review_id, &labels_to_add)
+                        .await
+                        .map_err(map_request_error)?;
+
+                    if let Some(existing) = current_labels.as_mut() {
+                        for label in &labels_to_add {
+                            if !existing.iter().any(|current| current == label) {
+                                existing.push(label.clone());
+                            }
+                        }
+                    }
+
+                    report.applied.push(AppliedReviewAction {
+                        action: ReviewActionKind::AddLabels,
+                        detail: Some(labels_to_add.join(", ")),
+                    });
+                }
+                ReviewAction::RemoveLabels { labels } => {
+                    let existing_labels = match &current_labels {
+                        Some(labels) => labels.clone(),
+                        None => {
+                            let labels = self
+                                .client
+                                .get_pull_request(&self.project_key, &self.review_id)
+                                .await
+                                .map_err(map_request_error)?
+                                .labels;
+                            current_labels = Some(labels.clone());
+                            labels
+                        }
+                    };
+                    let labels_to_remove = labels
+                        .iter()
+                        .filter(|label| existing_labels.iter().any(|existing| existing == *label))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if labels_to_remove.is_empty() {
+                        report.skipped.push(SkippedReviewAction {
+                            action: ReviewActionKind::RemoveLabels,
+                            reason: "labels already absent".to_string(),
+                        });
+                        continue;
+                    }
+
+                    self.client
+                        .remove_labels(&self.project_key, &self.review_id, &labels_to_remove)
+                        .await
+                        .map_err(map_request_error)?;
+
+                    if let Some(existing) = current_labels.as_mut() {
+                        existing.retain(|label| {
+                            !labels_to_remove.iter().any(|removed| removed == label)
+                        });
+                    }
+
+                    report.applied.push(AppliedReviewAction {
+                        action: ReviewActionKind::RemoveLabels,
+                        detail: Some(labels_to_remove.join(", ")),
                     });
                 }
                 ReviewAction::FailPipeline { reason } => {
