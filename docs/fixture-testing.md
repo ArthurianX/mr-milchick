@@ -1,12 +1,52 @@
 # Fixture Testing
 
-Fixtures still let you run Milchick without a live review platform. The difference is that notification previews and delivery now come from `mr-milchick.toml`.
+Fixtures still let you run Milchick without a live review platform, but v5 still requires a real Milchick TOML config. Fixtures provide review data; TOML provides repository areas, observe rules, notification sinks, and templates.
+
+Use the checked-in `mr-milchick.toml`, or point `MR_MILCHICK_CONFIG_PATH` at a fixture-specific config. The examples below use an explicit fixture config so the commands are self-contained.
+
+## Required Fixture Config
+
+```bash
+cat >/tmp/milchick-fixture.toml <<'TOML'
+[platform]
+kind = "gitlab"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "docs"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe.description]
+required = false
+
+[reviewers]
+max_reviewers = 2
+
+[[reviewers.definitions]]
+username = "principal-reviewer"
+mandatory = true
+
+[[reviewers.definitions]]
+username = "bob"
+areas = ["frontend"]
+TOML
+```
 
 ## Basic Commands
 
 ```bash
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture.toml \
 cargo run -- observe --fixture fixtures/first-notification.toml
+
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture.toml \
 cargo run -- explain --fixture fixtures/first-notification.toml
+
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture.toml \
 cargo run -- refine --fixture fixtures/first-notification.toml
 ```
 
@@ -14,23 +54,37 @@ In fixture mode, `explain` does not need a previously posted platform comment. M
 
 ## Preview Notifications
 
-Enable a sink in config to preview it during fixture runs:
+Enable a sink in the fixture config to preview it during fixture runs. This is a full TOML config, not just a Slack snippet:
 
-```toml
+```bash
+cat >/tmp/milchick-fixture-slack.toml <<'TOML'
+[platform]
+kind = "gitlab"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[observe.description]
+required = false
+
 [notifications.slack_app]
 enabled = true
 channel = "C0ALY38CW3X"
+TOML
 ```
 
 Then run:
 
 ```bash
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture-slack.toml \
 cargo run -- observe --fixture fixtures/first-notification.toml
 ```
 
 ## Preview OBSERVE Intake Messages
 
-For v5 OBSERVE, the Slack app sink is the useful preview target because it owns the one-root-thread MR message shape. Use a fixture-only config like this when you want to inspect the rendered root and thread replies without touching a live review platform:
+For v5 OBSERVE, the Slack app sink is the useful preview target because it owns the one-root-thread MR message shape. Use this complete fixture-only config when you want to inspect the rendered root and thread replies without touching a live review platform:
 
 ```bash
 cat >/tmp/milchick-observe-fixture.toml <<'TOML'
@@ -102,6 +156,7 @@ Fixture delivery still requires `--send-notifications`.
 Slack app example:
 
 ```bash
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture-slack.toml \
 MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
 ```
@@ -109,17 +164,35 @@ cargo run -- refine --fixture fixtures/first-notification.toml --send-notificati
 Slack workflow example:
 
 ```bash
+cat >/tmp/milchick-fixture-workflow.toml <<'TOML'
+[platform]
+kind = "gitlab"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[observe.description]
+required = false
+
+[notifications.slack_workflow]
+enabled = true
+channel = "C0ALY38CW3X"
+TOML
+
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture-workflow.toml \
 MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... \
 cargo run -- refine --fixture fixtures/update-notification.toml --send-notifications
 ```
 
 `explain` never sends notifications, even in fixture mode.
 
-## Alternate Config
+## Config Path
 
-If you want fixture-specific notification settings or templates, point Milchick at another config file:
+`MR_MILCHICK_CONFIG_PATH` is how you select the mandatory TOML config for a fixture run:
 
 ```bash
-MR_MILCHICK_CONFIG_PATH=tests/fixture-config.toml \
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture.toml \
 cargo run -- observe --fixture fixtures/first-notification.toml
 ```

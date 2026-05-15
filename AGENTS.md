@@ -4,7 +4,7 @@
 
 Mr. Milchick is a Rust CLI binary (`mr-milchick`) that enforces merge request governance inside GitLab CI pipelines. It is **not** a service or bot — it runs as a single invocation per pipeline, reads CI environment variables plus resolved application config, evaluates policy rules, and optionally mutates GitLab (Assigned reviewers, post comments, fail pipeline).
 
-Three subcommands: `observe` (dry-run evaluation), `refine` (execute actions), `explain` (deep reasoning output with snapshot details).
+Three subcommands: `observe` (first intake gate; mutates labels/Slack and can fail), `refine` (post-CI governance execution), `explain` (deep reasoning output with snapshot details).
 
 ## Architecture & Data Flow
 
@@ -30,7 +30,7 @@ CI env vars (context/raw.rs → context/builder.rs → context/model.rs)
 ```bash
 cargo build            # compile
 cargo test             # all unit tests (inline in each module)
-cargo run -- observe   # requires CI env vars (see below)
+cargo run -- observe   # requires CI env vars and valid TOML config (see below)
 ```
 
 Tests are co-located with source code (`#[cfg(test)] mod tests` blocks), not in a separate `/tests` directory. When adding a new module, add tests in the same file.
@@ -38,7 +38,7 @@ Integration tests also live at the repository root in `/tests` for the packaged 
 
 ## Local Smoke Testing
 
-The tool reads GitLab CI env vars plus `mr-milchick.toml` for non-secret runtime settings. For local runs, set the CI vars manually and either keep `mr-milchick.toml` in the repo root or point `MR_MILCHICK_CONFIG_PATH` at a different file. See `docs/local-testing.md` for complete examples. Minimal invocation:
+The tool reads GitLab CI env vars plus mandatory TOML runtime config. In v5, `areas.definitions` must exist in either the default `mr-milchick.toml` at the repo root or the file selected by `MR_MILCHICK_CONFIG_PATH`. For local runs, set the CI vars manually and point at the intended config file. See `docs/local-testing.md` for complete examples. Minimal invocation:
 
 ```bash
 CI_PROJECT_ID=412 \
@@ -47,6 +47,7 @@ CI_PIPELINE_SOURCE=merge_request_event \
 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
 CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
 CI_MERGE_REQUEST_LABELS="" \
+MR_MILCHICK_CONFIG_PATH=/tmp/milchick-local.toml \
 cargo run -- observe
 ```
 
@@ -70,11 +71,16 @@ Real GitLab API calls require `GITLAB_TOKEN`. Platform base URLs now live under 
 
 ## Adding a New Code Area
 
-1. Add variant to `CodeArea` enum in `apps/mr-milchick/src/core/domain/code_area.rs` (with `as_str()`)
-2. Add path matching rules in `apps/mr-milchick/src/core/domain/path_classifier.rs` — order matters (first match wins)
-3. Ensure the new area is recognized by `CodeArea::from_config_key()` in `apps/mr-milchick/src/core/domain/code_area.rs` if it needs a config key alias
-4. Keep `ReviewerRoutingConfig::from_config()` in `apps/mr-milchick/src/core/domain/reviewer_routing.rs` compatible with the new area
-5. Update TOML-based examples and docs that demonstrate `[[reviewers.definitions]]` entries
+Code areas are repository config, not hardcoded runtime defaults. Add the area to `[[areas.definitions]]` in TOML, using repository-relative exact paths or `/**` prefix patterns:
+
+```toml
+[[areas.definitions]]
+key = "roulette"
+paths = ["apps/roulette/**"]
+risk = "medium"
+```
+
+Reviewer `areas = [...]` entries must reference these keys exactly. If you change area matching behavior, update `apps/mr-milchick/src/core/domain/path_classifier.rs`, resolver validation tests, and docs that demonstrate `[[areas.definitions]]` plus `[[reviewers.definitions]]`.
 
 ## Tone System
 
@@ -86,7 +92,7 @@ The GitLab connector checks existing MR notes before posting — it skips duplic
 
 ## Slack Notifications
 
-Slack review notifications are optional and only fire during real `refine` execution when reviewers were actually assigned and the pipeline is not being failed. Mr. Milchick supports both a Slack app sink and a Slack Workflow webhook sink. The workflow webhook variant is designed for lower-permission setups where a Slack app would require admin approval; Milchick sends one workflow trigger payload with `mr_milchick_talks_to`, `mr_milchick_says`, and `mr_milchick_says_thread`, and the workflow itself is responsible for posting the light parent message and threaded follow-up.
+Slack review notifications are optional. In v5, the Slack app sink is the supported path for the one-root-thread contract: `observe` creates or reuses one MR/PR root message, posts intake status in the thread, and `refine` later reuses that root for reviewer and pipeline details. Slack Workflow webhook delivery is still available for lower-permission setups, but it does not support the one-root-thread contract unless redesigned.
 
 ## Environment Variables
 
@@ -98,7 +104,7 @@ Slack review notifications are optional and only fire during real `refine` execu
 | `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME` | For MR pipelines | Source branch |
 | `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` | For MR pipelines | Target branch |
 | `CI_MERGE_REQUEST_LABELS` | No | Comma-separated labels |
-| `MR_MILCHICK_CONFIG_PATH` | No | Overrides the default `mr-milchick.toml` path |
+| `MR_MILCHICK_CONFIG_PATH` | No | Overrides the default `mr-milchick.toml` path; a valid default or override TOML is required |
 | `GITLAB_TOKEN` | For real GitLab execution | GitLab API token |
 | `GITHUB_TOKEN` | For real GitHub execution | GitHub API token |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | No | Slack bot OAuth token used by the Slack app sink |

@@ -3,7 +3,7 @@
 Mr Milchick now resolves application configuration from one place:
 
 1. compiled capabilities from Cargo features
-2. an optional `mr-milchick.toml` file
+2. a mandatory TOML config file (`mr-milchick.toml` by default, or `MR_MILCHICK_CONFIG_PATH`)
 3. a small env layer for secrets and config-path selection
 
 CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and the review-context override vars. `config/` does not.
@@ -11,7 +11,7 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
 ## Sources And Precedence
 
 - Cargo features decide which platform connector and notification sinks exist in the binary.
-- `mr-milchick.toml` is the canonical source for non-secret runtime configuration.
+- The TOML config file is the canonical source for non-secret runtime configuration.
 - TOML supports env interpolation before parsing:
   - `${VAR}` for required env vars
   - `${VAR:-default}` for optional env vars with a fallback
@@ -28,7 +28,7 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
 - Default path: `mr-milchick.toml`
 - Override path: `MR_MILCHICK_CONFIG_PATH`
 
-In v5, repository areas are required. If the file is missing or `[areas]` is empty, Milchick exits with a config error instead of guessing your repo layout.
+In v5, the TOML file is required because repository areas are required. If the default file or override file is missing, or if `[areas]` is empty, Milchick exits with a config error instead of guessing your repo layout.
 
 When a valid file is present, omitted optional settings use defaults:
 
@@ -443,7 +443,7 @@ Template placeholder validation still happens at render time. Invalid placeholde
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `MR_MILCHICK_CONFIG_PATH` | No | Alternate config file path. |
+| `MR_MILCHICK_CONFIG_PATH` | No | Alternate config file path; a valid default or override TOML file is required. |
 | `GITLAB_TOKEN` | GitLab live runs | GitLab API token. |
 | `GITHUB_TOKEN` | GitHub live runs | GitHub API token. |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | Slack app only | Slack bot token. |
