@@ -7,6 +7,14 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [4.1.2] — 2026-05-15
+
+This patch release tightens reviewer assignment limits so required reviewers are always additive to the configured routing cap.
+
+### Fixed
+
+- Mandatory reviewers are now added alongside `max_reviewers` rather than being counted as part of that limit, including CODEOWNERS-driven reviewer recommendations.
+
 ## [4.1.1] — 2026-05-12
 
 This patch release adds a small but important label-rule predicate for workflows that need to distinguish an unlabeled merge request from one that already carries workflow state.
