@@ -1,0 +1,20 @@
+project_id = "412"
+merge_request_iid = "4002"
+
+[merge_request]
+title = "Draft roulette refactor"
+url = "https://gitlab.example.com/group/project/-/merge_requests/4002"
+author = "arthur"
+description = ""
+source_branch = "feat/roulette-draft"
+target_branch = "develop"
+labels = []
+existing_reviewers = []
+is_draft = true
+default_branch = "develop"
+
+[[merge_request.changed_files]]
+path = "apps/frontend/draft.tsx"
+change_type = "modified"
+additions = 10
+deletions = 4

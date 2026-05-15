@@ -773,6 +773,20 @@ fn interpolate_env_vars_with<F>(input: &str, mut lookup: F) -> Result<String>
 where
     F: FnMut(&str) -> Option<String>,
 {
+    let mut output = String::with_capacity(input.len());
+    for line in input.split_inclusive('\n') {
+        let (code, comment) = split_toml_comment(line);
+        output.push_str(&interpolate_env_vars_segment(code, &mut lookup)?);
+        output.push_str(comment);
+    }
+
+    Ok(output)
+}
+
+fn interpolate_env_vars_segment<F>(input: &str, lookup: &mut F) -> Result<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
     let chars = input.chars().collect::<Vec<_>>();
     let mut index = 0;
     let mut output = String::with_capacity(input.len());
@@ -790,7 +804,7 @@ where
             }
 
             let expression = chars[start..end].iter().collect::<String>();
-            output.push_str(&resolve_interpolation_expression(&expression, &mut lookup)?);
+            output.push_str(&resolve_interpolation_expression(&expression, lookup)?);
             index = end + 1;
             continue;
         }
@@ -800,6 +814,28 @@ where
     }
 
     Ok(output)
+}
+
+fn split_toml_comment(line: &str) -> (&str, &str) {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for (index, ch) in line.char_indices() {
+        if in_double && escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_double => escaped = true,
+            '"' if !in_single => in_double = !in_double,
+            '\'' if !in_double => in_single = !in_single,
+            '#' if !in_single && !in_double => return line.split_at(index),
+            _ => {}
+        }
+    }
+
+    (line, "")
 }
 
 fn config_parse_hint(_raw: &str, error: &toml::de::Error) -> Option<&'static str> {
@@ -1166,6 +1202,25 @@ model_path = "${CI_PROJECT_DIR}/models/review.gguf"
             file.inference.model_path.as_deref(),
             Some("/builds/example/project/models/review.gguf")
         );
+    }
+
+    #[test]
+    fn interpolation_ignores_toml_comments() {
+        let raw = r#"
+# ${DOCUMENTED_VAR} is only an example.
+[inference]
+model_path = "${CI_PROJECT_DIR}/models/review.gguf" # ${COMMENT_ONLY}
+"#;
+
+        let interpolated = interpolate_env_vars_with(raw, |name| match name {
+            "CI_PROJECT_DIR" => Some("/builds/example/project".to_string()),
+            _ => None,
+        })
+        .expect("comments should not require env vars");
+
+        assert!(interpolated.contains("${DOCUMENTED_VAR}"));
+        assert!(interpolated.contains("${COMMENT_ONLY}"));
+        assert!(interpolated.contains("/builds/example/project/models/review.gguf"));
     }
 
     #[test]
