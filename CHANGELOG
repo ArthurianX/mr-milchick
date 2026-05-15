@@ -30,6 +30,10 @@ This major release turns `observe` into the first pipeline intake gate instead o
 - `refine` continues to own reviewer assignment, governance summary comments, pipeline-status governance, and reviewer mentions in Slack threads.
 - GitHub label add/remove actions are implemented for parity with observe risk/draft labeling.
 
+### Fixed
+
+- Mandatory reviewers are added alongside `max_reviewers` rather than being counted as part of that limit, including CODEOWNERS-driven reviewer recommendations.
+
 ## [4.1.1] — 2026-05-12
 
 This patch release adds a small but important label-rule predicate for workflows that need to distinguish an unlabeled merge request from one that already carries workflow state.

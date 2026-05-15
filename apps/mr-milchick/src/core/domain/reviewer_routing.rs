@@ -230,10 +230,23 @@ pub fn prepend_mandatory_reviewers(
         &mut reasons,
     );
 
+    let mut base_count = 0;
     for reviewer in base_reviewers {
-        if selected.insert(reviewer.clone()) {
-            reviewers.push(reviewer.clone());
+        if selected.contains(reviewer) {
+            continue;
         }
+
+        if base_count >= config.max_reviewers {
+            reasons.push(format!(
+                "Reviewer selection reached configured limit of {}.",
+                config.max_reviewers
+            ));
+            break;
+        }
+
+        selected.insert(reviewer.clone());
+        reviewers.push(reviewer.clone());
+        base_count += 1;
     }
 
     reasons.extend(base_reasons.iter().cloned());
@@ -375,5 +388,32 @@ mod tests {
         let recommendation = recommend_reviewers(&summary, &config, &[]);
 
         assert_eq!(recommendation.reviewers.len(), 3);
+    }
+
+    #[test]
+    fn prepends_mandatory_reviewers_outside_base_reviewer_limit() {
+        let mut config = ReviewerRoutingConfig::example();
+        config.max_reviewers = 2;
+
+        let recommendation = prepend_mandatory_reviewers(
+            &config,
+            &[],
+            &[
+                "principal-reviewer".to_string(),
+                "alice".to_string(),
+                "bob".to_string(),
+                "carol".to_string(),
+            ],
+            &[],
+        );
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec![
+                "principal-reviewer".to_string(),
+                "alice".to_string(),
+                "bob".to_string()
+            ]
+        );
     }
 }
