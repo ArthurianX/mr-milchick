@@ -37,7 +37,7 @@ verify_release_tag:
     - |
       set -eu
 
-      if echo "$CI_COMMIT_TAG" | grep -Eq '^rc\.'; then
+      if echo "$CI_COMMIT_TAG" | grep -Eq '(^rc\.|-rc\.)'; then
         echo "Allowing rc tag ${CI_COMMIT_TAG} from ${CI_COMMIT_REF_NAME:-any branch}."
         exit 0
       fi
