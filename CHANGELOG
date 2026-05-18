@@ -34,6 +34,15 @@ This major release turns `observe` into the first pipeline intake gate instead o
 
 - Mandatory reviewers are added alongside `max_reviewers` rather than being counted as part of that limit, including CODEOWNERS-driven reviewer recommendations.
 
+
+## [4.1.2] — 2026-05-15
+
+This patch release tightens reviewer assignment limits so required reviewers are always additive to the configured routing cap.
+
+### Fixed
+
+- Mandatory reviewers are now added alongside `max_reviewers` rather than being counted as part of that limit, including CODEOWNERS-driven reviewer recommendations.
+
 ## [4.1.1] — 2026-05-12
 
 This patch release adds a small but important label-rule predicate for workflows that need to distinguish an unlabeled merge request from one that already carries workflow state.
