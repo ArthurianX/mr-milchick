@@ -759,17 +759,8 @@ pub fn render_slack_app_notification(
     context: &NotificationTemplateContext,
     variant: NotificationTemplateVariant,
 ) -> (String, String) {
-    let _ = variant;
-    (
-        render_template(
-            &catalog.slack_app.thread_root,
-            &context.variables(RenderStyle::SlackApp),
-        ),
-        render_template(
-            &catalog.slack_app.refine_thread,
-            &context.variables(RenderStyle::SlackApp),
-        ),
-    )
+    render_notification(catalog, context, NotificationSinkKind::SlackApp, variant)
+        .expect("Slack app notifications should be renderable")
 }
 
 pub fn render_slack_app_thread_root(
@@ -786,12 +777,81 @@ pub fn render_slack_app_observe_notification(
     catalog: &TemplateCatalog,
     context: &ObserveTemplateContext,
 ) -> String {
-    let template = match context.observe_status.as_str() {
-        "blocked" => &catalog.slack_app.observe_blocked_thread,
-        "draft" => &catalog.slack_app.observe_draft_thread,
-        _ => &catalog.slack_app.observe_thread,
-    };
-    render_template(template, &context.variables(RenderStyle::SlackApp))
+    render_observe_notification(catalog, context, NotificationSinkKind::SlackApp)
+        .expect("Slack app observe notifications should be renderable")
+        .1
+}
+
+pub fn render_notification(
+    catalog: &TemplateCatalog,
+    context: &NotificationTemplateContext,
+    sink: NotificationSinkKind,
+    variant: NotificationTemplateVariant,
+) -> Option<(String, String)> {
+    let _ = variant;
+    match sink {
+        NotificationSinkKind::SlackApp => Some((
+            render_template(
+                &catalog.slack_app.thread_root,
+                &context.variables(RenderStyle::SlackApp),
+            ),
+            render_template(
+                &catalog.slack_app.refine_thread,
+                &context.variables(RenderStyle::SlackApp),
+            ),
+        )),
+        NotificationSinkKind::SlackWorkflow => Some((
+            render_template(
+                &catalog.slack_workflow.thread_root,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
+            render_template(
+                &catalog.slack_workflow.refine_thread,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
+        )),
+        NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
+    }
+}
+
+pub fn render_observe_notification(
+    catalog: &TemplateCatalog,
+    context: &ObserveTemplateContext,
+    sink: NotificationSinkKind,
+) -> Option<(String, String)> {
+    match sink {
+        NotificationSinkKind::SlackApp => Some((
+            render_template(
+                &catalog.slack_app.thread_root,
+                &context.variables(RenderStyle::SlackApp),
+            ),
+            render_template(
+                select_observe_template(
+                    context,
+                    &catalog.slack_app.observe_thread,
+                    &catalog.slack_app.observe_blocked_thread,
+                    &catalog.slack_app.observe_draft_thread,
+                ),
+                &context.variables(RenderStyle::SlackApp),
+            ),
+        )),
+        NotificationSinkKind::SlackWorkflow => Some((
+            render_template(
+                &catalog.slack_workflow.thread_root,
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
+            render_template(
+                select_observe_template(
+                    context,
+                    &catalog.slack_workflow.observe_thread,
+                    &catalog.slack_workflow.observe_blocked_thread,
+                    &catalog.slack_workflow.observe_draft_thread,
+                ),
+                &context.variables(RenderStyle::SlackWorkflow),
+            ),
+        )),
+        NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
+    }
 }
 
 pub fn render_slack_workflow_notification(
@@ -799,27 +859,25 @@ pub fn render_slack_workflow_notification(
     context: &NotificationTemplateContext,
     variant: NotificationTemplateVariant,
 ) -> (String, String) {
-    match variant {
-        NotificationTemplateVariant::First => (
-            render_template(
-                &catalog.slack_workflow.first_title,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-            render_template(
-                &catalog.slack_workflow.first_thread,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-        ),
-        NotificationTemplateVariant::Update => (
-            render_template(
-                &catalog.slack_workflow.update_title,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-            render_template(
-                &catalog.slack_workflow.update_thread,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-        ),
+    render_notification(
+        catalog,
+        context,
+        NotificationSinkKind::SlackWorkflow,
+        variant,
+    )
+    .expect("Slack workflow notifications should be renderable")
+}
+
+fn select_observe_template<'a>(
+    context: &ObserveTemplateContext,
+    default: &'a str,
+    blocked: &'a str,
+    draft: &'a str,
+) -> &'a str {
+    match context.observe_status.as_str() {
+        "blocked" => blocked,
+        "draft" => draft,
+        _ => default,
     }
 }
 
@@ -1063,7 +1121,17 @@ impl ObserveTemplateContext {
         values.insert("summary_intro", self.tone.message.clone());
         values.insert("summary_footer", self.next_step.clone());
         values.insert("notification_title", self.notification_title.clone());
-        values.insert("notification_subject", self.notification_subject.clone());
+        values.insert(
+            "notification_subject",
+            match style {
+                RenderStyle::SlackApp => self.notification_subject.clone(),
+                RenderStyle::SlackWorkflow => self.notification_subject.replace(
+                    &ref_link(RenderStyle::SlackApp, &self.snapshot),
+                    &ref_link(RenderStyle::SlackWorkflow, &self.snapshot),
+                ),
+                RenderStyle::GitLab | RenderStyle::GitHub => String::new(),
+            },
+        );
         values.insert("reviewers_line", String::new());
         values.insert("mr_ref_link", ref_link(style, &self.snapshot));
         values.insert("thread_key", self.thread_key.clone());
@@ -1107,7 +1175,14 @@ fn common_values(
     values.insert("mr_ref", snapshot.mr_ref.clone());
     values.insert("mr_title", snapshot.mr_title.clone());
     values.insert("mr_url", snapshot.mr_url.clone());
-    values.insert("mr_author_username", snapshot.mr_author_username.clone());
+    values.insert(
+        "mr_author_username",
+        match style {
+            RenderStyle::SlackApp => format!("@{}", snapshot.mr_author_username),
+            RenderStyle::GitLab | RenderStyle::GitHub => snapshot.mr_author_username.clone(),
+            RenderStyle::SlackWorkflow => snapshot.mr_author_username.clone(),
+        },
+    );
     values.insert("source_branch", snapshot.source_branch.clone());
     values.insert("target_branch", snapshot.target_branch.clone());
     values.insert("is_draft", snapshot.is_draft.to_string());
@@ -1708,6 +1783,43 @@ mod tests {
         assert!(body.contains("CI task status"));
         assert!(body.contains(":large_green_circle: unit_tests: 12 tests passed"));
         assert!(!body.contains("Local review recommendations"));
+    }
+
+    #[test]
+    fn slack_app_author_username_placeholder_renders_as_mention() {
+        let outcome = RuleOutcome::new();
+        let context = build_notification_template_context(
+            &outcome,
+            &sample_snapshot(),
+            &ToneSelector::default(),
+            &sample_context(),
+            NotificationTemplateVariant::Update,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut catalog = TemplateCatalog::default();
+        catalog.slack_app.refine_thread = "Author {{mr_author_username}}".to_string();
+        catalog.slack_workflow.refine_thread = "Author {{mr_author_username}}".to_string();
+
+        let (_, app_body) = render_notification(
+            &catalog,
+            &context,
+            NotificationSinkKind::SlackApp,
+            NotificationTemplateVariant::Update,
+        )
+        .expect("Slack app notification should render");
+        let (_, workflow_body) = render_notification(
+            &catalog,
+            &context,
+            NotificationSinkKind::SlackWorkflow,
+            NotificationTemplateVariant::Update,
+        )
+        .expect("Slack workflow notification should render");
+
+        assert_eq!(app_body, "Author @arthur");
+        assert_eq!(workflow_body, "Author arthur");
     }
 
     #[test]

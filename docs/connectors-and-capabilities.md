@@ -15,11 +15,11 @@ Implemented now:
 
 ## Command Roles
 
-- `observe`: mutating intake gate for risk/draft labels, description checks, and Slack thread intake notifications
+- `observe`: mutating intake gate for risk/draft labels, description checks, and Slack intake notifications
 - `refine`: fast governance execution plus optional notifications
 - `explain`: slower advisory follow-up that may upsert the managed explain comment
 
-`observe` and `refine` can change labels, fail the pipeline, and deliver Slack app notifications. Only `refine` assigns reviewers and owns the governance summary comment.
+`observe` and `refine` can change labels, fail the pipeline, and deliver configured Slack notifications. Only `refine` assigns reviewers and owns the governance summary comment. The Slack app sink supports the v5 one-root-thread MR contract; Slack workflow sends the configured title/thread payload without thread reuse.
 
 ## Cargo Features
 

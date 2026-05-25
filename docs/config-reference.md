@@ -350,7 +350,7 @@ Live `explain` runs first reload Milchick's managed governance summary comment f
 | `channel` | No | none | Default Slack destination. |
 | `base_url` | No | `https://slack.com/api` | Useful for tests and local mocks. |
 
-`[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs.
+`[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs. Slack app delivery uses this map when rewriting rendered `@username` mentions, including `{{mr_author_username}}` in Slack app templates.
 
 ### `[notifications.slack_workflow]`
 
@@ -400,10 +400,20 @@ Template overrides stay field-by-field and keep built-in defaults when omitted.
 - `[templates.gitlab].explain`
 - `[templates.github].summary`
 - `[templates.github].explain`
+- `[templates.slack_app].thread_root`
+- `[templates.slack_app].observe_thread`
+- `[templates.slack_app].observe_blocked_thread`
+- `[templates.slack_app].observe_draft_thread`
+- `[templates.slack_app].refine_thread`
 - `[templates.slack_app].first_root`
 - `[templates.slack_app].first_thread`
 - `[templates.slack_app].update_root`
 - `[templates.slack_app].update_thread`
+- `[templates.slack_workflow].thread_root`
+- `[templates.slack_workflow].observe_thread`
+- `[templates.slack_workflow].observe_blocked_thread`
+- `[templates.slack_workflow].observe_draft_thread`
+- `[templates.slack_workflow].refine_thread`
 - `[templates.slack_workflow].first_title`
 - `[templates.slack_workflow].first_thread`
 - `[templates.slack_workflow].update_title`
@@ -416,6 +426,15 @@ Useful notification placeholders include:
 - `pipeline_status_passed_count`
 - `pipeline_status_failed_count`
 - `pipeline_status_unknown_count`
+- `observe_status`
+- `risk_level`
+- `risk_label`
+- `risk_reasons_block`
+- `matched_areas_list`
+- `unmatched_paths_block`
+- `description_status`
+- `blocking_reasons_block`
+- `next_step`
 
 Useful review-comment placeholders include:
 
@@ -432,6 +451,8 @@ Useful review-comment placeholders include:
 `[templates.*].summary` controls the deterministic governance comment owned by `refine`.
 
 `[templates.*].explain` controls the advisory comment owned by `explain`.
+
+Slack `thread_root`, `observe_*`, and `refine_thread` templates control the v5 notification path. The first/update Slack fields are still parsed for compatibility with existing TOML files, but observe/refine render through the command-specific fields.
 
 For backward compatibility, `summary` templates may still reference `llm` placeholders, but `refine` renders them empty. Milchick appends the hidden governance metadata block to summary comments automatically, so template authors should not include it manually.
 
@@ -462,6 +483,6 @@ These still belong to the CI context layer, not the app config layer:
 ## Notes
 
 - Live `observe` mutates intake labels by design. `dry_run` only changes `refine` and `explain`; fixture observe remains dry-run.
-- Slack app notifications are sent during live `observe` and `refine`; `explain` does not notify Slack.
+- Configured Slack notifications are sent during live `observe` and `refine`; `explain` does not notify Slack.
 - Config validation is strict. Unknown TOML fields fail parsing, and legacy app-config env vars fail startup.
 - Platform and sink configuration must agree with compiled capabilities.

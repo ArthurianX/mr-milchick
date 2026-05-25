@@ -245,7 +245,7 @@ notification_policy = "always"
 
 # Optional mapping from review-platform usernames to Slack user IDs.
 # This lets Milkchick rewrite mentions like `@alice` into `<@U123...>`.
-# [notifications.slack_app.user_map]
+    # [notifications.slack_app.user_map]
 # "arthur" = "U028DDKDJ4E"
 # "principal-reviewer" = "U03D9NN5HB6"
 # "bob" = "U028GSCQBUJ"
@@ -334,6 +334,42 @@ notification_policy = "always"
 
 # Slack app template overrides.
 # [templates.slack_app]
+# thread_root = "Mr. Milchick is observing {{thread_key}} by {{mr_author_username}}: {{mr_title}}"
+# observe_thread = """
+# *{{notification_title}}*
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}} ({{risk_label}})
+# {{risk_reasons_block}}
+# {{blocking_reasons_block}}
+# _{{next_step}}_
+# """
+# observe_blocked_thread = """
+# *{{notification_title}}*
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}} ({{risk_label}})
+# Description: {{description_status}}
+# {{blocking_reasons_block}}
+# _{{next_step}}_
+# """
+# observe_draft_thread = """
+# *{{notification_title}}*
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}} ({{risk_label}})
+# _{{next_step}}_
+# """
+# refine_thread = """
+# *{{notification_title}}*
+# Merge request: {{mr_link}}
+# {{reviewers_line}}
+# {{findings_block}}
+# {{actions_block}}
+# {{pipeline_status_block}}
+# _{{summary_footer}}_
+# """
+# Legacy first/update fields are still accepted but are not used by v5 observe/refine notifications.
 # first_root = ":gitlab: {{notification_subject}} :pepe-review:"
 # first_thread = """
 # *{{notification_title}}*
@@ -352,6 +388,42 @@ notification_policy = "always"
 
 # Slack workflow template overrides.
 # [templates.slack_workflow]
+# thread_root = "Mr. Milchick is observing {{thread_key}}: {{mr_title}}"
+# observe_thread = """
+# {{notification_title}}
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}} ({{risk_label}})
+# {{risk_reasons_block}}
+# {{blocking_reasons_block}}
+# {{next_step}}
+# """
+# observe_blocked_thread = """
+# {{notification_title}}
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}} ({{risk_label}})
+# Description: {{description_status}}
+# {{blocking_reasons_block}}
+# {{next_step}}
+# """
+# observe_draft_thread = """
+# {{notification_title}}
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}} ({{risk_label}})
+# {{next_step}}
+# """
+# refine_thread = """
+# {{notification_title}}
+# Merge request: {{mr_link}}
+# {{reviewers_line}}
+# {{findings_block}}
+# {{actions_block}}
+# {{pipeline_status_block}}
+# {{summary_footer}}
+# """
+# Legacy first/update fields are still accepted but are not used by v5 observe/refine notifications.
 # first_title = "{{notification_subject}}"
 # first_thread = """
 # {{notification_title}}

@@ -44,8 +44,8 @@ use crate::core::message_templates::{
     PipelineStatusState, PipelineStatusTemplateEntry, TemplateCatalog,
     build_explain_template_context, build_notification_template_context,
     build_observe_template_context, build_summary_template_context, notification_template_variant,
-    render_review_explain, render_review_summary, render_slack_app_notification,
-    render_slack_app_observe_notification, render_slack_app_thread_root, resolve_template_catalog,
+    render_notification, render_observe_notification, render_review_explain, render_review_summary,
+    resolve_template_catalog,
 };
 use crate::core::model::{
     NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
@@ -1206,14 +1206,14 @@ fn build_observe_notifications(
 
     sink_kinds
         .iter()
-        .filter_map(|sink| match sink {
-            NotificationSinkKind::SlackApp => Some(NotificationMessage {
+        .filter_map(|sink| {
+            let (subject, body) =
+                render_observe_notification(template_catalog, &notification_context, *sink)?;
+
+            Some(NotificationMessage {
                 sink: *sink,
-                subject: render_slack_app_thread_root(template_catalog, &notification_context),
-                body: render_slack_app_observe_notification(
-                    template_catalog,
-                    &notification_context,
-                ),
+                subject,
+                body,
                 audience: NotificationAudience::Default,
                 severity: if plan.should_fail() {
                     NotificationSeverity::Critical
@@ -1221,9 +1221,8 @@ fn build_observe_notifications(
                     NotificationSeverity::Info
                 },
                 thread_key: thread_key.clone(),
-                prefer_thread_reply: true,
-            }),
-            _ => None,
+                prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
+            })
         })
         .collect()
 }
@@ -1259,22 +1258,19 @@ fn build_notifications(
 
     sink_kinds
         .iter()
-        .filter_map(|sink| match sink {
-            NotificationSinkKind::SlackApp => {
-                let (subject, body) =
-                    render_slack_app_notification(template_catalog, &notification_context, variant);
-                Some(NotificationMessage {
-                    sink: *sink,
-                    subject,
-                    body,
-                    audience: NotificationAudience::Default,
-                    severity: NotificationSeverity::Info,
-                    thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
-                    prefer_thread_reply: true,
-                })
-            }
-            NotificationSinkKind::SlackWorkflow => None,
-            _ => None,
+        .filter_map(|sink| {
+            let (subject, body) =
+                render_notification(template_catalog, &notification_context, *sink, variant)?;
+
+            Some(NotificationMessage {
+                sink: *sink,
+                subject,
+                body,
+                audience: NotificationAudience::Default,
+                severity: NotificationSeverity::Info,
+                thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
+                prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
+            })
         })
         .collect()
 }
@@ -2034,6 +2030,76 @@ mod tests {
                 .body
                 .contains(":large_green_circle: unit_tests: 18 tests passed")
         );
+    }
+
+    #[test]
+    fn notifications_render_for_slack_workflow_sink() {
+        let outcome = RuleOutcome::new();
+        let snapshot = sample_snapshot(Vec::new());
+        let selector = ToneSelector::default();
+        let ctx = sample_context();
+
+        let notifications = build_notifications(
+            &outcome,
+            &snapshot,
+            &crate::core::message_templates::TemplateCatalog::default(),
+            &selector,
+            &ctx,
+            &[],
+            &[NotificationSinkKind::SlackWorkflow],
+            None,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].sink, NotificationSinkKind::SlackWorkflow);
+        assert!(!notifications[0].prefer_thread_reply);
+        assert!(notifications[0].subject.contains("MR #456"));
+        assert!(notifications[0].body.contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
+        assert!(!notifications[0].body.contains('<'));
+    }
+
+    #[test]
+    fn observe_notifications_render_for_each_slack_sink() {
+        let plan = ObservePlan {
+            status: crate::core::observe::ObserveStatus::Blocked,
+            risk: crate::core::observe::RiskAssessment {
+                level: crate::core::observe::RiskLevel::High,
+                label: "risk::high".to_string(),
+                reasons: vec!["frontend is marked high risk.".to_string()],
+                matched_areas: vec!["frontend".to_string()],
+                unmatched_paths: vec!["unknown/file.rs".to_string()],
+            },
+            description: crate::core::observe::DescriptionAssessment {
+                status: crate::core::observe::DescriptionStatus::Missing,
+                reasons: vec!["Description is missing meaningful text.".to_string()],
+            },
+            blocking_reasons: vec!["Description is missing meaningful text.".to_string()],
+            actions: Vec::new(),
+        };
+        let snapshot = sample_snapshot(Vec::new());
+        let selector = ToneSelector::default();
+        let ctx = sample_context();
+
+        let notifications = build_observe_notifications(
+            &plan,
+            &snapshot,
+            &crate::core::message_templates::TemplateCatalog::default(),
+            &selector,
+            &ctx,
+            &[
+                NotificationSinkKind::SlackApp,
+                NotificationSinkKind::SlackWorkflow,
+            ],
+        );
+
+        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications[0].sink, NotificationSinkKind::SlackApp);
+        assert!(notifications[0].prefer_thread_reply);
+        assert!(notifications[0].body.contains("Description: missing"));
+        assert_eq!(notifications[1].sink, NotificationSinkKind::SlackWorkflow);
+        assert!(!notifications[1].prefer_thread_reply);
+        assert!(notifications[1].body.contains("Description: missing"));
+        assert!(!notifications[1].body.contains('<'));
     }
 
     #[test]

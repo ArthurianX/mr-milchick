@@ -14,12 +14,22 @@ summary = "..."
 explain = "..."
 
 [templates.slack_app]
+thread_root = "..."
+observe_thread = "..."
+observe_blocked_thread = "..."
+observe_draft_thread = "..."
+refine_thread = "..."
 first_root = "..."
 first_thread = "..."
 update_root = "..."
 update_thread = "..."
 
 [templates.slack_workflow]
+thread_root = "..."
+observe_thread = "..."
+observe_blocked_thread = "..."
+observe_draft_thread = "..."
+refine_thread = "..."
 first_title = "..."
 first_thread = "..."
 update_title = "..."
@@ -67,7 +77,7 @@ The built-in review-platform templates now separate governance and advisory outp
 - `summary` renders findings, planned/applied governance actions, and deterministic tone.
 - `explain` renders the same governance context plus the advisory `{{recommendations_block}}`.
 
-Slack templates remain notification-only and are still used only by `refine`.
+Slack templates remain notification-only. `observe` renders the sink's `thread_root` plus one of `observe_thread`, `observe_blocked_thread`, or `observe_draft_thread`; `refine` renders `thread_root` plus `refine_thread`. The older first/update Slack fields remain accepted for compatibility but are not used by the v5 observe/refine notification path.
 
 ## Optional Pipeline Status Block
 
@@ -95,6 +105,8 @@ Slack mention rewriting now comes from TOML:
 "alice" = "U07654321"
 ```
 
-That mapping is applied by the Slack app sink when it rewrites `@username` into Slack user mentions.
+That mapping is applied by Slack app delivery when it rewrites `@username` into Slack user mentions.
+
+For Slack app templates, `{{mr_author_username}}` renders as `@username`, so it is converted to `<@USERID>` when `[notifications.slack_app.user_map]` contains the author. For Slack workflow and review-platform templates, it remains the raw username.
 
 For the full config schema, see [config-reference.md](config-reference.md).
