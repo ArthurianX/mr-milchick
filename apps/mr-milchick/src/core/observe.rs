@@ -198,7 +198,7 @@ pub fn assess_risk(
     for file in &snapshot.changed_files {
         match classify_path(&file.path, areas) {
             Some(area_key) => {
-                matched_areas.insert(area_key.clone());
+                let first_match_for_area = matched_areas.insert(area_key.clone());
                 if let Some(area) = areas
                     .definitions
                     .iter()
@@ -206,7 +206,9 @@ pub fn assess_risk(
                 {
                     if area.critical || area.risk == AreaRisk::High {
                         high_area_touched = true;
-                        reasons.push(format!("{} is marked high risk.", area.key));
+                        if first_match_for_area {
+                            reasons.push(format!("{} is marked high risk.", area.key));
+                        }
                     }
                     if area.risk != AreaRisk::Low {
                         low_only = false;
@@ -521,6 +523,28 @@ mod tests {
         );
 
         assert_eq!(result.level, RiskLevel::High);
+    }
+
+    #[test]
+    fn high_risk_area_reason_is_reported_once_per_area() {
+        let result = assess_risk(
+            &snapshot(
+                Some("real description"),
+                vec![
+                    "packages/bootstrap/src/lib.rs",
+                    "packages/bootstrap/src/view.rs",
+                    "packages/bootstrap/tests/smoke.rs",
+                ],
+            ),
+            &areas(),
+            &observe_config(),
+        );
+
+        assert_eq!(result.level, RiskLevel::High);
+        assert_eq!(
+            result.reasons,
+            vec!["bootstrap is marked high risk.".to_string()]
+        );
     }
 
     #[test]
