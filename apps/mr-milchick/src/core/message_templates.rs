@@ -6,7 +6,7 @@ use crate::config::TemplatesConfig;
 use crate::context::model::CiContext;
 use crate::core::inference::{RecommendationCategory, ReviewInferenceOutcome};
 use crate::core::model::{NotificationSinkKind, ReviewAction, ReviewPlatformKind, ReviewSnapshot};
-use crate::core::observe::{ObservePlan, ObserveStatus};
+use crate::core::observe::{ObservePlan, ObserveStatus, RiskLevel};
 use crate::core::rules::model::{FindingSeverity, RuleOutcome};
 use crate::core::tone::{ToneCategory, ToneSelector};
 
@@ -39,21 +39,21 @@ const SLACK_APP_THREAD_ROOT_TEMPLATE: &str =
 const SLACK_APP_OBSERVE_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Review: {{mr_link}}
 Status: {{observe_status}}
-Risk: {{risk_level}} ({{risk_label}})
+Risk: {{risk_level}}{{risk_emoji_suffix}}
 {{risk_reasons_block}}
 {{blocking_reasons_block}}
 _{{next_step}}_"#;
 const SLACK_APP_OBSERVE_BLOCKED_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Review: {{mr_link}}
 Status: {{observe_status}}
-Risk: {{risk_level}} ({{risk_label}})
+Risk: {{risk_level}}{{risk_emoji_suffix}}
 Description: {{description_status}}
 {{blocking_reasons_block}}
 _{{next_step}}_"#;
 const SLACK_APP_OBSERVE_DRAFT_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Review: {{mr_link}}
 Status: {{observe_status}}
-Risk: {{risk_level}} ({{risk_label}})
+Risk: {{risk_level}}{{risk_emoji_suffix}}
 _{{next_step}}_"#;
 const SLACK_APP_REFINE_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Merge request: {{mr_link}}
@@ -136,6 +136,8 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "observe_status",
     "risk_level",
     "risk_label",
+    "risk_emoji",
+    "risk_emoji_suffix",
     "risk_reasons_block",
     "matched_areas_list",
     "unmatched_paths_block",
@@ -189,6 +191,7 @@ pub struct TemplateCatalog {
     pub github: GitHubTemplateCatalog,
     pub slack_app: SlackAppTemplateCatalog,
     pub slack_workflow: SlackWorkflowTemplateCatalog,
+    pub risk_emojis: RiskEmojiTemplateCatalog,
 }
 
 impl Default for TemplateCatalog {
@@ -224,6 +227,24 @@ impl Default for TemplateCatalog {
                 update_title: SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE.to_string(),
                 update_thread: SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE.to_string(),
             },
+            risk_emojis: RiskEmojiTemplateCatalog::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RiskEmojiTemplateCatalog {
+    pub low: String,
+    pub medium: String,
+    pub high: String,
+}
+
+impl RiskEmojiTemplateCatalog {
+    fn emoji_for(&self, level: RiskLevel) -> &str {
+        match level {
+            RiskLevel::Low => &self.low,
+            RiskLevel::Medium => &self.medium,
+            RiskLevel::High => &self.high,
         }
     }
 }
@@ -303,6 +324,7 @@ pub struct ObserveTemplateContext {
     thread_key: String,
     observe_status: String,
     risk_level: String,
+    risk: RiskLevel,
     risk_label: String,
     risk_reasons: Vec<String>,
     matched_areas: Vec<String>,
@@ -465,6 +487,11 @@ impl TemplateField {
 
 pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog {
     let mut catalog = TemplateCatalog::default();
+    catalog.risk_emojis = RiskEmojiTemplateCatalog {
+        low: templates.risk_emojis.low.clone().unwrap_or_default(),
+        medium: templates.risk_emojis.medium.clone().unwrap_or_default(),
+        high: templates.risk_emojis.high.clone().unwrap_or_default(),
+    };
 
     apply_template_override(
         &mut catalog.gitlab.summary,
@@ -685,6 +712,7 @@ pub fn build_observe_template_context(
         thread_key,
         observe_status: plan.status.as_str().to_string(),
         risk_level: plan.risk.level.as_str().to_string(),
+        risk: plan.risk.level,
         risk_label: plan.risk.label.clone(),
         risk_reasons: plan.risk.reasons.clone(),
         matched_areas: plan.risk.matched_areas.clone(),
@@ -769,7 +797,7 @@ pub fn render_slack_app_thread_root(
 ) -> String {
     render_template(
         &catalog.slack_app.thread_root,
-        &context.variables(RenderStyle::SlackApp),
+        &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
     )
 }
 
@@ -823,7 +851,7 @@ pub fn render_observe_notification(
         NotificationSinkKind::SlackApp => Some((
             render_template(
                 &catalog.slack_app.thread_root,
-                &context.variables(RenderStyle::SlackApp),
+                &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
             ),
             render_template(
                 select_observe_template(
@@ -832,13 +860,13 @@ pub fn render_observe_notification(
                     &catalog.slack_app.observe_blocked_thread,
                     &catalog.slack_app.observe_draft_thread,
                 ),
-                &context.variables(RenderStyle::SlackApp),
+                &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
             ),
         )),
         NotificationSinkKind::SlackWorkflow => Some((
             render_template(
                 &catalog.slack_workflow.thread_root,
-                &context.variables(RenderStyle::SlackWorkflow),
+                &context.variables(RenderStyle::SlackWorkflow, &catalog.risk_emojis),
             ),
             render_template(
                 select_observe_template(
@@ -847,7 +875,7 @@ pub fn render_observe_notification(
                     &catalog.slack_workflow.observe_blocked_thread,
                     &catalog.slack_workflow.observe_draft_thread,
                 ),
-                &context.variables(RenderStyle::SlackWorkflow),
+                &context.variables(RenderStyle::SlackWorkflow, &catalog.risk_emojis),
             ),
         )),
         NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
@@ -1103,7 +1131,11 @@ impl NotificationTemplateContext {
 }
 
 impl ObserveTemplateContext {
-    fn variables(&self, style: RenderStyle) -> BTreeMap<&'static str, String> {
+    fn variables(
+        &self,
+        style: RenderStyle,
+        risk_emojis: &RiskEmojiTemplateCatalog,
+    ) -> BTreeMap<&'static str, String> {
         let mut values = common_values(
             &self.snapshot,
             &[],
@@ -1138,6 +1170,9 @@ impl ObserveTemplateContext {
         values.insert("observe_status", self.observe_status.clone());
         values.insert("risk_level", self.risk_level.clone());
         values.insert("risk_label", self.risk_label.clone());
+        let risk_emoji = risk_emojis.emoji_for(self.risk).to_string();
+        values.insert("risk_emoji", risk_emoji.clone());
+        values.insert("risk_emoji_suffix", emoji_suffix(&risk_emoji));
         values.insert(
             "risk_reasons_block",
             format_plain_block(style, "Risk reasons", &self.risk_reasons),
@@ -1155,6 +1190,15 @@ impl ObserveTemplateContext {
         values.insert("next_step", self.next_step.clone());
 
         values
+    }
+}
+
+fn emoji_suffix(emoji: &str) -> String {
+    let trimmed = emoji.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!(" {trimmed}")
     }
 }
 
@@ -1604,14 +1648,15 @@ pub fn enabled_notification_targets(sinks: &[NotificationSinkKind]) -> Vec<Notif
 mod tests {
     use super::*;
     use crate::config::{
-        GitHubTemplates, GitLabTemplates, SlackAppTemplates, SlackWorkflowTemplates,
-        TemplatesConfig,
+        GitHubTemplates, GitLabTemplates, RiskEmojiTemplates, SlackAppTemplates,
+        SlackWorkflowTemplates, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::inference::{
         RecommendationCategory, ReviewInferenceOutcome, ReviewInsights, ReviewRecommendation,
     };
     use crate::core::model::{Actor, ReviewMetadata};
+    use crate::core::observe::{DescriptionAssessment, DescriptionStatus, RiskAssessment};
     use crate::core::rules::model::{RuleFinding, RuleOutcome};
 
     fn sample_snapshot() -> ReviewSnapshot {
@@ -1696,6 +1741,31 @@ mod tests {
         })
     }
 
+    fn sample_observe_plan(level: RiskLevel) -> ObservePlan {
+        let label = match level {
+            RiskLevel::Low => "risk::low",
+            RiskLevel::Medium => "risk::medium",
+            RiskLevel::High => "risk::high",
+        };
+
+        ObservePlan {
+            status: ObserveStatus::Passed,
+            risk: RiskAssessment {
+                level,
+                label: label.to_string(),
+                reasons: vec!["Risk reason.".to_string()],
+                matched_areas: vec!["frontend".to_string()],
+                unmatched_paths: Vec::new(),
+            },
+            description: DescriptionAssessment {
+                status: DescriptionStatus::Meaningful,
+                reasons: vec!["Description is meaningful.".to_string()],
+            },
+            blocking_reasons: Vec::new(),
+            actions: Vec::new(),
+        }
+    }
+
     #[test]
     fn validates_unknown_placeholder() {
         let error = validate_template("{{unknown_placeholder}}", TemplateField::SlackAppFirstRoot)
@@ -1753,6 +1823,52 @@ mod tests {
         assert!(rendered.contains("Mr. Milchick Advisory Explain"));
         assert!(rendered.contains("Local review recommendations"));
         assert!(rendered.contains("Check that first-time reviewer notifications"));
+    }
+
+    #[test]
+    fn renders_configured_risk_emoji_in_slack_observe_template() {
+        let catalog = resolve_template_catalog(&TemplatesConfig {
+            risk_emojis: RiskEmojiTemplates {
+                high: Some(":alert:".to_string()),
+                medium: Some(":large_yellow_circle:".to_string()),
+                low: Some(":white_circle:".to_string()),
+            },
+            ..TemplatesConfig::default()
+        });
+
+        for (level, expected) in [
+            (RiskLevel::High, "Risk: high :alert:"),
+            (RiskLevel::Medium, "Risk: medium :large_yellow_circle:"),
+            (RiskLevel::Low, "Risk: low :white_circle:"),
+        ] {
+            let body = render_slack_app_observe_notification(
+                &catalog,
+                &build_observe_template_context(
+                    &sample_observe_plan(level),
+                    &sample_snapshot(),
+                    &ToneSelector::default(),
+                    &sample_context(),
+                ),
+            );
+
+            assert!(body.contains(expected));
+        }
+    }
+
+    #[test]
+    fn default_risk_emoji_is_empty() {
+        let body = render_slack_app_observe_notification(
+            &TemplateCatalog::default(),
+            &build_observe_template_context(
+                &sample_observe_plan(RiskLevel::High),
+                &sample_snapshot(),
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+        );
+
+        assert!(body.contains("Risk: high\n"));
+        assert!(!body.contains(":alert:"));
     }
 
     #[test]
@@ -1825,6 +1941,7 @@ mod tests {
     #[test]
     fn uses_partial_template_override_without_affecting_other_fields() {
         let templates = TemplatesConfig {
+            risk_emojis: RiskEmojiTemplates::default(),
             gitlab: GitLabTemplates::default(),
             github: GitHubTemplates::default(),
             slack_app: SlackAppTemplates {
@@ -1846,6 +1963,7 @@ mod tests {
     #[test]
     fn falls_back_to_default_when_override_is_invalid() {
         let templates = TemplatesConfig {
+            risk_emojis: RiskEmojiTemplates::default(),
             gitlab: GitLabTemplates::default(),
             github: GitHubTemplates::default(),
             slack_app: SlackAppTemplates {

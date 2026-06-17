@@ -11,6 +11,6 @@ pub use resolver::{
 };
 pub use schema::{
     GitHubTemplates, GitLabLabelRuleConfig, GitLabTemplates, LabelRuleConditionConfig,
-    LabelRulePredicateConfig, NotificationPolicy, SlackAppTemplates, SlackWorkflowTemplates,
-    TemplatesConfig,
+    LabelRulePredicateConfig, NotificationPolicy, RiskEmojiTemplates, SlackAppTemplates,
+    SlackWorkflowTemplates, TemplatesConfig,
 };

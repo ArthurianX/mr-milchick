@@ -34,6 +34,11 @@ first_title = "..."
 first_thread = "..."
 update_title = "..."
 update_thread = "..."
+
+[templates.risk_emojis]
+high = ":alert:"
+medium = ":large_yellow_circle:"
+low = ":white_circle:"
 ```
 
 Missing fields keep the built-in defaults.
@@ -63,6 +68,7 @@ Common placeholders include:
 - `summary_title`, `summary_intro`, `summary_footer`
 - `tone_message`, `tone_category`, `closing_tone_message`, `closing_tone_category`
 - `notification_title`, `notification_subject`
+- `observe_status`, `risk_level`, `risk_label`, `risk_emoji`, `risk_emoji_suffix`
 - `llm_summary`, `recommendations_block`
 - `reviewers_line`, `mr_ref_link`
 
@@ -78,6 +84,8 @@ The built-in review-platform templates now separate governance and advisory outp
 - `explain` renders the same governance context plus the advisory `{{recommendations_block}}`.
 
 Slack templates remain notification-only. `observe` renders the sink's `thread_root` plus one of `observe_thread`, `observe_blocked_thread`, or `observe_draft_thread`; `refine` renders `thread_root` plus `refine_thread`. The older first/update Slack fields remain accepted for compatibility but are not used by the v5 observe/refine notification path.
+
+The built-in Slack observe templates render risk as `Risk: {{risk_level}}{{risk_emoji_suffix}}`. The suffix is empty unless `[templates.risk_emojis]` configures a value for the active risk level; when set, it expands to a leading space plus the emoji text.
 
 ## Optional Pipeline Status Block
 

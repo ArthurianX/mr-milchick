@@ -400,6 +400,9 @@ Template overrides stay field-by-field and keep built-in defaults when omitted.
 - `[templates.gitlab].explain`
 - `[templates.github].summary`
 - `[templates.github].explain`
+- `[templates.risk_emojis].high`
+- `[templates.risk_emojis].medium`
+- `[templates.risk_emojis].low`
 - `[templates.slack_app].thread_root`
 - `[templates.slack_app].observe_thread`
 - `[templates.slack_app].observe_blocked_thread`
@@ -429,6 +432,8 @@ Useful notification placeholders include:
 - `observe_status`
 - `risk_level`
 - `risk_label`
+- `risk_emoji`
+- `risk_emoji_suffix`
 - `risk_reasons_block`
 - `matched_areas_list`
 - `unmatched_paths_block`
@@ -453,6 +458,8 @@ Useful review-comment placeholders include:
 `[templates.*].explain` controls the advisory comment owned by `explain`.
 
 Slack `thread_root`, `observe_*`, and `refine_thread` templates control the v5 notification path. The first/update Slack fields are still parsed for compatibility with existing TOML files, but observe/refine render through the command-specific fields.
+
+`[templates.risk_emojis]` controls the rendered value of `{{risk_emoji}}` for observe templates. `{{risk_emoji_suffix}}` renders as empty when no emoji is configured, or as a leading space followed by the configured emoji when present.
 
 For backward compatibility, `summary` templates may still reference `llm` placeholders, but `refine` renders them empty. Milchick appends the hidden governance metadata block to summary comments automatically, so template authors should not include it manually.
 

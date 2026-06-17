@@ -170,6 +170,11 @@ ignore_branch_issue_key = true
 # Message template overrides live under the sections below.
 # If omitted, Milchick uses built-in defaults.
 
+[templates.risk_emojis]
+high = ":alert:"
+medium = ":large_yellow_circle:"
+low = ":white_circle:"
+
 # GitHub governance summary comment override.
 # [templates.github]
 # summary = """

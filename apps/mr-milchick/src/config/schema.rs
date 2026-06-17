@@ -269,6 +269,8 @@ pub struct PipelineStatusConfig {
 #[serde(deny_unknown_fields)]
 pub struct TemplatesConfig {
     #[serde(default)]
+    pub risk_emojis: RiskEmojiTemplates,
+    #[serde(default)]
     pub gitlab: GitLabTemplates,
     #[serde(default)]
     pub github: GitHubTemplates,
@@ -276,6 +278,17 @@ pub struct TemplatesConfig {
     pub slack_app: SlackAppTemplates,
     #[serde(default)]
     pub slack_workflow: SlackWorkflowTemplates,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RiskEmojiTemplates {
+    #[serde(default)]
+    pub low: Option<String>,
+    #[serde(default)]
+    pub medium: Option<String>,
+    #[serde(default)]
+    pub high: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
