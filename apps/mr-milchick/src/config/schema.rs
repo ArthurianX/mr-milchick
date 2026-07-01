@@ -227,8 +227,6 @@ pub struct NotificationsConfig {
     #[serde(default)]
     pub slack_app: SlackAppConfig,
     #[serde(default)]
-    pub slack_workflow: SlackWorkflowConfig,
-    #[serde(default)]
     pub pipeline_status: PipelineStatusConfig,
 }
 
@@ -243,15 +241,6 @@ pub struct SlackAppConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub user_map: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct SlackWorkflowConfig {
-    #[serde(default)]
-    pub enabled: Option<bool>,
-    #[serde(default)]
-    pub channel: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -276,8 +265,6 @@ pub struct TemplatesConfig {
     pub github: GitHubTemplates,
     #[serde(default)]
     pub slack_app: SlackAppTemplates,
-    #[serde(default)]
-    pub slack_workflow: SlackWorkflowTemplates,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -328,29 +315,6 @@ pub struct SlackAppTemplates {
     pub first_thread: Option<String>,
     #[serde(default)]
     pub update_root: Option<String>,
-    #[serde(default)]
-    pub update_thread: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct SlackWorkflowTemplates {
-    #[serde(default)]
-    pub thread_root: Option<String>,
-    #[serde(default)]
-    pub observe_thread: Option<String>,
-    #[serde(default)]
-    pub observe_blocked_thread: Option<String>,
-    #[serde(default)]
-    pub observe_draft_thread: Option<String>,
-    #[serde(default)]
-    pub refine_thread: Option<String>,
-    #[serde(default)]
-    pub first_title: Option<String>,
-    #[serde(default)]
-    pub first_thread: Option<String>,
-    #[serde(default)]
-    pub update_title: Option<String>,
     #[serde(default)]
     pub update_thread: Option<String>,
 }

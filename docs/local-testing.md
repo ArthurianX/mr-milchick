@@ -190,7 +190,7 @@ base_url = "https://slack.com/api"
 "bob" = "U07654321"
 ```
 
-The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post messages and read channel history so Milchick can find the existing MR root thread and reply under it. In Slack OAuth terms, that usually means `chat:write` plus the relevant history scope for the channel type you use.
+The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages and read channel history so Milchick can find the existing review thread and its durable stage replies. In Slack OAuth terms, that usually means `chat:write` plus the relevant history scope for the channel type you use.
 
 Secrets stay in env. First run `observe`; it should create the root MR message and a thread reply:
 
@@ -225,30 +225,10 @@ cargo run -- refine
 What to check in Slack:
 
 - one channel-level root message for the MR, containing `MR #3995`
-- OBSERVE intake details appear as a thread reply
-- REFINE details appear as a later thread reply
+- OBSERVE intake details appear as a durable thread reply that is updated in place
+- REFINE details appear as a second durable thread reply that is updated in place
+- compact commit and CI updates are appended below the durable replies
 - reviewer mentions appear only in the REFINE reply
-
-For Slack workflow testing, keep in mind that workflow delivery does not support the v5 one-root-thread contract:
-
-```toml
-[notifications.slack_workflow]
-enabled = true
-channel = "C0ALY38CW3X"
-```
-
-```bash
-CI_PROJECT_ID=412 \
-CI_MERGE_REQUEST_IID=3995 \
-CI_PIPELINE_SOURCE=merge_request_event \
-CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=feat/example \
-CI_MERGE_REQUEST_TARGET_BRANCH_NAME=develop \
-CI_MERGE_REQUEST_LABELS="" \
-MR_MILCHICK_CONFIG_PATH=/tmp/milchick-local.toml \
-GITLAB_TOKEN=your-gitlab-token \
-MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... \
-cargo run -- refine
-```
 
 `explain` never sends Slack notifications.
 

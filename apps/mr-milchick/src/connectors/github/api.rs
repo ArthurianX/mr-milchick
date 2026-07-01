@@ -28,9 +28,17 @@ pub struct GitHubChangedFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubCommit {
+    pub id: String,
+    pub title: String,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubSnapshotData {
     pub pull_request: GitHubPullRequest,
     pub changed_files: Vec<GitHubChangedFile>,
+    pub commits: Vec<GitHubCommit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

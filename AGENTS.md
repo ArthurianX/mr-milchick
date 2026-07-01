@@ -56,7 +56,7 @@ Real GitLab API calls require `GITLAB_TOKEN`. Platform base URLs now live under 
 ## Key Conventions
 
 - **Newtype wrappers for stringly-typed data**: `ProjectId(String)`, `MergeRequestIid(String)`, `BranchName(String)`, `Label(String)` in `apps/mr-milchick/src/context/model.rs`. Always wrap raw strings in domain types.
-- **Resolved config boundary**: `apps/mr-milchick/src/config/mod.rs` exposes `load_resolved_config()`, which merges defaults, `mr-milchick.toml`, and env-provided secrets into one `ResolvedConfig`. Non-secret runtime settings such as reviewer routing, CODEOWNERS behavior, execution mode, Slack channels, and local inference all live in TOML. Env remains limited to CI/review context, `MR_MILCHICK_CONFIG_PATH`, and secrets such as `GITLAB_TOKEN`, `GITHUB_TOKEN`, `MR_MILCHICK_SLACK_BOT_TOKEN`, and `MR_MILCHICK_SLACK_WEBHOOK_URL`.
+- **Resolved config boundary**: `apps/mr-milchick/src/config/mod.rs` exposes `load_resolved_config()`, which merges defaults, `mr-milchick.toml`, and env-provided secrets into one `ResolvedConfig`. Non-secret runtime settings such as reviewer routing, CODEOWNERS behavior, execution mode, Slack channels, and local inference all live in TOML. Env remains limited to CI/review context, `MR_MILCHICK_CONFIG_PATH`, and secrets such as `GITLAB_TOKEN`, `GITHUB_TOKEN`, and `MR_MILCHICK_SLACK_BOT_TOKEN`.
 - **GitLab DTO separation**: `apps/mr-milchick/src/connectors/gitlab/dto.rs` holds serde-deserialized API responses; `apps/mr-milchick/src/connectors/gitlab/api.rs` holds domain models. The client in `apps/mr-milchick/src/connectors/gitlab/client.rs` maps DTOs → domain types.
 - **Error handling**: `anyhow::Result` for application errors; `thiserror` for `AppError` enum in `apps/mr-milchick/src/error.rs`. Use `anyhow::bail!` / `.context()` for enriched error messages.
 - **Async via tokio**: `#[tokio::main]` in `main.rs`. The `ActionExecutor` trait uses `#[async_trait]`. Only the GitLab client layer and execution are async.
@@ -92,7 +92,7 @@ The GitLab connector checks existing MR notes before posting — it skips duplic
 
 ## Slack Notifications
 
-Slack review notifications are optional. In v5, the Slack app sink is the supported path for the one-root-thread contract: `observe` creates or reuses one MR/PR root message, posts intake status in the thread, and `refine` later reuses that root for reviewer and pipeline details. Slack Workflow webhook delivery is still available for lower-permission setups, but it does not support the one-root-thread contract unless redesigned.
+Slack review notifications are optional and use the Slack app sink. `observe` creates or reuses one MR/PR root message, while durable `observe` and `refine` replies are updated in place. Compact commit/CI lines are appended below those durable messages.
 
 ## Environment Variables
 
@@ -108,5 +108,4 @@ Slack review notifications are optional. In v5, the Slack app sink is the suppor
 | `GITLAB_TOKEN` | For real GitLab execution | GitLab API token |
 | `GITHUB_TOKEN` | For real GitHub execution | GitHub API token |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | No | Slack bot OAuth token used by the Slack app sink |
-| `MR_MILCHICK_SLACK_WEBHOOK_URL` | No | Slack Workflow webhook URL used by the Slack workflow sink |
 | `RUST_LOG` | No | Standard process-level logging control; not part of Milchick runtime config |

@@ -73,24 +73,6 @@ const SLACK_APP_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{pipeline_status_block}}
 _{{summary_footer}}_"#;
 
-const SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE: &str = "{{notification_subject}}";
-const SLACK_WORKFLOW_THREAD_ROOT_TEMPLATE: &str = SLACK_APP_THREAD_ROOT_TEMPLATE;
-const SLACK_WORKFLOW_OBSERVE_THREAD_TEMPLATE: &str = SLACK_APP_OBSERVE_THREAD_TEMPLATE;
-const SLACK_WORKFLOW_OBSERVE_BLOCKED_THREAD_TEMPLATE: &str =
-    SLACK_APP_OBSERVE_BLOCKED_THREAD_TEMPLATE;
-const SLACK_WORKFLOW_OBSERVE_DRAFT_THREAD_TEMPLATE: &str = SLACK_APP_OBSERVE_DRAFT_THREAD_TEMPLATE;
-const SLACK_WORKFLOW_REFINE_THREAD_TEMPLATE: &str = SLACK_APP_REFINE_THREAD_TEMPLATE;
-const SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE: &str = r#"{{notification_title}}
-Merge request: {{mr_link}}
-{{reviewers_line}}
-{{pipeline_status_block}}"#;
-const SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE: &str = "{{notification_subject}}";
-const SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
-{{findings_block}}
-{{actions_block}}
-{{pipeline_status_block}}
-{{summary_footer}}"#;
-
 const COMMON_PLACEHOLDERS: &[&str] = &[
     "mr_number",
     "mr_ref",
@@ -190,7 +172,6 @@ pub struct TemplateCatalog {
     pub gitlab: GitLabTemplateCatalog,
     pub github: GitHubTemplateCatalog,
     pub slack_app: SlackAppTemplateCatalog,
-    pub slack_workflow: SlackWorkflowTemplateCatalog,
     pub risk_emojis: RiskEmojiTemplateCatalog,
 }
 
@@ -215,17 +196,6 @@ impl Default for TemplateCatalog {
                 first_thread: SLACK_APP_FIRST_THREAD_TEMPLATE.to_string(),
                 update_root: SLACK_APP_UPDATE_ROOT_TEMPLATE.to_string(),
                 update_thread: SLACK_APP_UPDATE_THREAD_TEMPLATE.to_string(),
-            },
-            slack_workflow: SlackWorkflowTemplateCatalog {
-                thread_root: SLACK_WORKFLOW_THREAD_ROOT_TEMPLATE.to_string(),
-                observe_thread: SLACK_WORKFLOW_OBSERVE_THREAD_TEMPLATE.to_string(),
-                observe_blocked_thread: SLACK_WORKFLOW_OBSERVE_BLOCKED_THREAD_TEMPLATE.to_string(),
-                observe_draft_thread: SLACK_WORKFLOW_OBSERVE_DRAFT_THREAD_TEMPLATE.to_string(),
-                refine_thread: SLACK_WORKFLOW_REFINE_THREAD_TEMPLATE.to_string(),
-                first_title: SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE.to_string(),
-                first_thread: SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE.to_string(),
-                update_title: SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE.to_string(),
-                update_thread: SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE.to_string(),
             },
             risk_emojis: RiskEmojiTemplateCatalog::default(),
         }
@@ -271,19 +241,6 @@ pub struct SlackAppTemplateCatalog {
     pub first_root: String,
     pub first_thread: String,
     pub update_root: String,
-    pub update_thread: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlackWorkflowTemplateCatalog {
-    pub thread_root: String,
-    pub observe_thread: String,
-    pub observe_blocked_thread: String,
-    pub observe_draft_thread: String,
-    pub refine_thread: String,
-    pub first_title: String,
-    pub first_thread: String,
-    pub update_title: String,
     pub update_thread: String,
 }
 
@@ -406,15 +363,6 @@ enum TemplateField {
     SlackAppFirstThread,
     SlackAppUpdateRoot,
     SlackAppUpdateThread,
-    SlackWorkflowThreadRoot,
-    SlackWorkflowObserveThread,
-    SlackWorkflowObserveBlockedThread,
-    SlackWorkflowObserveDraftThread,
-    SlackWorkflowRefineThread,
-    SlackWorkflowFirstTitle,
-    SlackWorkflowFirstThread,
-    SlackWorkflowUpdateTitle,
-    SlackWorkflowUpdateThread,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -422,7 +370,6 @@ enum RenderStyle {
     GitLab,
     GitHub,
     SlackApp,
-    SlackWorkflow,
 }
 
 impl TemplateField {
@@ -441,19 +388,6 @@ impl TemplateField {
             Self::SlackAppFirstThread => "templates.slack_app.first_thread",
             Self::SlackAppUpdateRoot => "templates.slack_app.update_root",
             Self::SlackAppUpdateThread => "templates.slack_app.update_thread",
-            Self::SlackWorkflowThreadRoot => "templates.slack_workflow.thread_root",
-            Self::SlackWorkflowObserveThread => "templates.slack_workflow.observe_thread",
-            Self::SlackWorkflowObserveBlockedThread => {
-                "templates.slack_workflow.observe_blocked_thread"
-            }
-            Self::SlackWorkflowObserveDraftThread => {
-                "templates.slack_workflow.observe_draft_thread"
-            }
-            Self::SlackWorkflowRefineThread => "templates.slack_workflow.refine_thread",
-            Self::SlackWorkflowFirstTitle => "templates.slack_workflow.first_title",
-            Self::SlackWorkflowFirstThread => "templates.slack_workflow.first_thread",
-            Self::SlackWorkflowUpdateTitle => "templates.slack_workflow.update_title",
-            Self::SlackWorkflowUpdateThread => "templates.slack_workflow.update_thread",
         }
     }
 
@@ -468,19 +402,10 @@ impl TemplateField {
             | Self::SlackAppObserveBlockedThread
             | Self::SlackAppObserveDraftThread
             | Self::SlackAppRefineThread
-            | Self::SlackWorkflowThreadRoot
-            | Self::SlackWorkflowObserveThread
-            | Self::SlackWorkflowObserveBlockedThread
-            | Self::SlackWorkflowObserveDraftThread
-            | Self::SlackWorkflowRefineThread
             | Self::SlackAppFirstRoot
             | Self::SlackAppFirstThread
             | Self::SlackAppUpdateRoot
-            | Self::SlackAppUpdateThread
-            | Self::SlackWorkflowFirstTitle
-            | Self::SlackWorkflowFirstThread
-            | Self::SlackWorkflowUpdateTitle
-            | Self::SlackWorkflowUpdateThread => COMMON_PLACEHOLDERS,
+            | Self::SlackAppUpdateThread => COMMON_PLACEHOLDERS,
         }
     }
 }
@@ -558,52 +483,6 @@ pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog 
         templates.slack_app.update_thread.as_deref(),
         TemplateField::SlackAppUpdateThread,
     );
-    apply_template_override(
-        &mut catalog.slack_workflow.thread_root,
-        templates.slack_workflow.thread_root.as_deref(),
-        TemplateField::SlackWorkflowThreadRoot,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.observe_thread,
-        templates.slack_workflow.observe_thread.as_deref(),
-        TemplateField::SlackWorkflowObserveThread,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.observe_blocked_thread,
-        templates.slack_workflow.observe_blocked_thread.as_deref(),
-        TemplateField::SlackWorkflowObserveBlockedThread,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.observe_draft_thread,
-        templates.slack_workflow.observe_draft_thread.as_deref(),
-        TemplateField::SlackWorkflowObserveDraftThread,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.refine_thread,
-        templates.slack_workflow.refine_thread.as_deref(),
-        TemplateField::SlackWorkflowRefineThread,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.first_title,
-        templates.slack_workflow.first_title.as_deref(),
-        TemplateField::SlackWorkflowFirstTitle,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.first_thread,
-        templates.slack_workflow.first_thread.as_deref(),
-        TemplateField::SlackWorkflowFirstThread,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.update_title,
-        templates.slack_workflow.update_title.as_deref(),
-        TemplateField::SlackWorkflowUpdateTitle,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.update_thread,
-        templates.slack_workflow.update_thread.as_deref(),
-        TemplateField::SlackWorkflowUpdateThread,
-    );
-
     catalog
 }
 
@@ -828,16 +707,6 @@ pub fn render_notification(
                 &context.variables(RenderStyle::SlackApp),
             ),
         )),
-        NotificationSinkKind::SlackWorkflow => Some((
-            render_template(
-                &catalog.slack_workflow.thread_root,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-            render_template(
-                &catalog.slack_workflow.refine_thread,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-        )),
         NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
     }
 }
@@ -863,37 +732,8 @@ pub fn render_observe_notification(
                 &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
             ),
         )),
-        NotificationSinkKind::SlackWorkflow => Some((
-            render_template(
-                &catalog.slack_workflow.thread_root,
-                &context.variables(RenderStyle::SlackWorkflow, &catalog.risk_emojis),
-            ),
-            render_template(
-                select_observe_template(
-                    context,
-                    &catalog.slack_workflow.observe_thread,
-                    &catalog.slack_workflow.observe_blocked_thread,
-                    &catalog.slack_workflow.observe_draft_thread,
-                ),
-                &context.variables(RenderStyle::SlackWorkflow, &catalog.risk_emojis),
-            ),
-        )),
         NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
     }
-}
-
-pub fn render_slack_workflow_notification(
-    catalog: &TemplateCatalog,
-    context: &NotificationTemplateContext,
-    variant: NotificationTemplateVariant,
-) -> (String, String) {
-    render_notification(
-        catalog,
-        context,
-        NotificationSinkKind::SlackWorkflow,
-        variant,
-    )
-    .expect("Slack workflow notifications should be renderable")
 }
 
 fn select_observe_template<'a>(
@@ -1098,10 +938,6 @@ impl NotificationTemplateContext {
             "notification_subject",
             match style {
                 RenderStyle::SlackApp => self.notification_subject.clone(),
-                RenderStyle::SlackWorkflow => self.notification_subject.replace(
-                    &ref_link(RenderStyle::SlackApp, &self.snapshot),
-                    &ref_link(RenderStyle::SlackWorkflow, &self.snapshot),
-                ),
                 RenderStyle::GitLab | RenderStyle::GitHub => String::new(),
             },
         );
@@ -1116,9 +952,6 @@ impl NotificationTemplateContext {
                     }
                     RenderStyle::SlackApp => {
                         format!("_Assigned reviewers_ {}", values["reviewers_list"])
-                    }
-                    RenderStyle::SlackWorkflow => {
-                        format!("Assigned reviewers {}", values["reviewers_list"])
                     }
                 }
             },
@@ -1157,10 +990,6 @@ impl ObserveTemplateContext {
             "notification_subject",
             match style {
                 RenderStyle::SlackApp => self.notification_subject.clone(),
-                RenderStyle::SlackWorkflow => self.notification_subject.replace(
-                    &ref_link(RenderStyle::SlackApp, &self.snapshot),
-                    &ref_link(RenderStyle::SlackWorkflow, &self.snapshot),
-                ),
                 RenderStyle::GitLab | RenderStyle::GitHub => String::new(),
             },
         );
@@ -1224,7 +1053,6 @@ fn common_values(
         match style {
             RenderStyle::SlackApp => format!("@{}", snapshot.mr_author_username),
             RenderStyle::GitLab | RenderStyle::GitHub => snapshot.mr_author_username.clone(),
-            RenderStyle::SlackWorkflow => snapshot.mr_author_username.clone(),
         },
     );
     values.insert("source_branch", snapshot.source_branch.clone());
@@ -1420,7 +1248,6 @@ fn format_findings_block(style: RenderStyle, findings: &[FindingView]) -> String
                 format!("- **{}**: {}", finding.label, finding.message)
             }
             RenderStyle::SlackApp => format!("*{}*: {}", finding.label, finding.message),
-            RenderStyle::SlackWorkflow => format!("{}: {}", finding.label, finding.message),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -1441,7 +1268,7 @@ fn format_plain_block(style: RenderStyle, title: &str, values: &[String]) -> Str
                 .collect::<Vec<_>>()
                 .join("\n")
         ),
-        RenderStyle::SlackWorkflow | RenderStyle::GitLab | RenderStyle::GitHub => format!(
+        RenderStyle::GitLab | RenderStyle::GitHub => format!(
             "{}:\n{}",
             title,
             values
@@ -1457,7 +1284,7 @@ fn format_actions_block(style: RenderStyle, actions: &[String]) -> String {
     actions
         .iter()
         .map(|action| match style {
-            RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
+            RenderStyle::GitLab | RenderStyle::GitHub => {
                 format!("- {}", action)
             }
             RenderStyle::SlackApp => format!("• {}", action),
@@ -1480,7 +1307,6 @@ fn format_recommendations_block(
             lines.push("### Local review recommendations".to_string())
         }
         RenderStyle::SlackApp => lines.push("*Local review recommendations*".to_string()),
-        RenderStyle::SlackWorkflow => lines.push("Local review recommendations".to_string()),
     }
 
     if let Some(summary) = &inference.summary {
@@ -1497,9 +1323,6 @@ fn format_recommendations_block(
                 }
                 RenderStyle::SlackApp => {
                     format!("• *{}*: {}", recommendation.label, recommendation.message)
-                }
-                RenderStyle::SlackWorkflow => {
-                    format!("- {}: {}", recommendation.label, recommendation.message)
                 }
             }),
     );
@@ -1519,7 +1342,6 @@ fn format_pipeline_status_block(
     match style {
         RenderStyle::GitLab | RenderStyle::GitHub => lines.push("### CI task status".to_string()),
         RenderStyle::SlackApp => lines.push("*CI task status*".to_string()),
-        RenderStyle::SlackWorkflow => lines.push("CI task status".to_string()),
     }
 
     lines.extend(pipeline_statuses.iter().map(|entry| {
@@ -1529,7 +1351,7 @@ fn format_pipeline_status_block(
             PipelineStatusState::Unknown => ":large_yellow_circle:",
         };
         let mut line = match style {
-            RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
+            RenderStyle::GitLab | RenderStyle::GitHub => {
                 format!("- {} {}", indicator, entry.label)
             }
             RenderStyle::SlackApp => format!("{} {}", indicator, entry.label),
@@ -1558,11 +1380,6 @@ fn format_reviewers_list(style: RenderStyle, reviewers: &[String]) -> String {
             .map(|reviewer| format!("*@{}*", reviewer))
             .collect::<Vec<_>>()
             .join(" "),
-        RenderStyle::SlackWorkflow => reviewers
-            .iter()
-            .map(|reviewer| format!("@{}", reviewer))
-            .collect::<Vec<_>>()
-            .join(" "),
     }
 }
 
@@ -1582,7 +1399,6 @@ fn message_link(style: RenderStyle, url: &str, label: &str) -> String {
     match style {
         RenderStyle::GitLab | RenderStyle::GitHub => format!("[{}]({})", label, url),
         RenderStyle::SlackApp => format!("<{}|{}>", url, label),
-        RenderStyle::SlackWorkflow => format!("{} ({})", label, url),
     }
 }
 
@@ -1648,8 +1464,7 @@ pub fn enabled_notification_targets(sinks: &[NotificationSinkKind]) -> Vec<Notif
 mod tests {
     use super::*;
     use crate::config::{
-        GitHubTemplates, GitLabTemplates, RiskEmojiTemplates, SlackAppTemplates,
-        SlackWorkflowTemplates, TemplatesConfig,
+        GitHubTemplates, GitLabTemplates, RiskEmojiTemplates, SlackAppTemplates, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::inference::{
@@ -1701,6 +1516,7 @@ mod tests {
                 target_branch: Some("develop".to_string()),
                 merge_request_state: Some("opened".to_string()),
                 commit_count: None,
+                commits: Vec::new(),
                 approvals_required: None,
                 approvals_given: None,
             },
@@ -1917,7 +1733,6 @@ mod tests {
         );
         let mut catalog = TemplateCatalog::default();
         catalog.slack_app.refine_thread = "Author {{mr_author_username}}".to_string();
-        catalog.slack_workflow.refine_thread = "Author {{mr_author_username}}".to_string();
 
         let (_, app_body) = render_notification(
             &catalog,
@@ -1926,16 +1741,7 @@ mod tests {
             NotificationTemplateVariant::Update,
         )
         .expect("Slack app notification should render");
-        let (_, workflow_body) = render_notification(
-            &catalog,
-            &context,
-            NotificationSinkKind::SlackWorkflow,
-            NotificationTemplateVariant::Update,
-        )
-        .expect("Slack workflow notification should render");
-
         assert_eq!(app_body, "Author @arthur");
-        assert_eq!(workflow_body, "Author arthur");
     }
 
     #[test]
@@ -1948,7 +1754,6 @@ mod tests {
                 first_root: Some("custom root for {{mr_ref}}".to_string()),
                 ..SlackAppTemplates::default()
             },
-            slack_workflow: SlackWorkflowTemplates::default(),
         };
 
         let catalog = resolve_template_catalog(&templates);
@@ -1970,7 +1775,6 @@ mod tests {
                 first_root: Some("custom {{unknown_placeholder}}".to_string()),
                 ..SlackAppTemplates::default()
             },
-            slack_workflow: SlackWorkflowTemplates::default(),
         };
 
         let catalog = resolve_template_catalog(&templates);

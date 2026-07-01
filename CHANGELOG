@@ -16,7 +16,7 @@ This major release turns `observe` into the first pipeline intake gate instead o
 - `observe` now mutates review state by applying risk labels and draft labels, sends Slack app intake notifications, and exits nonzero when intake requirements are not met.
 - Repository areas are now required in `mr-milchick.toml` under `[[areas.definitions]]`; Milchick no longer ships hardcoded default area classification.
 - Reviewer `areas` must reference configured area keys exactly.
-- Slack's v5 one-root-thread notification contract is supported through the Slack app sink; Slack workflow delivery does not perform MR thread lookup.
+- Slack now updates durable `observe` and `refine` thread replies in place and appends compact commit/CI activity lines. The Slack workflow sink has been removed.
 
 ### Added
 

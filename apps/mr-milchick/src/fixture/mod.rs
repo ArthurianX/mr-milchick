@@ -176,6 +176,7 @@ impl ReviewFixture {
                 target_branch: Some(self.merge_request.target_branch.clone()),
                 merge_request_state: Some("opened".to_string()),
                 commit_count: None,
+                commits: Vec::new(),
                 approvals_required: None,
                 approvals_given: None,
             },

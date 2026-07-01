@@ -3,9 +3,10 @@ use reqwest::{Client, Method, RequestBuilder};
 use tracing::{debug, instrument};
 
 use super::api::{
-    GitHubChangedFile, GitHubConfig, GitHubPullRequest, GitHubSnapshotData, PullRequestComment,
+    GitHubChangedFile, GitHubCommit, GitHubConfig, GitHubPullRequest, GitHubSnapshotData,
+    PullRequestComment,
 };
-use super::dto::{IssueCommentDto, PullRequestDto, PullRequestFileDto};
+use super::dto::{IssueCommentDto, PullRequestCommitDto, PullRequestDto, PullRequestFileDto};
 
 const PAGE_SIZE: usize = 100;
 
@@ -60,6 +61,33 @@ impl GitHubClient {
     }
 
     #[instrument(skip(self), fields(project_key = %project_key, review_id = %review_id))]
+    pub async fn get_pull_request_commits(
+        &self,
+        project_key: &str,
+        review_id: &str,
+    ) -> Result<Vec<GitHubCommit>> {
+        let url = format!("{}/commits", self.pull_request_url(project_key, review_id));
+        let commits = self
+            .paginate::<PullRequestCommitDto>(&url, "failed to fetch pull request commits")
+            .await?;
+
+        Ok(commits
+            .into_iter()
+            .map(|commit| GitHubCommit {
+                id: commit.sha,
+                title: commit
+                    .commit
+                    .message
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+                web_url: commit.html_url,
+            })
+            .collect())
+    }
+
+    #[instrument(skip(self), fields(project_key = %project_key, review_id = %review_id))]
     pub async fn get_pull_request_snapshot(
         &self,
         project_key: &str,
@@ -67,6 +95,16 @@ impl GitHubClient {
     ) -> Result<GitHubSnapshotData> {
         let pull_request = self.get_pull_request(project_key, review_id).await?;
         let changed_files = self.get_pull_request_files(project_key, review_id).await?;
+        let commits = match self.get_pull_request_commits(project_key, review_id).await {
+            Ok(commits) => commits,
+            Err(err) => {
+                debug!(
+                    error = %err,
+                    "GitHub commits unavailable; Slack commit activity will be empty"
+                );
+                Vec::new()
+            }
+        };
 
         debug!(
             changed_files = changed_files.len(),
@@ -76,6 +114,7 @@ impl GitHubClient {
         Ok(GitHubSnapshotData {
             pull_request,
             changed_files,
+            commits,
         })
     }
 

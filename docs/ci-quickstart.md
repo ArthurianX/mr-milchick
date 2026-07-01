@@ -5,7 +5,7 @@ This is the shortest path to running Mr Milchick safely in CI with the new confi
 ## What You Need
 
 - one compiled platform connector: GitLab or GitHub
-- optional notification sinks: Slack app and/or Slack workflow
+- optional notification sink: Slack app
 - a `mr-milchick.toml` file committed with non-secret runtime config
 - secrets supplied through CI variables
 
@@ -119,7 +119,6 @@ milchick:explain:
 - `GITLAB_TOKEN` for GitLab live reads and writes
 - `GITHUB_TOKEN` for GitHub live reads and writes
 - `MR_MILCHICK_SLACK_BOT_TOKEN` for Slack app delivery
-- `MR_MILCHICK_SLACK_WEBHOOK_URL` for Slack workflow delivery
 
 ## Review Context Env
 
@@ -149,24 +148,6 @@ channel = "C0ALY38CW3X"
 Set:
 
 - `MR_MILCHICK_SLACK_BOT_TOKEN`
-
-## Slack Workflow Setup
-
-```toml
-[notifications.slack_workflow]
-enabled = true
-channel = "C0ALY38CW3X"
-```
-
-Set:
-
-- `MR_MILCHICK_SLACK_WEBHOOK_URL`
-
-The webhook must be a Slack Workflow input webhook. Milchick sends:
-
-- `mr_milchick_talks_to`
-- `mr_milchick_says`
-- `mr_milchick_says_thread`
 
 ## Interpolation Notes
 

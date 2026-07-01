@@ -4,8 +4,8 @@ pub mod dto;
 
 use crate::core::model::{
     Actor, AppliedReviewAction, ChangeType, ChangedFile, ManagedReviewComment, RepositoryRef,
-    ReviewAction, ReviewActionKind, ReviewActionReport, ReviewMetadata, ReviewPlatformKind,
-    ReviewRef, ReviewSnapshot, SkippedReviewAction,
+    ReviewAction, ReviewActionKind, ReviewActionReport, ReviewCommit, ReviewMetadata,
+    ReviewPlatformKind, ReviewRef, ReviewSnapshot, SkippedReviewAction,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, PlatformConnector};
 use async_trait::async_trait;
@@ -318,6 +318,15 @@ fn map_snapshot(
             target_branch: Some(target_branch.to_string()),
             merge_request_state: Some(pull_request.state),
             commit_count: None,
+            commits: data
+                .commits
+                .into_iter()
+                .map(|commit| ReviewCommit {
+                    id: commit.id,
+                    title: commit.title,
+                    web_url: commit.web_url,
+                })
+                .collect(),
             approvals_required: None,
             approvals_given: None,
         },

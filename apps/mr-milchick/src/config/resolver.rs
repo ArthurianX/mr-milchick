@@ -115,7 +115,6 @@ pub struct InferenceConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationsConfig {
     pub slack_app: SlackAppConfig,
-    pub slack_workflow: SlackWorkflowConfig,
     pub pipeline_status: PipelineStatusConfig,
 }
 
@@ -126,13 +125,6 @@ pub struct SlackAppConfig {
     pub bot_token: Option<String>,
     pub channel: Option<String>,
     pub user_map: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlackWorkflowConfig {
-    pub enabled: bool,
-    pub webhook_url: Option<String>,
-    pub channel: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,12 +190,6 @@ pub fn compiled_notification_sinks() -> Vec<NotificationSinkKind> {
     let sinks = {
         let mut sinks = sinks;
         sinks.push(NotificationSinkKind::SlackApp);
-        sinks
-    };
-    #[cfg(feature = "slack-workflow")]
-    let sinks = {
-        let mut sinks = sinks;
-        sinks.push(NotificationSinkKind::SlackWorkflow);
         sinks
     };
     sinks
@@ -681,11 +667,6 @@ fn resolve_notifications_config(
             channel: sanitize_optional(file.slack_app.channel.clone()),
             user_map: sanitize_user_map(&file.slack_app.user_map),
         },
-        slack_workflow: SlackWorkflowConfig {
-            enabled: file.slack_workflow.enabled.unwrap_or(false),
-            webhook_url: secrets.slack_webhook_url.clone(),
-            channel: sanitize_optional(file.slack_workflow.channel.clone()),
-        },
         pipeline_status: PipelineStatusConfig {
             enabled: file.pipeline_status.enabled.unwrap_or(false),
             fail_pipeline_on_failed: file
@@ -712,10 +693,6 @@ fn validate_compiled_platform(platform: ReviewPlatformKind) -> Result<()> {
 fn validate_compiled_notifications(config: &NotificationsConfig) -> Result<()> {
     if config.slack_app.enabled && !cfg!(feature = "slack-app") {
         bail!("config enables 'slack-app' notifications but that sink is not compiled in");
-    }
-
-    if config.slack_workflow.enabled && !cfg!(feature = "slack-workflow") {
-        bail!("config enables 'slack-workflow' notifications but that sink is not compiled in");
     }
 
     Ok(())
@@ -935,9 +912,7 @@ mod tests {
 
     #[test]
     fn parses_full_config_file_shape() {
-        let slack_workflow_enabled = cfg!(feature = "slack-workflow");
-        let raw = format!(
-            r###"
+        let raw = r###"
 [platform]
 kind = "gitlab"
 base_url = "https://gitlab.example.com/api/v4"
@@ -962,15 +937,15 @@ remove = ["Ready for review"]
 
 [platform.gitlab.label_rules.when]
 all = [
-  {{ draft = false }},
-  {{ merge_request_state = "opened" }},
-  {{ pipeline_state = "passed" }},
-  {{ approvals = "satisfied" }},
-  {{ has_label = "Ready for review" }},
-  {{ has_no_labels = false }},
-  {{ source_branch = "feat/test" }},
-  {{ target_branch = "develop" }},
-  {{ source_branch_kind = "feature" }},
+  { draft = false },
+  { merge_request_state = "opened" },
+  { pipeline_state = "passed" },
+  { approvals = "satisfied" },
+  { has_label = "Ready for review" },
+  { has_no_labels = false },
+  { source_branch = "feat/test" },
+  { target_branch = "develop" },
+  { source_branch_kind = "feature" },
 ]
 
 [execution]
@@ -1013,31 +988,25 @@ base_url = "https://slack.example.test/api"
 "alice" = "U123"
 "bob" = ""
 
-[notifications.slack_workflow]
-enabled = {slack_workflow_enabled}
-channel = "C456"
-
 [notifications.pipeline_status]
 enabled = true
 fail_pipeline_on_failed = true
 search_root = "."
 
 [templates.gitlab]
-summary = "## {{{{summary_title}}}}"
+summary = "## {{summary_title}}"
 
 [templates.slack_app]
 first_root = "hello"
-"###
-        );
+"###;
 
-        let file = toml::from_str::<schema::ConfigFile>(&raw).expect("config file should parse");
+        let file = toml::from_str::<schema::ConfigFile>(raw).expect("config file should parse");
         let config = resolve_config(
             file,
             SecretEnv {
                 gitlab_token: Some("gitlab-token".to_string()),
                 github_token: None,
                 slack_bot_token: Some("xoxb-token".to_string()),
-                slack_webhook_url: Some("https://hooks.slack.com/triggers/test".to_string()),
             },
         )
         .expect("resolved config should load");
@@ -1088,10 +1057,6 @@ first_root = "hello"
             config.notifications.slack_app.bot_token.as_deref(),
             Some("xoxb-token")
         );
-        assert_eq!(
-            config.notifications.slack_workflow.webhook_url.as_deref(),
-            Some("https://hooks.slack.com/triggers/test")
-        );
         assert!(config.notifications.pipeline_status.enabled);
         assert!(config.notifications.pipeline_status.fail_pipeline_on_failed);
         assert_eq!(
@@ -1111,9 +1076,8 @@ first_root = "hello"
 
     #[test]
     fn injects_platform_and_slack_secrets_from_env_layer() {
-        let slack_workflow_enabled = cfg!(feature = "slack-workflow");
         let config = resolve_config(
-            toml::from_str::<schema::ConfigFile>(&format!(
+            toml::from_str::<schema::ConfigFile>(
                 r#"
 [platform]
 kind = "gitlab"
@@ -1127,17 +1091,13 @@ risk = "medium"
 enabled = true
 channel = "C123"
 
-[notifications.slack_workflow]
-enabled = {slack_workflow_enabled}
-channel = "C456"
  "#,
-            ))
+            )
             .expect("config file should parse"),
             SecretEnv {
                 gitlab_token: Some("gitlab-token".to_string()),
                 github_token: None,
                 slack_bot_token: Some("xoxb-token".to_string()),
-                slack_webhook_url: Some("https://hooks.slack.com/triggers/test".to_string()),
             },
         )
         .expect("resolved config should load");
@@ -1146,10 +1106,6 @@ channel = "C456"
         assert_eq!(
             config.notifications.slack_app.bot_token.as_deref(),
             Some("xoxb-token")
-        );
-        assert_eq!(
-            config.notifications.slack_workflow.webhook_url.as_deref(),
-            Some("https://hooks.slack.com/triggers/test")
         );
     }
 
@@ -1448,22 +1404,17 @@ enabled = true
         assert!(error.to_string().contains("slack-app"));
     }
 
-    #[cfg(not(feature = "slack-workflow"))]
     #[test]
-    fn rejects_enabled_slack_workflow_when_not_compiled() {
-        let error = resolve_config(
-            toml::from_str::<schema::ConfigFile>(
-                r#"
+    fn rejects_removed_slack_workflow_config() {
+        let error = toml::from_str::<schema::ConfigFile>(
+            r#"
 [notifications.slack_workflow]
 enabled = true
 "#,
-            )
-            .expect("config file should parse"),
-            SecretEnv::default(),
         )
-        .expect_err("enabled slack workflow should fail");
+        .expect_err("removed Slack workflow config should fail");
 
-        assert!(error.to_string().contains("slack-workflow"));
+        assert!(error.to_string().contains("slack_workflow"));
     }
 
     #[test]

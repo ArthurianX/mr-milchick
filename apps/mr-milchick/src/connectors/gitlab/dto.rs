@@ -41,6 +41,13 @@ pub struct ChangedFileDto {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct MergeRequestCommitDto {
+    pub id: String,
+    pub title: String,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct UserLookupDto {
     pub id: u64,
     pub username: String,

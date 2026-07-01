@@ -161,31 +161,6 @@ MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
 ```
 
-Slack workflow example:
-
-```bash
-cat >/tmp/milchick-fixture-workflow.toml <<'TOML'
-[platform]
-kind = "gitlab"
-
-[[areas.definitions]]
-key = "frontend"
-paths = ["apps/frontend/**"]
-risk = "medium"
-
-[observe.description]
-required = false
-
-[notifications.slack_workflow]
-enabled = true
-channel = "C0ALY38CW3X"
-TOML
-
-MR_MILCHICK_CONFIG_PATH=/tmp/milchick-fixture-workflow.toml \
-MR_MILCHICK_SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/... \
-cargo run -- refine --fixture fixtures/update-notification.toml --send-notifications
-```
-
 `explain` never sends notifications, even in fixture mode.
 
 ## Config Path

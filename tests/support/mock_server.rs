@@ -45,6 +45,7 @@ struct MockSlackMessage {
     text: String,
     ts: String,
     thread_ts: Option<String>,
+    metadata: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -370,13 +371,17 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let notes_path = format!("{mr_path}/notes");
     let approvals_path = format!("{mr_path}/approvals");
     let changes_path = format!("{mr_path}/changes");
+    let commits_path = format!("{mr_path}/commits");
     let pr_path = format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}");
     let requested_reviewers_path = format!("{pr_path}/requested_reviewers");
     let files_path = format!("{pr_path}/files");
+    let pr_commits_path = format!("{pr_path}/commits");
     let issue_comments_path =
         format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
     let slack_post_message_path = "/slack/api/chat.postMessage";
     let slack_history_path = "/slack/api/conversations.history";
+    let slack_replies_path = "/slack/api/conversations.replies";
+    let slack_update_path = "/slack/api/chat.update";
 
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == mr_path => HttpResponse {
@@ -408,6 +413,22 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     }
                 ]
             })
+            .to_string(),
+        },
+        ("GET", path) if path.starts_with(&commits_path) => HttpResponse {
+            status_code: 200,
+            body: json!([
+                {
+                    "id": "1111111111111111111111111111111111111111",
+                    "title": "Prepare frontend adjustments",
+                    "web_url": "https://gitlab.example.com/group/project/-/commit/1111111111111111111111111111111111111111"
+                },
+                {
+                    "id": "2222222222222222222222222222222222222222",
+                    "title": "Finish frontend adjustments",
+                    "web_url": "https://gitlab.example.com/group/project/-/commit/2222222222222222222222222222222222222222"
+                }
+            ])
             .to_string(),
         },
         ("GET", path) if path == approvals_path => HttpResponse {
@@ -463,6 +484,17 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: json!(files).to_string(),
             }
         }
+        ("GET", path) if path.starts_with(&pr_commits_path) => HttpResponse {
+            status_code: 200,
+            body: json!([
+                {
+                    "sha": "2222222222222222222222222222222222222222",
+                    "html_url": "https://github.com/ArthurianX/mr-milchick/commit/2222222222222222222222222222222222222222",
+                    "commit": {"message": "Finish frontend adjustments\n\nDetails"}
+                }
+            ])
+            .to_string(),
+        },
         ("GET", path) if path == notes_path => HttpResponse {
             status_code: 200,
             body: json!(
@@ -681,6 +713,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     .to_string(),
                 ts: ts.clone(),
                 thread_ts: body["thread_ts"].as_str().map(ToString::to_string),
+                metadata: body["metadata"].is_object().then(|| body["metadata"].clone()),
             });
 
             HttpResponse {
@@ -713,6 +746,9 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     if let Some(thread_ts) = &message.thread_ts {
                         payload["thread_ts"] = json!(thread_ts);
                     }
+                    if let Some(metadata) = &message.metadata {
+                        payload["metadata"] = metadata.clone();
+                    }
 
                     payload
                 })
@@ -728,6 +764,57 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     }
                 })
                 .to_string(),
+            }
+        }
+        ("GET", path) if path.starts_with(slack_replies_path) => {
+            let channel = query_param(path, "channel").unwrap_or_default();
+            let root_ts = query_param(path, "ts").unwrap_or_default();
+            let messages = state
+                .slack_messages
+                .iter()
+                .filter(|message| {
+                    message.channel == channel
+                        && (message.ts == root_ts || message.thread_ts.as_deref() == Some(root_ts))
+                })
+                .map(|message| {
+                    let mut payload = json!({
+                        "type": "message",
+                        "text": message.text,
+                        "ts": message.ts,
+                    });
+                    if let Some(thread_ts) = &message.thread_ts {
+                        payload["thread_ts"] = json!(thread_ts);
+                    }
+                    if let Some(metadata) = &message.metadata {
+                        payload["metadata"] = metadata.clone();
+                    }
+                    payload
+                })
+                .collect::<Vec<_>>();
+            HttpResponse {
+                status_code: 200,
+                body: json!({"ok": true, "messages": messages}).to_string(),
+            }
+        }
+        ("POST", path) if path == slack_update_path => {
+            let body: Value =
+                serde_json::from_str(&request.body).expect("Slack update should be JSON");
+            let ts = body["ts"].as_str().expect("Slack timestamp should be a string");
+            let message = state
+                .slack_messages
+                .iter_mut()
+                .find(|message| message.ts == ts)
+                .expect("updated Slack message should exist");
+            message.text = body["text"]
+                .as_str()
+                .expect("Slack text should be a string")
+                .to_string();
+            message.metadata = body["metadata"]
+                .is_object()
+                .then(|| body["metadata"].clone());
+            HttpResponse {
+                status_code: 200,
+                body: json!({"ok": true, "channel": message.channel, "ts": ts}).to_string(),
             }
         }
         ("POST", path) if path.starts_with("/slack/api/webhook/") => {

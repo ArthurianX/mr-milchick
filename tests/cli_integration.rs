@@ -4,6 +4,7 @@ mod mock_server;
 use std::process::{Command, Output};
 use std::{
     fs,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -12,6 +13,8 @@ use mock_server::github_base_env;
 #[cfg(not(feature = "github"))]
 use mock_server::{MERGE_REQUEST_IID, base_env};
 use mock_server::{MockGitLabServer, PROJECT_ID, borrow_env};
+
+static NEXT_CONFIG_ID: AtomicU64 = AtomicU64::new(1);
 
 fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mr-milchick"));
@@ -51,7 +54,11 @@ fn write_temp_config(contents: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("mr-milchick-config-{unique}.toml"));
+    let sequence = NEXT_CONFIG_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "mr-milchick-config-{}-{unique}-{sequence}.toml",
+        std::process::id()
+    ));
     let contents = if contents.contains("[[areas.definitions]]") {
         contents.to_string()
     } else {
@@ -161,15 +168,6 @@ required = false
         if let Some(user_map) = env_value(envs, "MR_MILCHICK_SLACK_USER_MAP") {
             sections.push(build_user_map_config(user_map));
         }
-    }
-
-    if legacy_bool(env_value(envs, "MR_MILCHICK_SLACK_ENABLED")).unwrap_or(false)
-        && env_value(envs, "MR_MILCHICK_SLACK_WEBHOOK_URL").is_some()
-    {
-        sections.push(format!(
-            "[notifications.slack_workflow]\nenabled = true\nchannel = {}\n",
-            toml_optional_string(env_value(envs, "MR_MILCHICK_SLACK_CHANNEL"))
-        ));
     }
 
     sections.join("\n")
@@ -583,9 +581,10 @@ base_url = {slack_base_url}
         "stdout was:\n{second_stdout}"
     );
     assert!(
-        second_stdout.contains("[Notification SlackApp] delivered=true sent"),
+        second_stdout.contains("[Notification SlackApp] delivered=true updated"),
         "stdout was:\n{second_stdout}"
     );
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=false already present"));
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
@@ -664,7 +663,7 @@ base_url = {slack_base_url}
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        2
+        3
     );
     let _ = fs::remove_file(config_path);
 }
@@ -710,7 +709,7 @@ thread_root = "Template override for {{mr_ref}}"
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies.len(), 3);
     assert!(
         bodies
             .iter()
@@ -766,7 +765,7 @@ update_root = "Template override for {{unknown_placeholder}}"
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies.len(), 3);
     assert!(
         bodies
             .iter()
@@ -1002,18 +1001,17 @@ base_url = {slack_base_url}
 
     assert_eq!(
         server.request_count_prefix("GET", "/slack/api/conversations.history"),
-        2
+        4
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 3);
+    assert_eq!(bodies.len(), 2);
 
+    let updates = server.request_bodies("POST", "/slack/api/chat.update");
+    assert_eq!(updates.len(), 1);
     let update_payload: serde_json::Value =
-        serde_json::from_str(&bodies[2]).expect("update Slack payload should parse");
-    assert_eq!(
-        update_payload["thread_ts"],
-        serde_json::json!("1700000000.000001")
-    );
+        serde_json::from_str(&updates[0]).expect("update Slack payload should parse");
+    assert_eq!(update_payload["ts"], serde_json::json!("1700000000.000002"));
 
     let update_text = update_payload["text"]
         .as_str()

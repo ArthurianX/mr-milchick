@@ -20,7 +20,6 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
   - `GITLAB_TOKEN`
   - `GITHUB_TOKEN`
   - `MR_MILCHICK_SLACK_BOT_TOKEN`
-  - `MR_MILCHICK_SLACK_WEBHOOK_URL`
 - Removed env-driven runtime config is rejected with an error. That includes the old reviewer, CODEOWNERS, dry-run, Slack, LLM, and `MR_MILCHICK_FLAVOR_PATH` variables.
 
 ## Default File
@@ -138,10 +137,6 @@ base_url = "https://slack.com/api"
 [notifications.slack_app.user_map]
 "principal-reviewer" = "U01234567"
 "alice" = "U07654321"
-
-[notifications.slack_workflow]
-enabled = false
-channel = "C0ALY38CW3X"
 
 [notifications.pipeline_status]
 enabled = true
@@ -352,12 +347,7 @@ Live `explain` runs first reload Milchick's managed governance summary comment f
 
 `[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs. Slack app delivery uses this map when rewriting rendered `@username` mentions, including `{{mr_author_username}}` in Slack app templates.
 
-### `[notifications.slack_workflow]`
-
-| Field | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `enabled` | No | `false` | Must be `true` to activate the sink. |
-| `channel` | No | none | Sent in workflow payloads as `mr_milchick_talks_to`. |
+Slack app delivery keeps one root per review. Its `observe` and `refine` replies are durable slots updated with `chat.update`; completed pipelines append a one-line CI summary and links for commits not previously recorded in the thread. On the first run against an existing review, only the current head commit is appended.
 
 ### `[notifications.pipeline_status]`
 
@@ -412,15 +402,6 @@ Template overrides stay field-by-field and keep built-in defaults when omitted.
 - `[templates.slack_app].first_thread`
 - `[templates.slack_app].update_root`
 - `[templates.slack_app].update_thread`
-- `[templates.slack_workflow].thread_root`
-- `[templates.slack_workflow].observe_thread`
-- `[templates.slack_workflow].observe_blocked_thread`
-- `[templates.slack_workflow].observe_draft_thread`
-- `[templates.slack_workflow].refine_thread`
-- `[templates.slack_workflow].first_title`
-- `[templates.slack_workflow].first_thread`
-- `[templates.slack_workflow].update_title`
-- `[templates.slack_workflow].update_thread`
 
 Useful notification placeholders include:
 
@@ -475,7 +456,6 @@ Template placeholder validation still happens at render time. Invalid placeholde
 | `GITLAB_TOKEN` | GitLab live runs | GitLab API token. |
 | `GITHUB_TOKEN` | GitHub live runs | GitHub API token. |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | Slack app only | Slack bot token. |
-| `MR_MILCHICK_SLACK_WEBHOOK_URL` | Slack workflow only | Slack Workflow webhook URL. |
 
 ### Review Context
 

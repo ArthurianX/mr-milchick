@@ -53,6 +53,11 @@ async fn loads_neutral_snapshot_from_gitlab() {
     );
     assert_eq!(snapshot.metadata.approvals_required, Some(2));
     assert_eq!(snapshot.metadata.approvals_given, Some(2));
+    assert_eq!(snapshot.metadata.commits.len(), 2);
+    assert_eq!(
+        snapshot.metadata.commits[1].title,
+        "Finish frontend adjustments"
+    );
     assert_eq!(snapshot.labels, vec!["frontend".to_string()]);
 }
 

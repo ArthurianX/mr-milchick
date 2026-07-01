@@ -17,8 +17,6 @@ use crate::connectors::gitlab::{
 };
 #[cfg(feature = "slack-app")]
 use crate::connectors::notifications::slack_app::{SlackAppConfig, SlackAppSink};
-#[cfg(feature = "slack-workflow")]
-use crate::connectors::notifications::slack_workflow::{SlackWorkflowConfig, SlackWorkflowSink};
 use crate::core::actions::label_rules::enrich_with_gitlab_label_rules;
 use crate::core::actions::planner::enrich_with_reviewer_assignment;
 use crate::core::comment::metadata::{
@@ -48,8 +46,8 @@ use crate::core::message_templates::{
     resolve_template_catalog,
 };
 use crate::core::model::{
-    NotificationAudience, NotificationMessage, NotificationSeverity, NotificationSinkKind,
-    ReviewAction, ReviewActionKind, ReviewPlatformKind,
+    NotificationAudience, NotificationDelivery, NotificationMessage, NotificationSeverity,
+    NotificationSinkKind, ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
 use crate::core::observe::{ObservePlan, plan_observe};
 use crate::core::rules::engine::evaluate_rules;
@@ -897,28 +895,6 @@ fn build_notification_sinks(_app_config: &AppConfigContext) -> Vec<Box<dyn Notif
         }
     }
 
-    #[cfg(feature = "slack-workflow")]
-    if _app_config.config.notifications.slack_workflow.enabled {
-        let slack = SlackWorkflowSink::new(SlackWorkflowConfig {
-            enabled: _app_config.config.notifications.slack_workflow.enabled,
-            webhook_url: _app_config
-                .config
-                .notifications
-                .slack_workflow
-                .webhook_url
-                .clone(),
-            channel: _app_config
-                .config
-                .notifications
-                .slack_workflow
-                .channel
-                .clone(),
-        });
-        if slack.is_enabled() {
-            sinks.push(Box::new(slack));
-        }
-    }
-
     sinks
 }
 
@@ -937,28 +913,6 @@ fn configured_notification_sink_kinds(_app_config: &AppConfigContext) -> Vec<Not
         });
         if _app_config.config.notifications.slack_app.enabled || sink.is_enabled() {
             sinks.push(NotificationSinkKind::SlackApp);
-        }
-    }
-
-    #[cfg(feature = "slack-workflow")]
-    {
-        let sink = SlackWorkflowSink::new(SlackWorkflowConfig {
-            enabled: _app_config.config.notifications.slack_workflow.enabled,
-            webhook_url: _app_config
-                .config
-                .notifications
-                .slack_workflow
-                .webhook_url
-                .clone(),
-            channel: _app_config
-                .config
-                .notifications
-                .slack_workflow
-                .channel
-                .clone(),
-        });
-        if _app_config.config.notifications.slack_workflow.enabled || sink.is_enabled() {
-            sinks.push(NotificationSinkKind::SlackWorkflow);
         }
     }
 
@@ -1227,16 +1181,16 @@ fn build_observe_notifications(
 
     let notification_context = build_observe_template_context(plan, snapshot, selector, ctx);
     let thread_key = Some(format!("MR #{}", snapshot.review_ref.review_id));
+    let conversation_key = Some(notification_conversation_key(snapshot));
 
     sink_kinds
         .iter()
         .filter_map(|sink| {
             let (subject, body) =
                 render_observe_notification(template_catalog, &notification_context, *sink)?;
-
-            Some(NotificationMessage {
+            let stage = NotificationMessage {
                 sink: *sink,
-                subject,
+                subject: subject.clone(),
                 body,
                 audience: NotificationAudience::Default,
                 severity: if plan.should_fail() {
@@ -1246,8 +1200,28 @@ fn build_observe_notifications(
                 },
                 thread_key: thread_key.clone(),
                 prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
-            })
+                conversation_key: conversation_key.clone(),
+                delivery: NotificationDelivery::UpsertThreadReply {
+                    slot: "observe".to_string(),
+                },
+            };
+            let commit_log = plan.should_fail().then(|| NotificationMessage {
+                sink: *sink,
+                subject,
+                body: String::new(),
+                audience: NotificationAudience::Default,
+                severity: NotificationSeverity::Critical,
+                thread_key: thread_key.clone(),
+                prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
+                conversation_key: conversation_key.clone(),
+                delivery: NotificationDelivery::AppendCommitLog {
+                    commits: snapshot.metadata.commits.clone(),
+                    ci_summary: "🔴 CI: blocked at intake".to_string(),
+                },
+            });
+            Some(std::iter::once(stage).chain(commit_log))
         })
+        .flatten()
         .collect()
 }
 
@@ -1261,12 +1235,11 @@ fn build_notifications(
     sink_kinds: &[NotificationSinkKind],
     variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
-    if snapshot.is_draft
-        || outcome.action_plan.has_fail_pipeline()
-        || outcome.has_blocking_findings()
-    {
+    if snapshot.is_draft {
         return Vec::new();
     }
+
+    let blocked = outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings();
 
     let reviewers = reviewers_for_notification(outcome, snapshot);
     let variant =
@@ -1283,23 +1256,88 @@ fn build_notifications(
         pipeline_statuses.to_vec(),
     );
 
+    let conversation_key = Some(notification_conversation_key(snapshot));
+    let ci_summary = if blocked {
+        "🔴 CI: blocked by governance".to_string()
+    } else {
+        pipeline_ci_summary(pipeline_statuses)
+    };
     sink_kinds
         .iter()
         .filter_map(|sink| {
             let (subject, body) =
                 render_notification(template_catalog, &notification_context, *sink, variant)?;
 
-            Some(NotificationMessage {
+            let thread_key = Some(format!("MR #{}", snapshot.review_ref.review_id));
+            let stage = NotificationMessage {
                 sink: *sink,
-                subject,
+                subject: subject.clone(),
                 body,
                 audience: NotificationAudience::Default,
-                severity: NotificationSeverity::Info,
-                thread_key: Some(format!("MR #{}", snapshot.review_ref.review_id)),
+                severity: if blocked {
+                    NotificationSeverity::Critical
+                } else {
+                    NotificationSeverity::Info
+                },
+                thread_key: thread_key.clone(),
                 prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
-            })
+                conversation_key: conversation_key.clone(),
+                delivery: NotificationDelivery::UpsertThreadReply {
+                    slot: "refine".to_string(),
+                },
+            };
+            let commit_log = NotificationMessage {
+                sink: *sink,
+                subject,
+                body: String::new(),
+                audience: NotificationAudience::Default,
+                severity: if blocked {
+                    NotificationSeverity::Critical
+                } else {
+                    NotificationSeverity::Info
+                },
+                thread_key,
+                prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
+                conversation_key: conversation_key.clone(),
+                delivery: NotificationDelivery::AppendCommitLog {
+                    commits: snapshot.metadata.commits.clone(),
+                    ci_summary: ci_summary.clone(),
+                },
+            };
+            Some([stage, commit_log])
         })
+        .flatten()
         .collect()
+}
+
+fn notification_conversation_key(snapshot: &crate::core::model::ReviewSnapshot) -> String {
+    format!(
+        "{}:{}:{}",
+        snapshot.review_ref.platform.as_str(),
+        snapshot.review_ref.project_key,
+        snapshot.review_ref.review_id
+    )
+}
+
+fn pipeline_ci_summary(statuses: &[PipelineStatusTemplateEntry]) -> String {
+    if statuses.is_empty() {
+        return "🟡 CI: status unavailable".to_string();
+    }
+    let passed = statuses
+        .iter()
+        .filter(|status| status.state == PipelineStatusState::Passed)
+        .count();
+    let icon = if statuses
+        .iter()
+        .any(|status| status.state == PipelineStatusState::Failed)
+    {
+        "🔴"
+    } else if passed == statuses.len() {
+        "🟢"
+    } else {
+        "🟡"
+    };
+    format!("{icon} CI: {passed}/{} passed", statuses.len())
 }
 
 fn load_pipeline_status_entries(config: &ResolvedConfig) -> Vec<PipelineStatusTemplateEntry> {
@@ -1747,8 +1785,7 @@ mod tests {
         CodeownersConfig, ExecutionConfig, GitLabPlatformConfig as ResolvedGitLabPlatformConfig,
         InferenceConfig, NotificationsConfig, ObserveConfig, ObserveDescriptionConfig,
         ObserveRiskConfig, PipelineStatusConfig as ResolvedPipelineStatusConfig, PlatformConfig,
-        ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig,
-        SlackWorkflowConfig as ResolvedSlackWorkflowConfig, TemplatesConfig,
+        ResolvedConfig, SlackAppConfig as ResolvedSlackAppConfig, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::context::model::{
@@ -1888,11 +1925,6 @@ mod tests {
                     channel: None,
                     user_map: Default::default(),
                 },
-                slack_workflow: ResolvedSlackWorkflowConfig {
-                    enabled: false,
-                    webhook_url: None,
-                    channel: None,
-                },
                 pipeline_status: ResolvedPipelineStatusConfig {
                     enabled: false,
                     fail_pipeline_on_failed: false,
@@ -2008,7 +2040,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications.len(), 2);
         assert!(
             notifications[0]
                 .body
@@ -2043,7 +2075,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications.len(), 2);
         assert!(
             notifications[0]
                 .subject
@@ -2057,32 +2089,6 @@ mod tests {
                 .body
                 .contains(":large_green_circle: unit_tests: 18 tests passed")
         );
-    }
-
-    #[test]
-    fn notifications_render_for_slack_workflow_sink() {
-        let outcome = RuleOutcome::new();
-        let snapshot = sample_snapshot(Vec::new());
-        let selector = ToneSelector::default();
-        let ctx = sample_context();
-
-        let notifications = build_notifications(
-            &outcome,
-            &snapshot,
-            &crate::core::message_templates::TemplateCatalog::default(),
-            &selector,
-            &ctx,
-            &[],
-            &[NotificationSinkKind::SlackWorkflow],
-            None,
-        );
-
-        assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].sink, NotificationSinkKind::SlackWorkflow);
-        assert!(!notifications[0].prefer_thread_reply);
-        assert!(notifications[0].subject.contains("MR #456"));
-        assert!(notifications[0].body.contains("Merge request: Frontend adjustments (https://gitlab.example.com/group/project/-/merge_requests/456)"));
-        assert!(!notifications[0].body.contains('<'));
     }
 
     #[test]
@@ -2113,20 +2119,13 @@ mod tests {
             &crate::core::message_templates::TemplateCatalog::default(),
             &selector,
             &ctx,
-            &[
-                NotificationSinkKind::SlackApp,
-                NotificationSinkKind::SlackWorkflow,
-            ],
+            &[NotificationSinkKind::SlackApp],
         );
 
         assert_eq!(notifications.len(), 2);
         assert_eq!(notifications[0].sink, NotificationSinkKind::SlackApp);
         assert!(notifications[0].prefer_thread_reply);
         assert!(notifications[0].body.contains("Description: missing"));
-        assert_eq!(notifications[1].sink, NotificationSinkKind::SlackWorkflow);
-        assert!(!notifications[1].prefer_thread_reply);
-        assert!(notifications[1].body.contains("Description: missing"));
-        assert!(!notifications[1].body.contains('<'));
     }
 
     #[test]
@@ -2153,7 +2152,6 @@ mod tests {
         let ctx = sample_context();
         let sinks = [
             NotificationSinkKind::SlackApp,
-            NotificationSinkKind::SlackWorkflow,
             NotificationSinkKind::Teams,
             NotificationSinkKind::Discord,
         ];
