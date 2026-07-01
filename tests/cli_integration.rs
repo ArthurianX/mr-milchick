@@ -463,6 +463,63 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     assert_eq!(server.note_bodies().len(), 1);
 }
 
+#[test]
+fn refine_mode_does_not_post_platform_or_slack_messages_for_drafts() {
+    let server = MockGitLabServer::start_draft();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
+    let slack_config = if cfg!(feature = "slack-app") {
+        format!(
+            r#"
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = {}
+"#,
+            toml_string(server.slack_api_base_url().as_str())
+        )
+    } else {
+        String::new()
+    };
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
+kind = "{platform}"
+base_url = {base_url}
+
+[reviewers]
+max_reviewers = 2
+
+[codeowners]
+enabled = false
+{slack_config}
+"#,
+        platform = compiled_platform_connector_kind(),
+        base_url = toml_string(platform_base_url.as_str()),
+    ));
+    let mut envs = review_env(&server);
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+
+    let output = run_cli("refine", &[], &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("platform comments and notifications are suppressed"));
+    assert_eq!(server.request_count("POST", &review_comments_path()), 0);
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        0
+    );
+    let _ = fs::remove_file(config_path);
+}
+
 #[cfg(feature = "slack-app")]
 #[test]
 fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_unchanged() {

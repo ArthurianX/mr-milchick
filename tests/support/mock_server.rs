@@ -49,6 +49,7 @@ struct MockSlackMessage {
 
 #[derive(Debug)]
 struct ServerState {
+    is_draft: bool,
     reviewers: Vec<String>,
     labels: Vec<String>,
     notes: Vec<MockNote>,
@@ -69,6 +70,16 @@ pub struct MockGitLabServer {
 impl MockGitLabServer {
     pub fn start() -> Self {
         Self::start_with_reviewers_labels_and_github_files(Vec::new(), Vec::new(), 1)
+    }
+
+    pub fn start_draft() -> Self {
+        let server = Self::start();
+        server
+            .state
+            .lock()
+            .expect("state lock should succeed")
+            .is_draft = true;
+        server
     }
 
     pub fn start_with_reviewers(reviewers: Vec<&str>) -> Self {
@@ -101,6 +112,7 @@ impl MockGitLabServer {
             .expect("mock server should have address");
         let running = Arc::new(AtomicBool::new(true));
         let state = Arc::new(Mutex::new(ServerState {
+            is_draft: false,
             reviewers: reviewers
                 .into_iter()
                 .map(|value| value.to_string())
@@ -374,7 +386,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 "title": "Frontend adjustments",
                 "description": "Refresh the UI flow",
                 "state": "opened",
-                "draft": false,
+                "draft": state.is_draft,
                 "web_url": "https://gitlab.example.com/group/project/-/merge_requests/3995",
                 "author": {"username": "arthur"},
                 "reviewers": state.reviewers.iter().map(|username| json!({"username": username})).collect::<Vec<_>>(),
@@ -413,7 +425,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 "title": "Frontend adjustments",
                 "body": "Refresh the UI flow",
                 "state": "open",
-                "draft": false,
+                "draft": state.is_draft,
                 "html_url": "https://github.com/ArthurianX/mr-milchick/pull/3995",
                 "user": {"login": "arthur"},
                 "requested_reviewers": state.reviewers.iter().map(|username| json!({"login": username})).collect::<Vec<_>>(),

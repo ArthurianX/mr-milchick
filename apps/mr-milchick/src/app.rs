@@ -580,31 +580,46 @@ async fn run_refine_mode(
         execution_strategy_for_mode(prepared.fixture_mode, send_notifications, app_config);
     let blocked = prepared.outcome.action_plan.has_fail_pipeline()
         || prepared.outcome.has_blocking_findings();
+    let governance_actions = prepared
+        .outcome
+        .action_plan
+        .actions
+        .iter()
+        .filter(|action| {
+            !prepared.snapshot.is_draft
+                || !matches!(
+                    action,
+                    ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. }
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let governance_report = prepared
         .wiring
-        .execute_review_actions(strategy, &prepared.outcome.action_plan.actions)
+        .execute_review_actions(strategy, &governance_actions)
         .await?;
-    let summary_metadata = governance_metadata_from_report(strategy, blocked, &governance_report);
-    let summary = governance_summary_markdown(
-        template_catalog,
-        &prepared.outcome,
-        &prepared.snapshot,
-        selector,
-        &prepared.ctx,
-        Some(&summary_metadata),
-    )?;
-    let summary_report = prepared
-        .wiring
-        .execute_review_actions(
-            strategy,
-            &[ReviewAction::UpsertSummary {
-                markdown: summary.clone(),
-            }],
-        )
-        .await?;
-
     let mut review_report = governance_report;
-    review_report.extend(summary_report);
+    if prepared.snapshot.is_draft {
+        println!("Draft review detected; platform comments and notifications are suppressed.");
+    } else {
+        let summary_metadata = governance_metadata_from_report(strategy, blocked, &review_report);
+        let summary = governance_summary_markdown(
+            template_catalog,
+            &prepared.outcome,
+            &prepared.snapshot,
+            selector,
+            &prepared.ctx,
+            Some(&summary_metadata),
+        )?;
+        let summary_report = prepared
+            .wiring
+            .execute_review_actions(
+                strategy,
+                &[ReviewAction::UpsertSummary { markdown: summary }],
+            )
+            .await?;
+        review_report.extend(summary_report);
+    }
     let notifications = build_notifications(
         &prepared.outcome,
         &prepared.snapshot,
@@ -653,6 +668,11 @@ async fn run_explain_mode(
     print_action_plan(&prepared.outcome, false);
     print_snapshot_details(&prepared.snapshot);
     print_codeowners_details(&prepared.snapshot, app_config);
+
+    if prepared.snapshot.is_draft {
+        println!("Skipping `explain`: draft reviews do not generate platform comments.");
+        return Ok(());
+    }
 
     let Some(governance_metadata) = load_explain_gate(prepared).await? else {
         println!("Skipping `explain`: no prior governance summary metadata was available.");
@@ -1201,6 +1221,10 @@ fn build_observe_notifications(
     ctx: &crate::context::model::CiContext,
     sink_kinds: &[NotificationSinkKind],
 ) -> Vec<NotificationMessage> {
+    if snapshot.is_draft {
+        return Vec::new();
+    }
+
     let notification_context = build_observe_template_context(plan, snapshot, selector, ctx);
     let thread_key = Some(format!("MR #{}", snapshot.review_ref.review_id));
 
@@ -1237,7 +1261,10 @@ fn build_notifications(
     sink_kinds: &[NotificationSinkKind],
     variant_override: Option<crate::core::message_templates::NotificationTemplateVariant>,
 ) -> Vec<NotificationMessage> {
-    if outcome.action_plan.has_fail_pipeline() || outcome.has_blocking_findings() {
+    if snapshot.is_draft
+        || outcome.action_plan.has_fail_pipeline()
+        || outcome.has_blocking_findings()
+    {
         return Vec::new();
     }
 
@@ -2100,6 +2127,61 @@ mod tests {
         assert!(!notifications[1].prefer_thread_reply);
         assert!(notifications[1].body.contains("Description: missing"));
         assert!(!notifications[1].body.contains('<'));
+    }
+
+    #[test]
+    fn draft_reviews_do_not_generate_notifications_for_any_sink() {
+        let plan = ObservePlan {
+            status: crate::core::observe::ObserveStatus::Draft,
+            risk: crate::core::observe::RiskAssessment {
+                level: crate::core::observe::RiskLevel::Low,
+                label: "risk::low".to_string(),
+                reasons: Vec::new(),
+                matched_areas: Vec::new(),
+                unmatched_paths: Vec::new(),
+            },
+            description: crate::core::observe::DescriptionAssessment {
+                status: crate::core::observe::DescriptionStatus::Meaningful,
+                reasons: Vec::new(),
+            },
+            blocking_reasons: Vec::new(),
+            actions: Vec::new(),
+        };
+        let mut snapshot = sample_snapshot(Vec::new());
+        snapshot.is_draft = true;
+        let selector = ToneSelector::default();
+        let ctx = sample_context();
+        let sinks = [
+            NotificationSinkKind::SlackApp,
+            NotificationSinkKind::SlackWorkflow,
+            NotificationSinkKind::Teams,
+            NotificationSinkKind::Discord,
+        ];
+
+        assert!(
+            build_observe_notifications(
+                &plan,
+                &snapshot,
+                &crate::core::message_templates::TemplateCatalog::default(),
+                &selector,
+                &ctx,
+                &sinks,
+            )
+            .is_empty()
+        );
+        assert!(
+            build_notifications(
+                &RuleOutcome::new(),
+                &snapshot,
+                &crate::core::message_templates::TemplateCatalog::default(),
+                &selector,
+                &ctx,
+                &[],
+                &sinks,
+                None,
+            )
+            .is_empty()
+        );
     }
 
     #[test]
