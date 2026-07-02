@@ -190,7 +190,7 @@ base_url = "https://slack.com/api"
 "bob" = "U07654321"
 ```
 
-The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages and read channel history so Milchick can find the existing review thread and its durable stage replies. In Slack OAuth terms, that usually means `chat:write` plus the relevant history scope for the channel type you use.
+The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages, read channel history, and read Milchick's message metadata so it can find the existing review thread and its durable stage replies. In Slack OAuth terms, that means `chat:write`, `metadata.message:read`, plus the relevant history scope for the channel type you use.
 
 Secrets stay in env. First run `observe`; it should create the root MR message and a thread reply:
 

@@ -149,6 +149,8 @@ Set:
 
 - `MR_MILCHICK_SLACK_BOT_TOKEN`
 
+The installed Slack app needs `chat:write`, `metadata.message:read`, and the relevant conversation-history scope (`channels:history` for public channels or `groups:history` for private channels).
+
 ## Interpolation Notes
 
 - TOML supports `${VAR}` for required env vars.

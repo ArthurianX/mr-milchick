@@ -731,6 +731,8 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
         }
         ("GET", path) if path.starts_with(slack_history_path) => {
             let channel = query_param(path, "channel").unwrap_or_default();
+            let include_all_metadata =
+                query_param(path, "include_all_metadata") == Some("true");
             let messages = state
                 .slack_messages
                 .iter()
@@ -747,7 +749,11 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                         payload["thread_ts"] = json!(thread_ts);
                     }
                     if let Some(metadata) = &message.metadata {
-                        payload["metadata"] = metadata.clone();
+                        if include_all_metadata {
+                            payload["metadata"] = metadata.clone();
+                        } else if let Some(event_type) = metadata.get("event_type") {
+                            payload["metadata"] = json!({"event_type": event_type});
+                        }
                     }
 
                     payload
@@ -769,6 +775,8 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
         ("GET", path) if path.starts_with(slack_replies_path) => {
             let channel = query_param(path, "channel").unwrap_or_default();
             let root_ts = query_param(path, "ts").unwrap_or_default();
+            let include_all_metadata =
+                query_param(path, "include_all_metadata") == Some("true");
             let messages = state
                 .slack_messages
                 .iter()
@@ -786,7 +794,11 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                         payload["thread_ts"] = json!(thread_ts);
                     }
                     if let Some(metadata) = &message.metadata {
-                        payload["metadata"] = metadata.clone();
+                        if include_all_metadata {
+                            payload["metadata"] = metadata.clone();
+                        } else if let Some(event_type) = metadata.get("event_type") {
+                            payload["metadata"] = json!({"event_type": event_type});
+                        }
                     }
                     payload
                 })

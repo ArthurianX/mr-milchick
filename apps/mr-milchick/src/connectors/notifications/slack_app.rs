@@ -465,9 +465,12 @@ async fn load_thread_messages(
     channel: &str,
     root_ts: &str,
 ) -> Result<Vec<SlackConversationMessage>> {
-    let mut request =
-        http.get(endpoint)
-            .query(&[("channel", channel), ("ts", root_ts), ("limit", "200")]);
+    let mut request = http.get(endpoint).query(&[
+        ("channel", channel),
+        ("ts", root_ts),
+        ("limit", "200"),
+        ("include_all_metadata", "true"),
+    ]);
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);
     }
@@ -571,9 +574,11 @@ async fn find_existing_thread_root_ts(
     let mut fallback_match: Option<String> = None;
 
     loop {
-        let mut request = http
-            .get(endpoint)
-            .query(&[("channel", channel), ("limit", "200")]);
+        let mut request = http.get(endpoint).query(&[
+            ("channel", channel),
+            ("limit", "200"),
+            ("include_all_metadata", "true"),
+        ]);
 
         if let Some(token) = bearer_token {
             request = request.bearer_auth(token);

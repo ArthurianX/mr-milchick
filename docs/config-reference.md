@@ -347,7 +347,7 @@ Live `explain` runs first reload Milchick's managed governance summary comment f
 
 `[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs. Slack app delivery uses this map when rewriting rendered `@username` mentions, including `{{mr_author_username}}` in Slack app templates.
 
-Slack app delivery keeps one root per review. Its `observe` and `refine` replies are durable slots updated with `chat.update`; completed pipelines append a one-line CI summary and links for commits not previously recorded in the thread. On the first run against an existing review, only the current head commit is appended.
+Slack app delivery keeps one root per review. Its `observe` and `refine` replies are durable slots updated with `chat.update`; completed pipelines append a one-line CI summary and links for commits not previously recorded in the thread. On the first run against an existing review, only the current head commit is appended. The installed Slack app needs `chat:write`, `metadata.message:read`, and the relevant conversation-history scope.
 
 ### `[notifications.pipeline_status]`
 
