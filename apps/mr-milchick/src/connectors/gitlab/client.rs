@@ -168,7 +168,7 @@ impl GitLabClient {
             merge_request_iid
         );
 
-        let commits = self
+        let mut commits = self
             .http
             .get(url)
             .header("PRIVATE-TOKEN", &self.config.token)
@@ -181,6 +181,11 @@ impl GitLabClient {
             .json::<Vec<MergeRequestCommitDto>>()
             .await
             .context("failed to deserialize merge request commits response")?;
+
+        // GitLab returns merge request commits newest-first. The neutral snapshot
+        // contract is chronological so notification sinks can select commits that
+        // follow the last one they recorded without platform-specific branching.
+        commits.reverse();
 
         Ok(commits
             .into_iter()

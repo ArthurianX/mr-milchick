@@ -55,6 +55,10 @@ async fn loads_neutral_snapshot_from_gitlab() {
     assert_eq!(snapshot.metadata.approvals_given, Some(2));
     assert_eq!(snapshot.metadata.commits.len(), 2);
     assert_eq!(
+        snapshot.metadata.commits[0].title,
+        "Prepare frontend adjustments"
+    );
+    assert_eq!(
         snapshot.metadata.commits[1].title,
         "Finish frontend adjustments"
     );

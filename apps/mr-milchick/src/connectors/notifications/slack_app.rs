@@ -394,6 +394,16 @@ async fn deliver_thread_notification(
         } => {
             let known_ids = known_commit_ids(&messages, conversation_key);
             let new_commits = select_new_commits(commits, &known_ids);
+            debug!(
+                channel,
+                root_ts,
+                conversation_key,
+                commit_count = commits.len(),
+                known_commit_count = known_ids.len(),
+                new_commit_count = new_commits.len(),
+                head_commit_id = commits.last().map(|commit| commit.id.as_str()),
+                "selected commits for Slack activity line"
+            );
             if new_commits.is_empty() {
                 (false, Some(root_ts.to_string()), "already present")
             } else {

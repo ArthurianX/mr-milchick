@@ -419,14 +419,14 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             status_code: 200,
             body: json!([
                 {
-                    "id": "1111111111111111111111111111111111111111",
-                    "title": "Prepare frontend adjustments",
-                    "web_url": "https://gitlab.example.com/group/project/-/commit/1111111111111111111111111111111111111111"
-                },
-                {
                     "id": "2222222222222222222222222222222222222222",
                     "title": "Finish frontend adjustments",
                     "web_url": "https://gitlab.example.com/group/project/-/commit/2222222222222222222222222222222222222222"
+                },
+                {
+                    "id": "1111111111111111111111111111111111111111",
+                    "title": "Prepare frontend adjustments",
+                    "web_url": "https://gitlab.example.com/group/project/-/commit/1111111111111111111111111111111111111111"
                 }
             ])
             .to_string(),
