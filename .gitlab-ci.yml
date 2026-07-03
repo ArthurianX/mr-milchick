@@ -42,9 +42,9 @@ verify_release_tag:
         exit 0
       fi
 
-      default_branch="${CI_DEFAULT_BRANCH:-master}"
-      git fetch origin "${default_branch}:refs/remotes/origin/${default_branch}"
-      git merge-base --is-ancestor "$CI_COMMIT_SHA" "origin/${default_branch}"
+      release_branch="master"
+      git fetch origin "${release_branch}:refs/remotes/origin/${release_branch}"
+      git merge-base --is-ancestor "$CI_COMMIT_SHA" "origin/${release_branch}"
 
 test:
   stage: test
