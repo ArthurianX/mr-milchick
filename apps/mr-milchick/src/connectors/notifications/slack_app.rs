@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::core::model::{
     NotificationAudience, NotificationDelivery, NotificationDeliveryReport, NotificationMessage,
@@ -313,6 +313,20 @@ async fn deliver_thread_notification(
                 .map_err(|err| ConnectorError::Request(err.to_string()))?
         }
     };
+    debug!(
+        channel,
+        root_ts,
+        conversation_key,
+        message_count = messages.len(),
+        managed_metadata_count = messages
+            .iter()
+            .filter(|message| message
+                .metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata.event_type.as_deref() == Some("mr_milchick")))
+            .count(),
+        "loaded Slack thread messages for managed delivery"
+    );
 
     let (delivered, destination, detail) = match &notification.delivery {
         NotificationDelivery::Append => {
@@ -332,6 +346,14 @@ async fn deliver_thread_notification(
         NotificationDelivery::UpsertThreadReply { slot } => {
             let message_key = format!("slot:{slot}");
             if let Some(existing_ts) = find_message_ts(&messages, conversation_key, &message_key) {
+                debug!(
+                    channel,
+                    root_ts,
+                    conversation_key,
+                    message_key,
+                    existing_ts,
+                    "updating existing managed Slack reply"
+                );
                 update_message(
                     http,
                     update_endpoint,
@@ -345,6 +367,13 @@ async fn deliver_thread_notification(
                 .map_err(|err| ConnectorError::Request(err.to_string()))?;
                 (true, Some(existing_ts.to_string()), "updated")
             } else {
+                debug!(
+                    channel,
+                    root_ts,
+                    conversation_key,
+                    message_key,
+                    "managed Slack reply was not found; creating it"
+                );
                 let ts = post_message(
                     http,
                     post_endpoint,

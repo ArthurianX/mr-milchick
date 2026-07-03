@@ -597,7 +597,7 @@ base_url = {slack_base_url}
 
 #[cfg(feature = "slack-app")]
 #[test]
-fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unchanged() {
+fn refine_mode_on_applied_action_policy_keeps_managed_slack_state_current() {
     let server = MockGitLabServer::start();
     let config_path = write_temp_config(&format!(
         r#"[platform]
@@ -654,10 +654,8 @@ base_url = {slack_base_url}
 
     let second_stdout = String::from_utf8_lossy(&second.stdout);
     assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
-    assert!(
-        second_stdout
-            .contains("[Notification SlackApp] delivered=false skipped because summary unchanged")
-    );
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=true updated"));
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=false already present"));
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
@@ -665,6 +663,7 @@ base_url = {slack_base_url}
         server.request_count("POST", "/slack/api/chat.postMessage"),
         3
     );
+    assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 1);
     let _ = fs::remove_file(config_path);
 }
 

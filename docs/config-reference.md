@@ -258,7 +258,7 @@ any = [
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`. Live `observe` mutates intake labels by design. |
-| `notification_policy` | No | `always` | `always` or `on-applied-action`. Only affects `refine`, because `explain` never sends notifications. |
+| `notification_policy` | No | `always` | `always` or `on-applied-action`. Managed Slack stage updates and commit activity always run so their thread state remains current. `explain` never sends notifications. |
 
 ### `[areas]` and `[[areas.definitions]]`
 
