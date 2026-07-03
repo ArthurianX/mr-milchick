@@ -108,4 +108,4 @@ Slack review notifications are optional and use the Slack app sink. `observe` cr
 | `GITLAB_TOKEN` | For real GitLab execution | GitLab API token |
 | `GITHUB_TOKEN` | For real GitHub execution | GitHub API token |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | No | Slack bot OAuth token used by the Slack app sink |
-| `RUST_LOG` | No | Standard process-level logging control; not part of Milchick runtime config |
+| `RUST_LOG` | No | Standard process-level logging control; defaults to `info` and is not part of Milchick runtime config |

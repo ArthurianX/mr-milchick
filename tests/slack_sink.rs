@@ -186,7 +186,7 @@ async fn updates_durable_stage_reply_instead_of_appending_another_message() {
 }
 
 #[tokio::test]
-async fn appends_only_new_commits_with_a_one_line_ci_summary() {
+async fn appends_only_new_commits_as_a_ci_summary_with_a_bulleted_list() {
     let server = MockGitLabServer::start();
     let sink = SlackAppSink::new(SlackAppConfig {
         enabled: true,
@@ -242,10 +242,10 @@ async fn appends_only_new_commits_with_a_one_line_ci_summary() {
     assert!(!first_update["text"].as_str().unwrap().contains("First"));
     let second_update: Value = serde_json::from_str(&posts[2]).expect("post should be JSON");
     let text = second_update["text"].as_str().unwrap();
-    assert!(text.starts_with("🔴 CI: 16/18 passed · "));
+    assert!(text.starts_with("🔴 CI: 16/18 passed\n"));
     assert!(text.contains("`33333333` Third"));
     assert!(text.contains("`44444444` Fourth"));
-    assert_eq!(text.lines().count(), 1);
+    assert_eq!(text.lines().count(), 3);
 }
 
 fn commit(id: &str, title: &str) -> ReviewCommit {

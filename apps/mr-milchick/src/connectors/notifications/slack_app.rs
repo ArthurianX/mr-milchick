@@ -415,7 +415,7 @@ async fn deliver_thread_notification(
                     "commits:{}",
                     commit_ids.last().map(String::as_str).unwrap_or_default()
                 );
-                let commit_text = render_commit_log_line(ci_summary, &new_commits);
+                let commit_text = render_commit_log_message(ci_summary, &new_commits);
                 let ts = post_message(
                     http,
                     post_endpoint,
@@ -582,17 +582,15 @@ fn select_new_commits<'a>(
     }
 }
 
-fn render_commit_log_line(ci_summary: &str, commits: &[&ReviewCommit]) -> String {
-    let links = commits
-        .iter()
-        .map(|commit| {
+fn render_commit_log_message(ci_summary: &str, commits: &[&ReviewCommit]) -> String {
+    std::iter::once(ci_summary.trim().to_string())
+        .chain(commits.iter().map(|commit| {
             let short_id = commit.id.chars().take(8).collect::<String>();
             let title = escape_slack_text(&commit.title);
-            format!("<{}|`{}` {}>", commit.web_url, short_id, title)
-        })
+            format!("• <{}|`{}` {}>", commit.web_url, short_id, title)
+        }))
         .collect::<Vec<_>>()
-        .join(", ");
-    format!("{} · {}", ci_summary.trim(), links)
+        .join("\n")
 }
 
 fn escape_slack_text(text: &str) -> String {
@@ -865,16 +863,16 @@ mod tests {
     }
 
     #[test]
-    fn renders_commit_and_ci_update_as_one_line() {
+    fn renders_commit_and_ci_update_as_a_bulleted_list() {
         let commits = sample_commits();
         let selected = vec![&commits[1], &commits[2]];
 
-        let rendered = render_commit_log_line("🟢 CI: 18/18 passed", &selected);
+        let rendered = render_commit_log_message("🟢 CI: 18/18 passed", &selected);
 
-        assert_eq!(rendered.lines().count(), 1);
-        assert!(rendered.starts_with("🟢 CI: 18/18 passed · "));
-        assert!(rendered.contains("<https://example.test/2|`22222222` Second commit>"));
-        assert!(rendered.contains("<https://example.test/3|`33333333` Third commit>"));
+        assert_eq!(rendered.lines().count(), 3);
+        assert_eq!(rendered.lines().next(), Some("🟢 CI: 18/18 passed"));
+        assert!(rendered.contains("• <https://example.test/2|`22222222` Second commit>"));
+        assert!(rendered.contains("• <https://example.test/3|`33333333` Third commit>"));
     }
 
     fn sample_commits() -> Vec<ReviewCommit> {
