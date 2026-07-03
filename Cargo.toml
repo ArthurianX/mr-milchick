@@ -1,6 +1,6 @@
 [package]
 name = "mr-milchick"
-version = "4.1.2"
+version = "5.0.0"
 edition = "2024"
 license = "MIT"
 description = "CLI for merge request governance in GitLab CI pipelines"
@@ -40,7 +40,6 @@ default = ["gitlab", "slack-app"]
 gitlab = []
 github = []
 slack-app = []
-slack-workflow = []
 teams = []
 discord = []
 llm-local = ["dep:llama-cpp-2"]

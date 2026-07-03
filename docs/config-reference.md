@@ -3,7 +3,7 @@
 Mr Milchick now resolves application configuration from one place:
 
 1. compiled capabilities from Cargo features
-2. an optional `mr-milchick.toml` file
+2. a mandatory TOML config file (`mr-milchick.toml` by default, or `MR_MILCHICK_CONFIG_PATH`)
 3. a small env layer for secrets and config-path selection
 
 CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and the review-context override vars. `config/` does not.
@@ -11,7 +11,7 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
 ## Sources And Precedence
 
 - Cargo features decide which platform connector and notification sinks exist in the binary.
-- `mr-milchick.toml` is the canonical source for non-secret runtime configuration.
+- The TOML config file is the canonical source for non-secret runtime configuration.
 - TOML supports env interpolation before parsing:
   - `${VAR}` for required env vars
   - `${VAR:-default}` for optional env vars with a fallback
@@ -20,7 +20,6 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
   - `GITLAB_TOKEN`
   - `GITHUB_TOKEN`
   - `MR_MILCHICK_SLACK_BOT_TOKEN`
-  - `MR_MILCHICK_SLACK_WEBHOOK_URL`
 - Removed env-driven runtime config is rejected with an error. That includes the old reviewer, CODEOWNERS, dry-run, Slack, LLM, and `MR_MILCHICK_FLAVOR_PATH` variables.
 
 ## Default File
@@ -28,7 +27,9 @@ CI review context is separate. `context/` still reads `CI_*`, `GITHUB_*`, and th
 - Default path: `mr-milchick.toml`
 - Override path: `MR_MILCHICK_CONFIG_PATH`
 
-If the file is missing, Milchick uses defaults:
+In v5, the TOML file is required because repository areas are required. If the default file or override file is missing, or if `[areas]` is empty, Milchick exits with a config error instead of guessing your repo layout.
+
+When a valid file is present, omitted optional settings use defaults:
 
 - platform kind: compiled platform
 - platform base URL: GitLab `https://gitlab.com/api/v4`, GitHub `https://api.github.com`
@@ -61,6 +62,25 @@ kind = "gitlab"
 base_url = "https://gitlab.com/api/v4"
 
 [platform.gitlab]
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[observe.description]
+required = true
+template_paths = [".gitlab/merge_request_templates/Default.md"]
 
 [[platform.gitlab.label_rules]]
 name = "ready-for-testing"
@@ -117,10 +137,6 @@ base_url = "https://slack.com/api"
 [notifications.slack_app.user_map]
 "principal-reviewer" = "U01234567"
 "alice" = "U07654321"
-
-[notifications.slack_workflow]
-enabled = false
-channel = "C0ALY38CW3X"
 
 [notifications.pipeline_status]
 enabled = true
@@ -241,8 +257,46 @@ any = [
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`; `observe` is preview-only already. |
-| `notification_policy` | No | `always` | `always` or `on-applied-action`. Only affects `refine`, because `explain` never sends notifications. |
+| `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`. Live `observe` mutates intake labels by design. |
+| `notification_policy` | No | `always` | `always` or `on-applied-action`. Managed Slack stage updates and commit activity always run so their thread state remains current. `explain` never sends notifications. |
+
+### `[areas]` and `[[areas.definitions]]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `key` | Yes | none | Stable repo area key used by risk assessment and reviewer routing. |
+| `paths` | Yes | none | Repository-relative exact paths or prefix globs ending in `/**`. First matching area wins. |
+| `risk` | No | `medium` | `low`, `medium`, or `high`. High-risk areas make observe apply the high risk label. |
+| `critical` | No | `false` | Equivalent to high risk for observe classification. |
+
+`areas.definitions` must contain at least one entry. Reviewer `areas` must reference these keys exactly.
+
+### `[observe]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `draft_label` | No | `status::draft` | Added by `observe` when the review is draft. |
+
+### `[observe.risk]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `low_label` | No | `risk::low` | Scoped label applied for low-risk reviews. |
+| `medium_label` | No | `risk::medium` | Scoped label applied for medium-risk reviews. |
+| `high_label` | No | `risk::high` | Scoped label applied for high-risk reviews. |
+| `medium_area_count` | No | `2` | Touched area count that escalates to medium. |
+| `high_area_count` | No | `4` | Touched area count that escalates to high. |
+| `medium_changed_lines` | No | `250` | Reported additions plus deletions that escalates to medium. |
+| `high_changed_lines` | No | `800` | Reported additions plus deletions that escalates to high. |
+| `high_file_count` | No | `25` | Changed file count that escalates to high. |
+
+### `[observe.description]`
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `required` | No | `true` | When true, observe blocks non-draft reviews without meaningful description text. |
+| `template_paths` | No | `[]` | Local MR/PR template paths to compare against when present. |
+| `ignore_branch_issue_key` | No | `true` | Ignores branch-derived issue keys such as `ABC-123` when judging meaningful text. |
 
 ### `[reviewers]` and `[[reviewers.definitions]]`
 
@@ -250,7 +304,7 @@ any = [
 | --- | --- | --- | --- |
 | `max_reviewers` | No | `2` | Caps only non-mandatory area-routed reviewers. |
 | `username` | Yes | none | Reviewer username. |
-| `areas` | No | `[]` | Area keys such as `frontend`, `backend`, `packages`, `devops`, `docs`, `tests`, `unknown`. |
+| `areas` | No | `[]` | Area keys from `[[areas.definitions]]`. Unknown keys are rejected. |
 | `fallback` | No | `false` | Marks fallback reviewer. |
 | `mandatory` | No | `false` | Always prepend this reviewer when eligible. |
 
@@ -291,14 +345,9 @@ Live `explain` runs first reload Milchick's managed governance summary comment f
 | `channel` | No | none | Default Slack destination. |
 | `base_url` | No | `https://slack.com/api` | Useful for tests and local mocks. |
 
-`[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs.
+`[notifications.slack_app.user_map]` is optional and maps GitLab or GitHub usernames to Slack user IDs. Slack app delivery uses this map when rewriting rendered `@username` mentions, including `{{mr_author_username}}` in Slack app templates.
 
-### `[notifications.slack_workflow]`
-
-| Field | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `enabled` | No | `false` | Must be `true` to activate the sink. |
-| `channel` | No | none | Sent in workflow payloads as `mr_milchick_talks_to`. |
+Slack app delivery keeps one root per review. Its `observe` and `refine` replies are durable slots updated with `chat.update`; completed pipelines append a CI summary followed by a bulleted list of commits not previously recorded in the thread. On the first run against an existing review, only the current head commit is appended. The installed Slack app needs `chat:write`, `metadata.message:read`, and the relevant conversation-history scope.
 
 ### `[notifications.pipeline_status]`
 
@@ -341,14 +390,18 @@ Template overrides stay field-by-field and keep built-in defaults when omitted.
 - `[templates.gitlab].explain`
 - `[templates.github].summary`
 - `[templates.github].explain`
+- `[templates.risk_emojis].high`
+- `[templates.risk_emojis].medium`
+- `[templates.risk_emojis].low`
+- `[templates.slack_app].thread_root`
+- `[templates.slack_app].observe_thread`
+- `[templates.slack_app].observe_blocked_thread`
+- `[templates.slack_app].observe_draft_thread`
+- `[templates.slack_app].refine_thread`
 - `[templates.slack_app].first_root`
 - `[templates.slack_app].first_thread`
 - `[templates.slack_app].update_root`
 - `[templates.slack_app].update_thread`
-- `[templates.slack_workflow].first_title`
-- `[templates.slack_workflow].first_thread`
-- `[templates.slack_workflow].update_title`
-- `[templates.slack_workflow].update_thread`
 
 Useful notification placeholders include:
 
@@ -357,6 +410,17 @@ Useful notification placeholders include:
 - `pipeline_status_passed_count`
 - `pipeline_status_failed_count`
 - `pipeline_status_unknown_count`
+- `observe_status`
+- `risk_level`
+- `risk_label`
+- `risk_emoji`
+- `risk_emoji_suffix`
+- `risk_reasons_block`
+- `matched_areas_list`
+- `unmatched_paths_block`
+- `description_status`
+- `blocking_reasons_block`
+- `next_step`
 
 Useful review-comment placeholders include:
 
@@ -374,6 +438,10 @@ Useful review-comment placeholders include:
 
 `[templates.*].explain` controls the advisory comment owned by `explain`.
 
+Slack `thread_root`, `observe_*`, and `refine_thread` templates control the v5 notification path. The first/update Slack fields are still parsed for compatibility with existing TOML files, but observe/refine render through the command-specific fields.
+
+`[templates.risk_emojis]` controls the rendered value of `{{risk_emoji}}` for observe templates. `{{risk_emoji_suffix}}` renders as empty when no emoji is configured, or as a leading space followed by the configured emoji when present.
+
 For backward compatibility, `summary` templates may still reference `llm` placeholders, but `refine` renders them empty. Milchick appends the hidden governance metadata block to summary comments automatically, so template authors should not include it manually.
 
 Template placeholder validation still happens at render time. Invalid placeholders warn and fall back to the built-in field template.
@@ -384,11 +452,12 @@ Template placeholder validation still happens at render time. Invalid placeholde
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `MR_MILCHICK_CONFIG_PATH` | No | Alternate config file path. |
+| `MR_MILCHICK_CONFIG_PATH` | No | Alternate config file path; a valid default or override TOML file is required. |
 | `GITLAB_TOKEN` | GitLab live runs | GitLab API token. |
 | `GITHUB_TOKEN` | GitHub live runs | GitHub API token. |
 | `MR_MILCHICK_SLACK_BOT_TOKEN` | Slack app only | Slack bot token. |
-| `MR_MILCHICK_SLACK_WEBHOOK_URL` | Slack workflow only | Slack Workflow webhook URL. |
+
+`RUST_LOG` is optional process-level logging control rather than Milchick runtime config. When it is absent, the binary defaults to `info`; set a scoped `debug` filter only while diagnosing a component.
 
 ### Review Context
 
@@ -402,7 +471,7 @@ These still belong to the CI context layer, not the app config layer:
 
 ## Notes
 
-- `observe` and `explain` are already non-mutating. `dry_run` only changes `refine`.
-- Slack notifications are planned from resolved config but only sent during real `refine`.
+- Live `observe` mutates intake labels by design. `dry_run` only changes `refine` and `explain`; fixture observe remains dry-run.
+- Configured Slack notifications are sent during live `observe` and `refine`; `explain` does not notify Slack.
 - Config validation is strict. Unknown TOML fields fail parsing, and legacy app-config env vars fail startup.
 - Platform and sink configuration must agree with compiled capabilities.

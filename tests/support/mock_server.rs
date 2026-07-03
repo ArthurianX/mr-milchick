@@ -45,10 +45,12 @@ struct MockSlackMessage {
     text: String,
     ts: String,
     thread_ts: Option<String>,
+    metadata: Option<Value>,
 }
 
 #[derive(Debug)]
 struct ServerState {
+    is_draft: bool,
     reviewers: Vec<String>,
     labels: Vec<String>,
     notes: Vec<MockNote>,
@@ -69,6 +71,16 @@ pub struct MockGitLabServer {
 impl MockGitLabServer {
     pub fn start() -> Self {
         Self::start_with_reviewers_labels_and_github_files(Vec::new(), Vec::new(), 1)
+    }
+
+    pub fn start_draft() -> Self {
+        let server = Self::start();
+        server
+            .state
+            .lock()
+            .expect("state lock should succeed")
+            .is_draft = true;
+        server
     }
 
     pub fn start_with_reviewers(reviewers: Vec<&str>) -> Self {
@@ -101,6 +113,7 @@ impl MockGitLabServer {
             .expect("mock server should have address");
         let running = Arc::new(AtomicBool::new(true));
         let state = Arc::new(Mutex::new(ServerState {
+            is_draft: false,
             reviewers: reviewers
                 .into_iter()
                 .map(|value| value.to_string())
@@ -358,13 +371,17 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let notes_path = format!("{mr_path}/notes");
     let approvals_path = format!("{mr_path}/approvals");
     let changes_path = format!("{mr_path}/changes");
+    let commits_path = format!("{mr_path}/commits");
     let pr_path = format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}");
     let requested_reviewers_path = format!("{pr_path}/requested_reviewers");
     let files_path = format!("{pr_path}/files");
+    let pr_commits_path = format!("{pr_path}/commits");
     let issue_comments_path =
         format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
     let slack_post_message_path = "/slack/api/chat.postMessage";
     let slack_history_path = "/slack/api/conversations.history";
+    let slack_replies_path = "/slack/api/conversations.replies";
+    let slack_update_path = "/slack/api/chat.update";
 
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == mr_path => HttpResponse {
@@ -374,7 +391,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 "title": "Frontend adjustments",
                 "description": "Refresh the UI flow",
                 "state": "opened",
-                "draft": false,
+                "draft": state.is_draft,
                 "web_url": "https://gitlab.example.com/group/project/-/merge_requests/3995",
                 "author": {"username": "arthur"},
                 "reviewers": state.reviewers.iter().map(|username| json!({"username": username})).collect::<Vec<_>>(),
@@ -398,6 +415,22 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             })
             .to_string(),
         },
+        ("GET", path) if path.starts_with(&commits_path) => HttpResponse {
+            status_code: 200,
+            body: json!([
+                {
+                    "id": "2222222222222222222222222222222222222222",
+                    "title": "Finish frontend adjustments",
+                    "web_url": "https://gitlab.example.com/group/project/-/commit/2222222222222222222222222222222222222222"
+                },
+                {
+                    "id": "1111111111111111111111111111111111111111",
+                    "title": "Prepare frontend adjustments",
+                    "web_url": "https://gitlab.example.com/group/project/-/commit/1111111111111111111111111111111111111111"
+                }
+            ])
+            .to_string(),
+        },
         ("GET", path) if path == approvals_path => HttpResponse {
             status_code: 200,
             body: json!({
@@ -413,7 +446,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 "title": "Frontend adjustments",
                 "body": "Refresh the UI flow",
                 "state": "open",
-                "draft": false,
+                "draft": state.is_draft,
                 "html_url": "https://github.com/ArthurianX/mr-milchick/pull/3995",
                 "user": {"login": "arthur"},
                 "requested_reviewers": state.reviewers.iter().map(|username| json!({"login": username})).collect::<Vec<_>>(),
@@ -451,6 +484,17 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: json!(files).to_string(),
             }
         }
+        ("GET", path) if path.starts_with(&pr_commits_path) => HttpResponse {
+            status_code: 200,
+            body: json!([
+                {
+                    "sha": "2222222222222222222222222222222222222222",
+                    "html_url": "https://github.com/ArthurianX/mr-milchick/commit/2222222222222222222222222222222222222222",
+                    "commit": {"message": "Finish frontend adjustments\n\nDetails"}
+                }
+            ])
+            .to_string(),
+        },
         ("GET", path) if path == notes_path => HttpResponse {
             status_code: 200,
             body: json!(
@@ -669,6 +713,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     .to_string(),
                 ts: ts.clone(),
                 thread_ts: body["thread_ts"].as_str().map(ToString::to_string),
+                metadata: body["metadata"].is_object().then(|| body["metadata"].clone()),
             });
 
             HttpResponse {
@@ -686,6 +731,8 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
         }
         ("GET", path) if path.starts_with(slack_history_path) => {
             let channel = query_param(path, "channel").unwrap_or_default();
+            let include_all_metadata =
+                query_param(path, "include_all_metadata") == Some("true");
             let messages = state
                 .slack_messages
                 .iter()
@@ -700,6 +747,13 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
 
                     if let Some(thread_ts) = &message.thread_ts {
                         payload["thread_ts"] = json!(thread_ts);
+                    }
+                    if let Some(metadata) = &message.metadata {
+                        if include_all_metadata {
+                            payload["metadata"] = metadata.clone();
+                        } else if let Some(event_type) = metadata.get("event_type") {
+                            payload["metadata"] = json!({"event_type": event_type});
+                        }
                     }
 
                     payload
@@ -716,6 +770,63 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                     }
                 })
                 .to_string(),
+            }
+        }
+        ("GET", path) if path.starts_with(slack_replies_path) => {
+            let channel = query_param(path, "channel").unwrap_or_default();
+            let root_ts = query_param(path, "ts").unwrap_or_default();
+            let include_all_metadata =
+                query_param(path, "include_all_metadata") == Some("true");
+            let messages = state
+                .slack_messages
+                .iter()
+                .filter(|message| {
+                    message.channel == channel
+                        && (message.ts == root_ts || message.thread_ts.as_deref() == Some(root_ts))
+                })
+                .map(|message| {
+                    let mut payload = json!({
+                        "type": "message",
+                        "text": message.text,
+                        "ts": message.ts,
+                    });
+                    if let Some(thread_ts) = &message.thread_ts {
+                        payload["thread_ts"] = json!(thread_ts);
+                    }
+                    if let Some(metadata) = &message.metadata {
+                        if include_all_metadata {
+                            payload["metadata"] = metadata.clone();
+                        } else if let Some(event_type) = metadata.get("event_type") {
+                            payload["metadata"] = json!({"event_type": event_type});
+                        }
+                    }
+                    payload
+                })
+                .collect::<Vec<_>>();
+            HttpResponse {
+                status_code: 200,
+                body: json!({"ok": true, "messages": messages}).to_string(),
+            }
+        }
+        ("POST", path) if path == slack_update_path => {
+            let body: Value =
+                serde_json::from_str(&request.body).expect("Slack update should be JSON");
+            let ts = body["ts"].as_str().expect("Slack timestamp should be a string");
+            let message = state
+                .slack_messages
+                .iter_mut()
+                .find(|message| message.ts == ts)
+                .expect("updated Slack message should exist");
+            message.text = body["text"]
+                .as_str()
+                .expect("Slack text should be a string")
+                .to_string();
+            message.metadata = body["metadata"]
+                .is_object()
+                .then(|| body["metadata"].clone());
+            HttpResponse {
+                status_code: 200,
+                body: json!({"ok": true, "channel": message.channel, "ts": ts}).to_string(),
             }
         }
         ("POST", path) if path.starts_with("/slack/api/webhook/") => {

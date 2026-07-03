@@ -259,6 +259,7 @@ mod tests {
                 target_branch: Some("develop".to_string()),
                 merge_request_state: Some("opened".to_string()),
                 commit_count: None,
+                commits: Vec::new(),
                 approvals_required: required,
                 approvals_given: given,
             },

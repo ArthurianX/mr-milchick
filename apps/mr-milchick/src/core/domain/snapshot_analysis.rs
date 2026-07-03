@@ -1,13 +1,16 @@
 use crate::core::domain::area_summary::MergeRequestAreaSummary;
 use crate::core::domain::path_classifier::classify_path;
-use crate::core::model::ReviewSnapshot;
+use crate::core::model::{AreasConfig, ReviewSnapshot};
 
-pub fn summarize_areas(snapshot: &ReviewSnapshot) -> MergeRequestAreaSummary {
+pub fn summarize_areas(snapshot: &ReviewSnapshot, areas: &AreasConfig) -> MergeRequestAreaSummary {
     let mut summary = MergeRequestAreaSummary::new();
 
     for file in &snapshot.changed_files {
-        let area = classify_path(&file.path);
-        summary.add(area);
+        if let Some(area) = classify_path(&file.path, areas) {
+            summary.add(area);
+        } else {
+            summary.add_unmatched(file.path.clone());
+        }
     }
 
     summary
@@ -69,7 +72,24 @@ mod tests {
 
     #[test]
     fn builds_area_summary() {
-        let summary = summarize_areas(&sample_snapshot());
+        let areas = AreasConfig {
+            definitions: vec![
+                crate::core::model::AreaDefinition {
+                    key: "frontend".into(),
+                    paths: vec!["apps/frontend/**".into()],
+                    risk: crate::core::model::AreaRisk::Medium,
+                    critical: false,
+                },
+                crate::core::model::AreaDefinition {
+                    key: "backend".into(),
+                    paths: vec!["services/**".into()],
+                    risk: crate::core::model::AreaRisk::Medium,
+                    critical: false,
+                },
+            ],
+        };
+
+        let summary = summarize_areas(&sample_snapshot(), &areas);
 
         assert_eq!(summary.total_files(), 2);
         assert!(summary.dominant_area().is_some());

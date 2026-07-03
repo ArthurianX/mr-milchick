@@ -5,7 +5,6 @@
 # - GITLAB_TOKEN
 # - GITHUB_TOKEN
 # - MR_MILCHICK_SLACK_BOT_TOKEN
-# - MR_MILCHICK_SLACK_WEBHOOK_URL
 #
 # If you want to use a different config file path, set:
 # - MR_MILCHICK_CONFIG_PATH=/path/to/other-config.toml
@@ -115,6 +114,43 @@ kind = "gitlab"
 #   { source_branch_kind = "feature" },
 # ]
 
+[areas]
+# v5 requires each repository to define its own area map. Reviewer routing and
+# observe risk labels use these keys.
+
+[[areas.definitions]]
+key = "apps"
+paths = ["apps/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**", "libs/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "docs"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe]
+draft_label = "status::draft"
+
+[observe.risk]
+low_label = "risk::low"
+medium_label = "risk::medium"
+high_label = "risk::high"
+
+[observe.description]
+required = true
+template_paths = [".gitlab/merge_request_templates/Default.md", ".gitlab/merge_request_template.md"]
+ignore_branch_issue_key = true
+
 [execution]
 # When true, `refine` behaves like a dry run and will not mutate the platform.
 # dry_run = true
@@ -208,21 +244,10 @@ notification_policy = "always"
 
 # Optional mapping from review-platform usernames to Slack user IDs.
 # This lets Milkchick rewrite mentions like `@alice` into `<@U123...>`.
-# [notifications.slack_app.user_map]
+    # [notifications.slack_app.user_map]
 # "arthur" = "U028DDKDJ4E"
 # "principal-reviewer" = "U03D9NN5HB6"
 # "bob" = "U028GSCQBUJ"
-
-# Slack workflow sink configuration.
-# Requires:
-# - binary compiled with `slack-workflow`
-# - MR_MILCHICK_SLACK_WEBHOOK_URL in env
-
-# [notifications.slack_workflow]
-# enabled = true
-#
-# Channel ID passed into the workflow payload.
-# channel = "C01234567"
 
 # Optional pipeline-task status aggregation for Slack templates.
 # Milchick recursively scans for JSON files under directories named
@@ -236,6 +261,11 @@ notification_policy = "always"
 [templates]
 # Message template overrides live under the sections below.
 # If omitted, Milchick uses built-in defaults.
+
+[templates.risk_emojis]
+high = ":alert:"
+medium = ":large_yellow_circle:"
+low = ":white_circle:"
 
 # GitLab governance summary comment override.
 # [templates.gitlab]
@@ -297,6 +327,42 @@ notification_policy = "always"
 
 # Slack app template overrides.
 # [templates.slack_app]
+# thread_root = "Mr. Milchick is observing {{thread_key}} by {{mr_author_username}}: {{mr_title}}"
+# observe_thread = """
+# *{{notification_title}}*
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}}{{risk_emoji_suffix}}
+# {{risk_reasons_block}}
+# {{blocking_reasons_block}}
+# _{{next_step}}_
+# """
+# observe_blocked_thread = """
+# *{{notification_title}}*
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}}{{risk_emoji_suffix}}
+# Description: {{description_status}}
+# {{blocking_reasons_block}}
+# _{{next_step}}_
+# """
+# observe_draft_thread = """
+# *{{notification_title}}*
+# Review: {{mr_link}}
+# Status: {{observe_status}}
+# Risk: {{risk_level}}{{risk_emoji_suffix}}
+# _{{next_step}}_
+# """
+# refine_thread = """
+# *{{notification_title}}*
+# Merge request: {{mr_link}}
+# {{reviewers_line}}
+# {{findings_block}}
+# {{actions_block}}
+# {{pipeline_status_block}}
+# _{{summary_footer}}_
+# """
+# Legacy first/update fields are still accepted but are not used by v5 observe/refine notifications.
 # first_root = ":gitlab: {{notification_subject}} :pepe-review:"
 # first_thread = """
 # *{{notification_title}}*
@@ -311,22 +377,4 @@ notification_policy = "always"
 # {{actions_block}}
 # {{pipeline_status_block}}
 # _{{summary_footer}}_
-# """
-
-# Slack workflow template overrides.
-# [templates.slack_workflow]
-# first_title = "{{notification_subject}}"
-# first_thread = """
-# {{notification_title}}
-# Merge request: {{mr_link}}
-# {{reviewers_line}}
-# {{pipeline_status_block}}
-# """
-# update_title = "{{notification_subject}}"
-# update_thread = """
-# Merge request: {{mr_link}}
-# {{findings_block}}
-# {{actions_block}}
-# {{pipeline_status_block}}
-# {{summary_footer}}
 # """

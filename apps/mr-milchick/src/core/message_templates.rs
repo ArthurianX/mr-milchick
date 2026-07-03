@@ -6,6 +6,7 @@ use crate::config::TemplatesConfig;
 use crate::context::model::CiContext;
 use crate::core::inference::{RecommendationCategory, ReviewInferenceOutcome};
 use crate::core::model::{NotificationSinkKind, ReviewAction, ReviewPlatformKind, ReviewSnapshot};
+use crate::core::observe::{ObservePlan, ObserveStatus, RiskLevel};
 use crate::core::rules::model::{FindingSeverity, RuleOutcome};
 use crate::core::tone::{ToneCategory, ToneSelector};
 
@@ -33,6 +34,34 @@ const GITHUB_SUMMARY_TEMPLATE: &str = GITLAB_SUMMARY_TEMPLATE;
 const GITHUB_EXPLAIN_TEMPLATE: &str = GITLAB_EXPLAIN_TEMPLATE;
 
 const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
+const SLACK_APP_THREAD_ROOT_TEMPLATE: &str =
+    "Mr. Milchick is observing {{thread_key}}: {{mr_title}}";
+const SLACK_APP_OBSERVE_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
+Review: {{mr_link}}
+Status: {{observe_status}}
+Risk: {{risk_level}}{{risk_emoji_suffix}}
+{{risk_reasons_block}}
+{{blocking_reasons_block}}
+_{{next_step}}_"#;
+const SLACK_APP_OBSERVE_BLOCKED_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
+Review: {{mr_link}}
+Status: {{observe_status}}
+Risk: {{risk_level}}{{risk_emoji_suffix}}
+Description: {{description_status}}
+{{blocking_reasons_block}}
+_{{next_step}}_"#;
+const SLACK_APP_OBSERVE_DRAFT_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
+Review: {{mr_link}}
+Status: {{observe_status}}
+Risk: {{risk_level}}{{risk_emoji_suffix}}
+_{{next_step}}_"#;
+const SLACK_APP_REFINE_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
+Merge request: {{mr_link}}
+{{reviewers_line}}
+{{findings_block}}
+{{actions_block}}
+{{pipeline_status_block}}
+_{{summary_footer}}_"#;
 const SLACK_APP_FIRST_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Merge request: {{mr_link}}
 {{reviewers_line}}
@@ -43,18 +72,6 @@ const SLACK_APP_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
 {{actions_block}}
 {{pipeline_status_block}}
 _{{summary_footer}}_"#;
-
-const SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE: &str = "{{notification_subject}}";
-const SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE: &str = r#"{{notification_title}}
-Merge request: {{mr_link}}
-{{reviewers_line}}
-{{pipeline_status_block}}"#;
-const SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE: &str = "{{notification_subject}}";
-const SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE: &str = r#"Merge request: {{mr_link}}
-{{findings_block}}
-{{actions_block}}
-{{pipeline_status_block}}
-{{summary_footer}}"#;
 
 const COMMON_PLACEHOLDERS: &[&str] = &[
     "mr_number",
@@ -97,6 +114,18 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "notification_subject",
     "reviewers_line",
     "mr_ref_link",
+    "thread_key",
+    "observe_status",
+    "risk_level",
+    "risk_label",
+    "risk_emoji",
+    "risk_emoji_suffix",
+    "risk_reasons_block",
+    "matched_areas_list",
+    "unmatched_paths_block",
+    "description_status",
+    "blocking_reasons_block",
+    "next_step",
 ];
 
 const GITLAB_SUMMARY_PLACEHOLDERS: &[&str] = &[
@@ -143,7 +172,7 @@ pub struct TemplateCatalog {
     pub gitlab: GitLabTemplateCatalog,
     pub github: GitHubTemplateCatalog,
     pub slack_app: SlackAppTemplateCatalog,
-    pub slack_workflow: SlackWorkflowTemplateCatalog,
+    pub risk_emojis: RiskEmojiTemplateCatalog,
 }
 
 impl Default for TemplateCatalog {
@@ -158,17 +187,34 @@ impl Default for TemplateCatalog {
                 explain: GITHUB_EXPLAIN_TEMPLATE.to_string(),
             },
             slack_app: SlackAppTemplateCatalog {
+                thread_root: SLACK_APP_THREAD_ROOT_TEMPLATE.to_string(),
+                observe_thread: SLACK_APP_OBSERVE_THREAD_TEMPLATE.to_string(),
+                observe_blocked_thread: SLACK_APP_OBSERVE_BLOCKED_THREAD_TEMPLATE.to_string(),
+                observe_draft_thread: SLACK_APP_OBSERVE_DRAFT_THREAD_TEMPLATE.to_string(),
+                refine_thread: SLACK_APP_REFINE_THREAD_TEMPLATE.to_string(),
                 first_root: SLACK_APP_FIRST_ROOT_TEMPLATE.to_string(),
                 first_thread: SLACK_APP_FIRST_THREAD_TEMPLATE.to_string(),
                 update_root: SLACK_APP_UPDATE_ROOT_TEMPLATE.to_string(),
                 update_thread: SLACK_APP_UPDATE_THREAD_TEMPLATE.to_string(),
             },
-            slack_workflow: SlackWorkflowTemplateCatalog {
-                first_title: SLACK_WORKFLOW_FIRST_TITLE_TEMPLATE.to_string(),
-                first_thread: SLACK_WORKFLOW_FIRST_THREAD_TEMPLATE.to_string(),
-                update_title: SLACK_WORKFLOW_UPDATE_TITLE_TEMPLATE.to_string(),
-                update_thread: SLACK_WORKFLOW_UPDATE_THREAD_TEMPLATE.to_string(),
-            },
+            risk_emojis: RiskEmojiTemplateCatalog::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RiskEmojiTemplateCatalog {
+    pub low: String,
+    pub medium: String,
+    pub high: String,
+}
+
+impl RiskEmojiTemplateCatalog {
+    fn emoji_for(&self, level: RiskLevel) -> &str {
+        match level {
+            RiskLevel::Low => &self.low,
+            RiskLevel::Medium => &self.medium,
+            RiskLevel::High => &self.high,
         }
     }
 }
@@ -187,17 +233,14 @@ pub struct GitHubTemplateCatalog {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAppTemplateCatalog {
+    pub thread_root: String,
+    pub observe_thread: String,
+    pub observe_blocked_thread: String,
+    pub observe_draft_thread: String,
+    pub refine_thread: String,
     pub first_root: String,
     pub first_thread: String,
     pub update_root: String,
-    pub update_thread: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlackWorkflowTemplateCatalog {
-    pub first_title: String,
-    pub first_thread: String,
-    pub update_title: String,
     pub update_thread: String,
 }
 
@@ -227,6 +270,25 @@ pub struct NotificationTemplateContext {
     new_reviewers: Vec<String>,
     existing_reviewers: Vec<String>,
     pipeline_statuses: Vec<PipelineStatusTemplateEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveTemplateContext {
+    snapshot: SnapshotFacts,
+    tone: SelectedTone,
+    notification_title: String,
+    notification_subject: String,
+    thread_key: String,
+    observe_status: String,
+    risk_level: String,
+    risk: RiskLevel,
+    risk_label: String,
+    risk_reasons: Vec<String>,
+    matched_areas: Vec<String>,
+    unmatched_paths: Vec<String>,
+    description_status: String,
+    blocking_reasons: Vec<String>,
+    next_step: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,14 +354,15 @@ enum TemplateField {
     GitLabExplain,
     GitHubSummary,
     GitHubExplain,
+    SlackAppThreadRoot,
+    SlackAppObserveThread,
+    SlackAppObserveBlockedThread,
+    SlackAppObserveDraftThread,
+    SlackAppRefineThread,
     SlackAppFirstRoot,
     SlackAppFirstThread,
     SlackAppUpdateRoot,
     SlackAppUpdateThread,
-    SlackWorkflowFirstTitle,
-    SlackWorkflowFirstThread,
-    SlackWorkflowUpdateTitle,
-    SlackWorkflowUpdateThread,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,7 +370,6 @@ enum RenderStyle {
     GitLab,
     GitHub,
     SlackApp,
-    SlackWorkflow,
 }
 
 impl TemplateField {
@@ -317,14 +379,15 @@ impl TemplateField {
             Self::GitLabExplain => "templates.gitlab.explain",
             Self::GitHubSummary => "templates.github.summary",
             Self::GitHubExplain => "templates.github.explain",
+            Self::SlackAppThreadRoot => "templates.slack_app.thread_root",
+            Self::SlackAppObserveThread => "templates.slack_app.observe_thread",
+            Self::SlackAppObserveBlockedThread => "templates.slack_app.observe_blocked_thread",
+            Self::SlackAppObserveDraftThread => "templates.slack_app.observe_draft_thread",
+            Self::SlackAppRefineThread => "templates.slack_app.refine_thread",
             Self::SlackAppFirstRoot => "templates.slack_app.first_root",
             Self::SlackAppFirstThread => "templates.slack_app.first_thread",
             Self::SlackAppUpdateRoot => "templates.slack_app.update_root",
             Self::SlackAppUpdateThread => "templates.slack_app.update_thread",
-            Self::SlackWorkflowFirstTitle => "templates.slack_workflow.first_title",
-            Self::SlackWorkflowFirstThread => "templates.slack_workflow.first_thread",
-            Self::SlackWorkflowUpdateTitle => "templates.slack_workflow.update_title",
-            Self::SlackWorkflowUpdateThread => "templates.slack_workflow.update_thread",
         }
     }
 
@@ -334,20 +397,26 @@ impl TemplateField {
             Self::GitLabExplain => GITLAB_SUMMARY_PLACEHOLDERS,
             Self::GitHubSummary => GITHUB_SUMMARY_PLACEHOLDERS,
             Self::GitHubExplain => GITHUB_SUMMARY_PLACEHOLDERS,
-            Self::SlackAppFirstRoot
+            Self::SlackAppThreadRoot
+            | Self::SlackAppObserveThread
+            | Self::SlackAppObserveBlockedThread
+            | Self::SlackAppObserveDraftThread
+            | Self::SlackAppRefineThread
+            | Self::SlackAppFirstRoot
             | Self::SlackAppFirstThread
             | Self::SlackAppUpdateRoot
-            | Self::SlackAppUpdateThread
-            | Self::SlackWorkflowFirstTitle
-            | Self::SlackWorkflowFirstThread
-            | Self::SlackWorkflowUpdateTitle
-            | Self::SlackWorkflowUpdateThread => COMMON_PLACEHOLDERS,
+            | Self::SlackAppUpdateThread => COMMON_PLACEHOLDERS,
         }
     }
 }
 
 pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog {
     let mut catalog = TemplateCatalog::default();
+    catalog.risk_emojis = RiskEmojiTemplateCatalog {
+        low: templates.risk_emojis.low.clone().unwrap_or_default(),
+        medium: templates.risk_emojis.medium.clone().unwrap_or_default(),
+        high: templates.risk_emojis.high.clone().unwrap_or_default(),
+    };
 
     apply_template_override(
         &mut catalog.gitlab.summary,
@@ -370,6 +439,31 @@ pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog 
         TemplateField::GitHubExplain,
     );
     apply_template_override(
+        &mut catalog.slack_app.thread_root,
+        templates.slack_app.thread_root.as_deref(),
+        TemplateField::SlackAppThreadRoot,
+    );
+    apply_template_override(
+        &mut catalog.slack_app.observe_thread,
+        templates.slack_app.observe_thread.as_deref(),
+        TemplateField::SlackAppObserveThread,
+    );
+    apply_template_override(
+        &mut catalog.slack_app.observe_blocked_thread,
+        templates.slack_app.observe_blocked_thread.as_deref(),
+        TemplateField::SlackAppObserveBlockedThread,
+    );
+    apply_template_override(
+        &mut catalog.slack_app.observe_draft_thread,
+        templates.slack_app.observe_draft_thread.as_deref(),
+        TemplateField::SlackAppObserveDraftThread,
+    );
+    apply_template_override(
+        &mut catalog.slack_app.refine_thread,
+        templates.slack_app.refine_thread.as_deref(),
+        TemplateField::SlackAppRefineThread,
+    );
+    apply_template_override(
         &mut catalog.slack_app.first_root,
         templates.slack_app.first_root.as_deref(),
         TemplateField::SlackAppFirstRoot,
@@ -389,27 +483,6 @@ pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog 
         templates.slack_app.update_thread.as_deref(),
         TemplateField::SlackAppUpdateThread,
     );
-    apply_template_override(
-        &mut catalog.slack_workflow.first_title,
-        templates.slack_workflow.first_title.as_deref(),
-        TemplateField::SlackWorkflowFirstTitle,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.first_thread,
-        templates.slack_workflow.first_thread.as_deref(),
-        TemplateField::SlackWorkflowFirstThread,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.update_title,
-        templates.slack_workflow.update_title.as_deref(),
-        TemplateField::SlackWorkflowUpdateTitle,
-    );
-    apply_template_override(
-        &mut catalog.slack_workflow.update_thread,
-        templates.slack_workflow.update_thread.as_deref(),
-        TemplateField::SlackWorkflowUpdateThread,
-    );
-
     catalog
 }
 
@@ -490,6 +563,51 @@ pub fn build_notification_template_context(
     }
 }
 
+pub fn build_observe_template_context(
+    plan: &ObservePlan,
+    snapshot: &ReviewSnapshot,
+    selector: &ToneSelector,
+    ctx: &CiContext,
+) -> ObserveTemplateContext {
+    let snapshot_facts = SnapshotFacts::from_snapshot(snapshot);
+    let tone_category = match plan.status {
+        ObserveStatus::Passed => ToneCategory::ObservePassed,
+        ObserveStatus::Blocked => ToneCategory::ObserveBlocked,
+        ObserveStatus::Draft => ToneCategory::ObserveDraft,
+    };
+    let thread_key = format!("MR #{}", snapshot.review_ref.review_id);
+
+    ObserveTemplateContext {
+        notification_subject: format!(
+            "Mr. Milchick is observing {}",
+            ref_link(RenderStyle::SlackApp, &snapshot_facts)
+        ),
+        notification_title: selector.select(tone_category, ctx).to_string(),
+        snapshot: snapshot_facts,
+        tone: SelectedTone {
+            category: tone_category,
+            message: selector.select(tone_category, ctx).to_string(),
+        },
+        thread_key,
+        observe_status: plan.status.as_str().to_string(),
+        risk_level: plan.risk.level.as_str().to_string(),
+        risk: plan.risk.level,
+        risk_label: plan.risk.label.clone(),
+        risk_reasons: plan.risk.reasons.clone(),
+        matched_areas: plan.risk.matched_areas.clone(),
+        unmatched_paths: plan.risk.unmatched_paths.clone(),
+        description_status: plan.description.status.as_str().to_string(),
+        blocking_reasons: plan.blocking_reasons.clone(),
+        next_step: match plan.status {
+            ObserveStatus::Passed => selector.select(ToneCategory::RefineReady, ctx).to_string(),
+            ObserveStatus::Blocked => selector
+                .select(ToneCategory::PipelinePaused, ctx)
+                .to_string(),
+            ObserveStatus::Draft => "Draft review observed; refinement is deferred.".to_string(),
+        },
+    }
+}
+
 fn build_review_comment_template_context(
     summary_title: impl Into<String>,
     outcome: &RuleOutcome,
@@ -548,56 +666,86 @@ pub fn render_slack_app_notification(
     context: &NotificationTemplateContext,
     variant: NotificationTemplateVariant,
 ) -> (String, String) {
-    match variant {
-        NotificationTemplateVariant::First => (
+    render_notification(catalog, context, NotificationSinkKind::SlackApp, variant)
+        .expect("Slack app notifications should be renderable")
+}
+
+pub fn render_slack_app_thread_root(
+    catalog: &TemplateCatalog,
+    context: &ObserveTemplateContext,
+) -> String {
+    render_template(
+        &catalog.slack_app.thread_root,
+        &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
+    )
+}
+
+pub fn render_slack_app_observe_notification(
+    catalog: &TemplateCatalog,
+    context: &ObserveTemplateContext,
+) -> String {
+    render_observe_notification(catalog, context, NotificationSinkKind::SlackApp)
+        .expect("Slack app observe notifications should be renderable")
+        .1
+}
+
+pub fn render_notification(
+    catalog: &TemplateCatalog,
+    context: &NotificationTemplateContext,
+    sink: NotificationSinkKind,
+    variant: NotificationTemplateVariant,
+) -> Option<(String, String)> {
+    let _ = variant;
+    match sink {
+        NotificationSinkKind::SlackApp => Some((
             render_template(
-                &catalog.slack_app.first_root,
+                &catalog.slack_app.thread_root,
                 &context.variables(RenderStyle::SlackApp),
             ),
             render_template(
-                &catalog.slack_app.first_thread,
+                &catalog.slack_app.refine_thread,
                 &context.variables(RenderStyle::SlackApp),
             ),
-        ),
-        NotificationTemplateVariant::Update => (
-            render_template(
-                &catalog.slack_app.update_root,
-                &context.variables(RenderStyle::SlackApp),
-            ),
-            render_template(
-                &catalog.slack_app.update_thread,
-                &context.variables(RenderStyle::SlackApp),
-            ),
-        ),
+        )),
+        NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
     }
 }
 
-pub fn render_slack_workflow_notification(
+pub fn render_observe_notification(
     catalog: &TemplateCatalog,
-    context: &NotificationTemplateContext,
-    variant: NotificationTemplateVariant,
-) -> (String, String) {
-    match variant {
-        NotificationTemplateVariant::First => (
+    context: &ObserveTemplateContext,
+    sink: NotificationSinkKind,
+) -> Option<(String, String)> {
+    match sink {
+        NotificationSinkKind::SlackApp => Some((
             render_template(
-                &catalog.slack_workflow.first_title,
-                &context.variables(RenderStyle::SlackWorkflow),
+                &catalog.slack_app.thread_root,
+                &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
             ),
             render_template(
-                &catalog.slack_workflow.first_thread,
-                &context.variables(RenderStyle::SlackWorkflow),
+                select_observe_template(
+                    context,
+                    &catalog.slack_app.observe_thread,
+                    &catalog.slack_app.observe_blocked_thread,
+                    &catalog.slack_app.observe_draft_thread,
+                ),
+                &context.variables(RenderStyle::SlackApp, &catalog.risk_emojis),
             ),
-        ),
-        NotificationTemplateVariant::Update => (
-            render_template(
-                &catalog.slack_workflow.update_title,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-            render_template(
-                &catalog.slack_workflow.update_thread,
-                &context.variables(RenderStyle::SlackWorkflow),
-            ),
-        ),
+        )),
+        NotificationSinkKind::Teams | NotificationSinkKind::Discord => None,
+    }
+}
+
+fn select_observe_template<'a>(
+    context: &ObserveTemplateContext,
+    default: &'a str,
+    blocked: &'a str,
+    draft: &'a str,
+) -> &'a str {
+    match context.observe_status.as_str() {
+        "blocked" => blocked,
+        "draft" => draft,
+        _ => default,
     }
 }
 
@@ -790,10 +938,6 @@ impl NotificationTemplateContext {
             "notification_subject",
             match style {
                 RenderStyle::SlackApp => self.notification_subject.clone(),
-                RenderStyle::SlackWorkflow => self.notification_subject.replace(
-                    &ref_link(RenderStyle::SlackApp, &self.snapshot),
-                    &ref_link(RenderStyle::SlackWorkflow, &self.snapshot),
-                ),
                 RenderStyle::GitLab | RenderStyle::GitHub => String::new(),
             },
         );
@@ -809,15 +953,81 @@ impl NotificationTemplateContext {
                     RenderStyle::SlackApp => {
                         format!("_Assigned reviewers_ {}", values["reviewers_list"])
                     }
-                    RenderStyle::SlackWorkflow => {
-                        format!("Assigned reviewers {}", values["reviewers_list"])
-                    }
                 }
             },
         );
         values.insert("mr_ref_link", ref_link(style, &self.snapshot));
+        values.insert("thread_key", format!("MR #{}", self.snapshot.mr_number));
 
         values
+    }
+}
+
+impl ObserveTemplateContext {
+    fn variables(
+        &self,
+        style: RenderStyle,
+        risk_emojis: &RiskEmojiTemplateCatalog,
+    ) -> BTreeMap<&'static str, String> {
+        let mut values = common_values(
+            &self.snapshot,
+            &[],
+            &[],
+            &InferenceTemplateContext::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            style,
+            &self.tone,
+        );
+
+        values.insert("summary_title", String::new());
+        values.insert("summary_intro", self.tone.message.clone());
+        values.insert("summary_footer", self.next_step.clone());
+        values.insert("notification_title", self.notification_title.clone());
+        values.insert(
+            "notification_subject",
+            match style {
+                RenderStyle::SlackApp => self.notification_subject.clone(),
+                RenderStyle::GitLab | RenderStyle::GitHub => String::new(),
+            },
+        );
+        values.insert("reviewers_line", String::new());
+        values.insert("mr_ref_link", ref_link(style, &self.snapshot));
+        values.insert("thread_key", self.thread_key.clone());
+        values.insert("observe_status", self.observe_status.clone());
+        values.insert("risk_level", self.risk_level.clone());
+        values.insert("risk_label", self.risk_label.clone());
+        let risk_emoji = risk_emojis.emoji_for(self.risk).to_string();
+        values.insert("risk_emoji", risk_emoji.clone());
+        values.insert("risk_emoji_suffix", emoji_suffix(&risk_emoji));
+        values.insert(
+            "risk_reasons_block",
+            format_plain_block(style, "Risk reasons", &self.risk_reasons),
+        );
+        values.insert("matched_areas_list", self.matched_areas.join(", "));
+        values.insert(
+            "unmatched_paths_block",
+            format_plain_block(style, "Unmatched paths", &self.unmatched_paths),
+        );
+        values.insert("description_status", self.description_status.clone());
+        values.insert(
+            "blocking_reasons_block",
+            format_plain_block(style, "Blocking reasons", &self.blocking_reasons),
+        );
+        values.insert("next_step", self.next_step.clone());
+
+        values
+    }
+}
+
+fn emoji_suffix(emoji: &str) -> String {
+    let trimmed = emoji.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!(" {trimmed}")
     }
 }
 
@@ -838,7 +1048,13 @@ fn common_values(
     values.insert("mr_ref", snapshot.mr_ref.clone());
     values.insert("mr_title", snapshot.mr_title.clone());
     values.insert("mr_url", snapshot.mr_url.clone());
-    values.insert("mr_author_username", snapshot.mr_author_username.clone());
+    values.insert(
+        "mr_author_username",
+        match style {
+            RenderStyle::SlackApp => format!("@{}", snapshot.mr_author_username),
+            RenderStyle::GitLab | RenderStyle::GitHub => snapshot.mr_author_username.clone(),
+        },
+    );
     values.insert("source_branch", snapshot.source_branch.clone());
     values.insert("target_branch", snapshot.target_branch.clone());
     values.insert("is_draft", snapshot.is_draft.to_string());
@@ -1032,17 +1248,43 @@ fn format_findings_block(style: RenderStyle, findings: &[FindingView]) -> String
                 format!("- **{}**: {}", finding.label, finding.message)
             }
             RenderStyle::SlackApp => format!("*{}*: {}", finding.label, finding.message),
-            RenderStyle::SlackWorkflow => format!("{}: {}", finding.label, finding.message),
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn format_plain_block(style: RenderStyle, title: &str, values: &[String]) -> String {
+    if values.is_empty() {
+        return String::new();
+    }
+
+    match style {
+        RenderStyle::SlackApp => format!(
+            "*{}:*\n{}",
+            title,
+            values
+                .iter()
+                .map(|value| format!("• {}", value))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+        RenderStyle::GitLab | RenderStyle::GitHub => format!(
+            "{}:\n{}",
+            title,
+            values
+                .iter()
+                .map(|value| format!("- {}", value))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    }
 }
 
 fn format_actions_block(style: RenderStyle, actions: &[String]) -> String {
     actions
         .iter()
         .map(|action| match style {
-            RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
+            RenderStyle::GitLab | RenderStyle::GitHub => {
                 format!("- {}", action)
             }
             RenderStyle::SlackApp => format!("• {}", action),
@@ -1065,7 +1307,6 @@ fn format_recommendations_block(
             lines.push("### Local review recommendations".to_string())
         }
         RenderStyle::SlackApp => lines.push("*Local review recommendations*".to_string()),
-        RenderStyle::SlackWorkflow => lines.push("Local review recommendations".to_string()),
     }
 
     if let Some(summary) = &inference.summary {
@@ -1082,9 +1323,6 @@ fn format_recommendations_block(
                 }
                 RenderStyle::SlackApp => {
                     format!("• *{}*: {}", recommendation.label, recommendation.message)
-                }
-                RenderStyle::SlackWorkflow => {
-                    format!("- {}: {}", recommendation.label, recommendation.message)
                 }
             }),
     );
@@ -1104,7 +1342,6 @@ fn format_pipeline_status_block(
     match style {
         RenderStyle::GitLab | RenderStyle::GitHub => lines.push("### CI task status".to_string()),
         RenderStyle::SlackApp => lines.push("*CI task status*".to_string()),
-        RenderStyle::SlackWorkflow => lines.push("CI task status".to_string()),
     }
 
     lines.extend(pipeline_statuses.iter().map(|entry| {
@@ -1114,7 +1351,7 @@ fn format_pipeline_status_block(
             PipelineStatusState::Unknown => ":large_yellow_circle:",
         };
         let mut line = match style {
-            RenderStyle::GitLab | RenderStyle::GitHub | RenderStyle::SlackWorkflow => {
+            RenderStyle::GitLab | RenderStyle::GitHub => {
                 format!("- {} {}", indicator, entry.label)
             }
             RenderStyle::SlackApp => format!("{} {}", indicator, entry.label),
@@ -1143,11 +1380,6 @@ fn format_reviewers_list(style: RenderStyle, reviewers: &[String]) -> String {
             .map(|reviewer| format!("*@{}*", reviewer))
             .collect::<Vec<_>>()
             .join(" "),
-        RenderStyle::SlackWorkflow => reviewers
-            .iter()
-            .map(|reviewer| format!("@{}", reviewer))
-            .collect::<Vec<_>>()
-            .join(" "),
     }
 }
 
@@ -1167,7 +1399,6 @@ fn message_link(style: RenderStyle, url: &str, label: &str) -> String {
     match style {
         RenderStyle::GitLab | RenderStyle::GitHub => format!("[{}]({})", label, url),
         RenderStyle::SlackApp => format!("<{}|{}>", url, label),
-        RenderStyle::SlackWorkflow => format!("{} ({})", label, url),
     }
 }
 
@@ -1211,6 +1442,17 @@ fn tone_category_name(category: ToneCategory) -> &'static str {
         ToneCategory::ReviewRequest => "ReviewRequest",
         ToneCategory::NoAction => "NoAction",
         ToneCategory::ReviewerAssigned => "ReviewerAssigned",
+        ToneCategory::ObserveOpened => "ObserveOpened",
+        ToneCategory::ObservePassed => "ObservePassed",
+        ToneCategory::ObserveBlocked => "ObserveBlocked",
+        ToneCategory::ObserveDraft => "ObserveDraft",
+        ToneCategory::RiskLow => "RiskLow",
+        ToneCategory::RiskMedium => "RiskMedium",
+        ToneCategory::RiskHigh => "RiskHigh",
+        ToneCategory::DescriptionMissing => "DescriptionMissing",
+        ToneCategory::DescriptionTemplateOnly => "DescriptionTemplateOnly",
+        ToneCategory::PipelinePaused => "PipelinePaused",
+        ToneCategory::RefineReady => "RefineReady",
     }
 }
 
@@ -1222,14 +1464,14 @@ pub fn enabled_notification_targets(sinks: &[NotificationSinkKind]) -> Vec<Notif
 mod tests {
     use super::*;
     use crate::config::{
-        GitHubTemplates, GitLabTemplates, SlackAppTemplates, SlackWorkflowTemplates,
-        TemplatesConfig,
+        GitHubTemplates, GitLabTemplates, RiskEmojiTemplates, SlackAppTemplates, TemplatesConfig,
     };
     use crate::core::actions::model::ActionPlan;
     use crate::core::inference::{
         RecommendationCategory, ReviewInferenceOutcome, ReviewInsights, ReviewRecommendation,
     };
     use crate::core::model::{Actor, ReviewMetadata};
+    use crate::core::observe::{DescriptionAssessment, DescriptionStatus, RiskAssessment};
     use crate::core::rules::model::{RuleFinding, RuleOutcome};
 
     fn sample_snapshot() -> ReviewSnapshot {
@@ -1274,6 +1516,7 @@ mod tests {
                 target_branch: Some("develop".to_string()),
                 merge_request_state: Some("opened".to_string()),
                 commit_count: None,
+                commits: Vec::new(),
                 approvals_required: None,
                 approvals_given: None,
             },
@@ -1312,6 +1555,31 @@ mod tests {
                 },
             ],
         })
+    }
+
+    fn sample_observe_plan(level: RiskLevel) -> ObservePlan {
+        let label = match level {
+            RiskLevel::Low => "risk::low",
+            RiskLevel::Medium => "risk::medium",
+            RiskLevel::High => "risk::high",
+        };
+
+        ObservePlan {
+            status: ObserveStatus::Passed,
+            risk: RiskAssessment {
+                level,
+                label: label.to_string(),
+                reasons: vec!["Risk reason.".to_string()],
+                matched_areas: vec!["frontend".to_string()],
+                unmatched_paths: Vec::new(),
+            },
+            description: DescriptionAssessment {
+                status: DescriptionStatus::Meaningful,
+                reasons: vec!["Description is meaningful.".to_string()],
+            },
+            blocking_reasons: Vec::new(),
+            actions: Vec::new(),
+        }
     }
 
     #[test]
@@ -1374,9 +1642,55 @@ mod tests {
     }
 
     #[test]
+    fn renders_configured_risk_emoji_in_slack_observe_template() {
+        let catalog = resolve_template_catalog(&TemplatesConfig {
+            risk_emojis: RiskEmojiTemplates {
+                high: Some(":alert:".to_string()),
+                medium: Some(":large_yellow_circle:".to_string()),
+                low: Some(":white_circle:".to_string()),
+            },
+            ..TemplatesConfig::default()
+        });
+
+        for (level, expected) in [
+            (RiskLevel::High, "Risk: high :alert:"),
+            (RiskLevel::Medium, "Risk: medium :large_yellow_circle:"),
+            (RiskLevel::Low, "Risk: low :white_circle:"),
+        ] {
+            let body = render_slack_app_observe_notification(
+                &catalog,
+                &build_observe_template_context(
+                    &sample_observe_plan(level),
+                    &sample_snapshot(),
+                    &ToneSelector::default(),
+                    &sample_context(),
+                ),
+            );
+
+            assert!(body.contains(expected));
+        }
+    }
+
+    #[test]
+    fn default_risk_emoji_is_empty() {
+        let body = render_slack_app_observe_notification(
+            &TemplateCatalog::default(),
+            &build_observe_template_context(
+                &sample_observe_plan(RiskLevel::High),
+                &sample_snapshot(),
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+        );
+
+        assert!(body.contains("Risk: high\n"));
+        assert!(!body.contains(":alert:"));
+    }
+
+    #[test]
     fn renders_notification_context_placeholders() {
         let outcome = RuleOutcome::new();
-        let (subject, body) = render_slack_workflow_notification(
+        let (subject, body) = render_slack_app_notification(
             &TemplateCatalog::default(),
             &build_notification_template_context(
                 &outcome,
@@ -1396,26 +1710,50 @@ mod tests {
             NotificationTemplateVariant::First,
         );
 
-        assert!(subject.contains("took a first look at"));
-        assert!(body.contains("Assigned reviewers @principal-reviewer @bob"));
+        assert!(subject.contains("Mr. Milchick is observing"));
+        assert!(body.contains("_Assigned reviewers_ *@principal-reviewer* *@bob*"));
         assert!(body.contains("CI task status"));
         assert!(body.contains(":large_green_circle: unit_tests: 12 tests passed"));
-        assert!(!body.contains("No findings were produced."));
         assert!(!body.contains("Local review recommendations"));
+    }
+
+    #[test]
+    fn slack_app_author_username_placeholder_renders_as_mention() {
+        let outcome = RuleOutcome::new();
+        let context = build_notification_template_context(
+            &outcome,
+            &sample_snapshot(),
+            &ToneSelector::default(),
+            &sample_context(),
+            NotificationTemplateVariant::Update,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut catalog = TemplateCatalog::default();
+        catalog.slack_app.refine_thread = "Author {{mr_author_username}}".to_string();
+
+        let (_, app_body) = render_notification(
+            &catalog,
+            &context,
+            NotificationSinkKind::SlackApp,
+            NotificationTemplateVariant::Update,
+        )
+        .expect("Slack app notification should render");
+        assert_eq!(app_body, "Author @arthur");
     }
 
     #[test]
     fn uses_partial_template_override_without_affecting_other_fields() {
         let templates = TemplatesConfig {
+            risk_emojis: RiskEmojiTemplates::default(),
             gitlab: GitLabTemplates::default(),
             github: GitHubTemplates::default(),
             slack_app: SlackAppTemplates {
                 first_root: Some("custom root for {{mr_ref}}".to_string()),
-                first_thread: None,
-                update_root: None,
-                update_thread: None,
+                ..SlackAppTemplates::default()
             },
-            slack_workflow: SlackWorkflowTemplates::default(),
         };
 
         let catalog = resolve_template_catalog(&templates);
@@ -1430,15 +1768,13 @@ mod tests {
     #[test]
     fn falls_back_to_default_when_override_is_invalid() {
         let templates = TemplatesConfig {
+            risk_emojis: RiskEmojiTemplates::default(),
             gitlab: GitLabTemplates::default(),
             github: GitHubTemplates::default(),
             slack_app: SlackAppTemplates {
                 first_root: Some("custom {{unknown_placeholder}}".to_string()),
-                first_thread: None,
-                update_root: None,
-                update_thread: None,
+                ..SlackAppTemplates::default()
             },
-            slack_workflow: SlackWorkflowTemplates::default(),
         };
 
         let catalog = resolve_template_catalog(&templates);
