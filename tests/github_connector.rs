@@ -45,6 +45,11 @@ async fn loads_neutral_snapshot_from_github() {
         Some("@@ -1,2 +1,2 @@")
     );
     assert_eq!(snapshot.labels, vec!["frontend".to_string()]);
+    assert_eq!(snapshot.metadata.commits.len(), 1);
+    assert_eq!(
+        snapshot.metadata.commits[0].title,
+        "Finish frontend adjustments"
+    );
 }
 
 #[tokio::test]

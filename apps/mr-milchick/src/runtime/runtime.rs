@@ -1,8 +1,8 @@
 use crate::config::NotificationPolicy;
 use crate::core::inference::ReviewInferenceOutcome;
 use crate::core::model::{
-    NotificationDeliveryReport, NotificationMessage, NotificationSinkKind, ReviewAction,
-    ReviewActionKind, ReviewPlatformKind,
+    NotificationDelivery, NotificationDeliveryReport, NotificationMessage, NotificationSinkKind,
+    ReviewAction, ReviewActionKind, ReviewPlatformKind,
 };
 use anyhow::Result;
 
@@ -104,7 +104,15 @@ impl RuntimeWiring {
                 .iter()
                 .filter(|notification| notification.sink == sink.kind())
             {
-                let report = if let Some(reason) = &notification_skip_reason {
+                let managed_slack_lifecycle = matches!(
+                    notification.delivery,
+                    NotificationDelivery::UpsertThreadReply { .. }
+                        | NotificationDelivery::AppendCommitLog { .. }
+                );
+                let report = if let Some(reason) = notification_skip_reason
+                    .as_ref()
+                    .filter(|_| !managed_slack_lifecycle)
+                {
                     crate::core::model::NotificationDeliveryReport {
                         sink: sink.kind(),
                         delivered: false,

@@ -23,6 +23,10 @@ pub struct ConfigFile {
     #[serde(default)]
     pub platform: PlatformConfig,
     #[serde(default)]
+    pub areas: AreasConfig,
+    #[serde(default)]
+    pub observe: ObserveConfig,
+    #[serde(default)]
     pub execution: ExecutionConfig,
     #[serde(default)]
     pub reviewers: ReviewersConfig,
@@ -34,6 +38,68 @@ pub struct ConfigFile {
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub templates: TemplatesConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AreasConfig {
+    #[serde(default)]
+    pub definitions: Vec<AreaDefinitionConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AreaDefinitionConfig {
+    pub key: String,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub risk: Option<String>,
+    #[serde(default)]
+    pub critical: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveConfig {
+    #[serde(default)]
+    pub risk: ObserveRiskConfig,
+    #[serde(default)]
+    pub description: ObserveDescriptionConfig,
+    #[serde(default)]
+    pub draft_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveRiskConfig {
+    #[serde(default)]
+    pub low_label: Option<String>,
+    #[serde(default)]
+    pub medium_label: Option<String>,
+    #[serde(default)]
+    pub high_label: Option<String>,
+    #[serde(default)]
+    pub medium_area_count: Option<usize>,
+    #[serde(default)]
+    pub high_area_count: Option<usize>,
+    #[serde(default)]
+    pub medium_changed_lines: Option<u32>,
+    #[serde(default)]
+    pub high_changed_lines: Option<u32>,
+    #[serde(default)]
+    pub high_file_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveDescriptionConfig {
+    #[serde(default)]
+    pub required: Option<bool>,
+    #[serde(default)]
+    pub template_paths: Vec<String>,
+    #[serde(default)]
+    pub ignore_branch_issue_key: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -161,8 +227,6 @@ pub struct NotificationsConfig {
     #[serde(default)]
     pub slack_app: SlackAppConfig,
     #[serde(default)]
-    pub slack_workflow: SlackWorkflowConfig,
-    #[serde(default)]
     pub pipeline_status: PipelineStatusConfig,
 }
 
@@ -181,15 +245,6 @@ pub struct SlackAppConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-pub struct SlackWorkflowConfig {
-    #[serde(default)]
-    pub enabled: Option<bool>,
-    #[serde(default)]
-    pub channel: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct PipelineStatusConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -203,13 +258,24 @@ pub struct PipelineStatusConfig {
 #[serde(deny_unknown_fields)]
 pub struct TemplatesConfig {
     #[serde(default)]
+    pub risk_emojis: RiskEmojiTemplates,
+    #[serde(default)]
     pub gitlab: GitLabTemplates,
     #[serde(default)]
     pub github: GitHubTemplates,
     #[serde(default)]
     pub slack_app: SlackAppTemplates,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RiskEmojiTemplates {
     #[serde(default)]
-    pub slack_workflow: SlackWorkflowTemplates,
+    pub low: Option<String>,
+    #[serde(default)]
+    pub medium: Option<String>,
+    #[serde(default)]
+    pub high: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -234,24 +300,21 @@ pub struct GitHubTemplates {
 #[serde(deny_unknown_fields)]
 pub struct SlackAppTemplates {
     #[serde(default)]
+    pub thread_root: Option<String>,
+    #[serde(default)]
+    pub observe_thread: Option<String>,
+    #[serde(default)]
+    pub observe_blocked_thread: Option<String>,
+    #[serde(default)]
+    pub observe_draft_thread: Option<String>,
+    #[serde(default)]
+    pub refine_thread: Option<String>,
+    #[serde(default)]
     pub first_root: Option<String>,
     #[serde(default)]
     pub first_thread: Option<String>,
     #[serde(default)]
     pub update_root: Option<String>,
-    #[serde(default)]
-    pub update_thread: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct SlackWorkflowTemplates {
-    #[serde(default)]
-    pub first_title: Option<String>,
-    #[serde(default)]
-    pub first_thread: Option<String>,
-    #[serde(default)]
-    pub update_title: Option<String>,
     #[serde(default)]
     pub update_thread: Option<String>,
 }

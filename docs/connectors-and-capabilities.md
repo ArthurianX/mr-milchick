@@ -9,17 +9,17 @@ Mr Milchick binaries are built from exactly one platform connector, zero or more
 Implemented now:
 
 - platform connectors: GitLab, GitHub
-- notification sinks: Slack app, Slack workflow
+- notification sink: Slack app
 - advisory local review backend: llama.cpp via `llm-local`
 - commands: `observe`, `refine`, `explain`, `version`
 
 ## Command Roles
 
-- `observe`: verbose deterministic inspection only
+- `observe`: mutating intake gate for risk/draft labels, description checks, and Slack intake notifications
 - `refine`: fast governance execution plus optional notifications
 - `explain`: slower advisory follow-up that may upsert the managed explain comment
 
-Only `refine` can assign reviewers, change labels, fail the pipeline, or deliver notifications.
+`observe` and `refine` can change labels, fail the pipeline, and deliver configured Slack notifications. Only `refine` assigns reviewers and owns the governance summary comment. The Slack app keeps one root per review, updates the durable stage replies in place, and appends commit/CI activity beneath them.
 
 ## Cargo Features
 
@@ -31,13 +31,12 @@ default = ["gitlab", "slack-app"]
 gitlab = []
 github = []
 slack-app = []
-slack-workflow = []
 teams = []
 discord = []
 llm-local = ["dep:llama-cpp-2"]
 ```
 
-Only `gitlab`, `github`, `slack-app`, `slack-workflow`, and `llm-local` correspond to implemented code paths today.
+Only `gitlab`, `github`, `slack-app`, and `llm-local` correspond to implemented code paths today.
 
 ## Common Build Shapes
 
@@ -59,12 +58,6 @@ GitLab only:
 cargo build --release --no-default-features --features gitlab
 ```
 
-GitLab plus Slack workflow:
-
-```bash
-cargo build --release --no-default-features --features "gitlab slack-workflow"
-```
-
 GitLab plus Slack app:
 
 ```bash
@@ -77,10 +70,10 @@ GitLab plus advisory local review:
 cargo build --release --no-default-features --features "gitlab slack-app llm-local"
 ```
 
-GitHub plus both Slack sinks:
+GitHub plus Slack app:
 
 ```bash
-cargo build --release --no-default-features --features "github slack-app slack-workflow"
+cargo build --release --no-default-features --features "github slack-app"
 ```
 
 For CI release artifacts, this repo builds Linux x86_64 with musl:
@@ -151,7 +144,7 @@ mr-milchick 4.0.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - advisory local review: llama.cpp
-- notification sinks: slack-app, slack-workflow
+- notification sinks: slack-app
 ```
 
 That is the fastest way to confirm the artifact you built matches the runtime environment and the docs you expect to use.

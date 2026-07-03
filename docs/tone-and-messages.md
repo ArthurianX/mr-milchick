@@ -33,7 +33,7 @@ Tone shows up in three main places:
 
 - the command-line output shown during execution
 - the rendered governance summary and advisory explain comments
-- Slack notification messages built during `refine`
+- Slack notification messages built during `observe` and `refine`
 
 With connector templates enabled, those connector messages may now reference the selected tone through placeholders such as `{{tone_message}}`, `{{tone_category}}`, `{{closing_tone_message}}`, and `{{closing_tone_category}}`.
 

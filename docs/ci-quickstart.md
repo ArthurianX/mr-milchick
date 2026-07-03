@@ -5,7 +5,7 @@ This is the shortest path to running Mr Milchick safely in CI with the new confi
 ## What You Need
 
 - one compiled platform connector: GitLab or GitHub
-- optional notification sinks: Slack app and/or Slack workflow
+- optional notification sink: Slack app
 - a `mr-milchick.toml` file committed with non-secret runtime config
 - secrets supplied through CI variables
 
@@ -78,14 +78,14 @@ milchick:observe:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-Once the output looks right, switch `observe` to `refine`.
+`observe` is now the intake gate. It may apply labels, send the Slack intake thread reply, and fail early when intake requirements are not met.
 
 ## Recommended Job Shape
 
 The intended rollout now looks like this:
 
-1. Start with `observe` to preview deterministic governance output.
-2. Switch to `refine` for the fast path once reviewer assignment, summary upsert, and optional notification behavior look correct.
+1. Run `observe` first to label risk, handle drafts, validate the description, and open/update the Slack MR thread.
+2. Run `refine` after the other CI jobs have produced their status signals.
 3. If you want advisory LLM commentary, add a separate slower `explain` job after a real `refine` run.
 
 That split keeps the main governance job quick while leaving richer advisory analysis to a later follow-up stage or pipeline.
@@ -119,7 +119,6 @@ milchick:explain:
 - `GITLAB_TOKEN` for GitLab live reads and writes
 - `GITHUB_TOKEN` for GitHub live reads and writes
 - `MR_MILCHICK_SLACK_BOT_TOKEN` for Slack app delivery
-- `MR_MILCHICK_SLACK_WEBHOOK_URL` for Slack workflow delivery
 
 ## Review Context Env
 
@@ -150,23 +149,7 @@ Set:
 
 - `MR_MILCHICK_SLACK_BOT_TOKEN`
 
-## Slack Workflow Setup
-
-```toml
-[notifications.slack_workflow]
-enabled = true
-channel = "C0ALY38CW3X"
-```
-
-Set:
-
-- `MR_MILCHICK_SLACK_WEBHOOK_URL`
-
-The webhook must be a Slack Workflow input webhook. Milchick sends:
-
-- `mr_milchick_talks_to`
-- `mr_milchick_says`
-- `mr_milchick_says_thread`
+The installed Slack app needs `chat:write`, `metadata.message:read`, and the relevant conversation-history scope (`channels:history` for public channels or `groups:history` for private channels).
 
 ## Interpolation Notes
 

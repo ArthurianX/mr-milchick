@@ -4,6 +4,7 @@ mod mock_server;
 use std::process::{Command, Output};
 use std::{
     fs,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -12,6 +13,8 @@ use mock_server::github_base_env;
 #[cfg(not(feature = "github"))]
 use mock_server::{MERGE_REQUEST_IID, base_env};
 use mock_server::{MockGitLabServer, PROJECT_ID, borrow_env};
+
+static NEXT_CONFIG_ID: AtomicU64 = AtomicU64::new(1);
 
 fn run_cli(subcommand: &str, extra_args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mr-milchick"));
@@ -51,9 +54,50 @@ fn write_temp_config(contents: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("mr-milchick-config-{unique}.toml"));
+    let sequence = NEXT_CONFIG_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "mr-milchick-config-{}-{unique}-{sequence}.toml",
+        std::process::id()
+    ));
+    let contents = if contents.contains("[[areas.definitions]]") {
+        contents.to_string()
+    } else {
+        format!("{}\n{}", contents, minimal_area_config())
+    };
     fs::write(&path, contents).expect("temp config should be written");
     path.display().to_string()
+}
+
+fn minimal_area_config() -> &'static str {
+    r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "backend"
+paths = ["services/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["libs/**", "packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "devops"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "documentation"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe.description]
+required = false
+"#
 }
 
 fn build_test_config(envs: &[(&str, &str)]) -> String {
@@ -73,6 +117,39 @@ fn build_test_config(envs: &[(&str, &str)]) -> String {
         toml_string(env_value(envs, "MR_MILCHICK_NOTIFICATION_POLICY").unwrap_or("always"))
     ));
 
+    sections.push(
+        r#"[areas]
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "backend"
+paths = ["services/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["libs/**", "packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "devops"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "documentation"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe.description]
+required = false
+"#
+        .to_string(),
+    );
+
     sections.push(build_reviewers_config(envs));
     sections.push(format!(
         "[codeowners]\nenabled = {}\n",
@@ -91,15 +168,6 @@ fn build_test_config(envs: &[(&str, &str)]) -> String {
         if let Some(user_map) = env_value(envs, "MR_MILCHICK_SLACK_USER_MAP") {
             sections.push(build_user_map_config(user_map));
         }
-    }
-
-    if legacy_bool(env_value(envs, "MR_MILCHICK_SLACK_ENABLED")).unwrap_or(false)
-        && env_value(envs, "MR_MILCHICK_SLACK_WEBHOOK_URL").is_some()
-    {
-        sections.push(format!(
-            "[notifications.slack_workflow]\nenabled = true\nchannel = {}\n",
-            toml_optional_string(env_value(envs, "MR_MILCHICK_SLACK_CHANNEL"))
-        ));
     }
 
     sections.join("\n")
@@ -316,7 +384,7 @@ fn observe_mode_skips_github_for_non_review_pipelines() {
 }
 
 #[test]
-fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
+fn observe_mode_applies_intake_labels_without_posting_comments() {
     let server = MockGitLabServer::start();
     let envs = review_env(&server);
     let output = run_cli("observe", &[], &borrow_env(&envs));
@@ -329,11 +397,10 @@ fn observe_mode_reports_planned_actions_without_mutating_gitlab() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("No findings were produced."));
-    assert!(stdout.contains("If you run `refine`, it would:"));
-    assert!(stdout.contains("[AssignReviewers] principal-reviewer, bob"));
+    assert!(stdout.contains("Observe intake status:"));
+    assert!(stdout.contains("[AddLabels] risk::"));
 
-    assert_eq!(server.request_count("GET", &review_path()), 1);
+    assert_eq!(server.request_count("GET", &review_path()), 2);
     assert_eq!(server.request_count_prefix("GET", &review_files_path()), 1);
     assert_eq!(server.request_count("POST", &review_comments_path()), 0);
 }
@@ -392,6 +459,63 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
         vec!["principal-reviewer".to_string(), "bob".to_string()]
     );
     assert_eq!(server.note_bodies().len(), 1);
+}
+
+#[test]
+fn refine_mode_does_not_post_platform_or_slack_messages_for_drafts() {
+    let server = MockGitLabServer::start_draft();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
+    let slack_config = if cfg!(feature = "slack-app") {
+        format!(
+            r#"
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = {}
+"#,
+            toml_string(server.slack_api_base_url().as_str())
+        )
+    } else {
+        String::new()
+    };
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
+kind = "{platform}"
+base_url = {base_url}
+
+[reviewers]
+max_reviewers = 2
+
+[codeowners]
+enabled = false
+{slack_config}
+"#,
+        platform = compiled_platform_connector_kind(),
+        base_url = toml_string(platform_base_url.as_str()),
+    ));
+    let mut envs = review_env(&server);
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+
+    let output = run_cli("refine", &[], &borrow_env(&envs));
+    assert!(
+        output.status.success(),
+        "refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("platform comments and notifications are suppressed"));
+    assert_eq!(server.request_count("POST", &review_comments_path()), 0);
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        0
+    );
+    let _ = fs::remove_file(config_path);
 }
 
 #[cfg(feature = "slack-app")]
@@ -457,9 +581,10 @@ base_url = {slack_base_url}
         "stdout was:\n{second_stdout}"
     );
     assert!(
-        second_stdout.contains("[Notification SlackApp] delivered=true sent"),
+        second_stdout.contains("[Notification SlackApp] delivered=true updated"),
         "stdout was:\n{second_stdout}"
     );
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=false already present"));
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
@@ -472,7 +597,7 @@ base_url = {slack_base_url}
 
 #[cfg(feature = "slack-app")]
 #[test]
-fn refine_mode_on_applied_action_policy_skips_notifications_when_summary_is_unchanged() {
+fn refine_mode_on_applied_action_policy_keeps_managed_slack_state_current() {
     let server = MockGitLabServer::start();
     let config_path = write_temp_config(&format!(
         r#"[platform]
@@ -529,17 +654,16 @@ base_url = {slack_base_url}
 
     let second_stdout = String::from_utf8_lossy(&second.stdout);
     assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
-    assert!(
-        second_stdout
-            .contains("[Notification SlackApp] delivered=false skipped because summary unchanged")
-    );
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=true updated"));
+    assert!(second_stdout.contains("[Notification SlackApp] delivered=false already present"));
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        2
+        3
     );
+    assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 1);
     let _ = fs::remove_file(config_path);
 }
 
@@ -564,7 +688,7 @@ base_url = "__SLACK_BASE_URL__"
 enabled = false
 
 [templates.slack_app]
-update_root = "Template override for {{mr_ref}}"
+thread_root = "Template override for {{mr_ref}}"
 "#
     .replace("__PLATFORM__", compiled_platform_connector_kind())
     .replace("__BASE_URL__", &server.api_base_url())
@@ -584,7 +708,7 @@ update_root = "Template override for {{mr_ref}}"
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies.len(), 3);
     assert!(
         bodies
             .iter()
@@ -640,7 +764,7 @@ update_root = "Template override for {{unknown_placeholder}}"
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies.len(), 3);
     assert!(
         bodies
             .iter()
@@ -666,7 +790,7 @@ fn observe_mode_supports_fixture_without_ci_env_without_notification_sinks() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("If you run `refine`, it would:"));
+    assert!(stdout.contains("Observe intake status:"));
     assert!(stdout.contains("No notification previews were produced."));
 }
 
@@ -708,8 +832,8 @@ channel = "C0ALY38CW3X"
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Notification previews:"));
-    assert!(stdout.contains("Mr. Milchick - updates"));
-    assert!(!stdout.contains("took a first look at"));
+    assert!(stdout.contains("Mr. Milchick is observing"));
+    assert!(stdout.contains("Status: passed"));
 
     let _ = fs::remove_file(config_path);
 }
@@ -748,7 +872,7 @@ channel = "C0ALY38CW3X"
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Notification previews:"));
     assert!(stdout.contains("SlackApp"));
-    assert!(stdout.contains("took a first look at"));
+    assert!(stdout.contains("Mr. Milchick is observing"));
 
     let _ = fs::remove_file(config_path);
 }
@@ -876,24 +1000,21 @@ base_url = {slack_base_url}
 
     assert_eq!(
         server.request_count_prefix("GET", "/slack/api/conversations.history"),
-        1
+        4
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 3);
+    assert_eq!(bodies.len(), 2);
 
+    let updates = server.request_bodies("POST", "/slack/api/chat.update");
+    assert_eq!(updates.len(), 1);
     let update_payload: serde_json::Value =
-        serde_json::from_str(&bodies[2]).expect("update Slack payload should parse");
-    assert_eq!(
-        update_payload["thread_ts"],
-        serde_json::json!("1700000000.000001")
-    );
+        serde_json::from_str(&updates[0]).expect("update Slack payload should parse");
+    assert_eq!(update_payload["ts"], serde_json::json!("1700000000.000002"));
 
     let update_text = update_payload["text"]
         .as_str()
         .expect("update text should be a string");
-    assert!(update_text.contains("Mr. Milchick - updates on"));
-    assert!(update_text.contains("MR #3997"));
     assert!(update_text.contains("Button spacing changed near the CTA"));
 
     let _ = fs::remove_file(config_path);

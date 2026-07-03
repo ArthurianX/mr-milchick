@@ -5,7 +5,7 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
-use crate::core::model::{Actor, ReviewSnapshot};
+use crate::core::model::{Actor, AreasConfig, ReviewSnapshot};
 use crate::core::rules::model::{RuleFinding, RuleOutcome};
 use tracing::{debug, info, instrument};
 
@@ -21,10 +21,11 @@ use tracing::{debug, info, instrument};
 pub fn enrich_with_reviewer_assignment(
     mut outcome: RuleOutcome,
     snapshot: &ReviewSnapshot,
+    areas: &AreasConfig,
     routing_config: &ReviewerRoutingConfig,
     codeowners_ctx: &CodeownersContext,
 ) -> RuleOutcome {
-    let area_summary = summarize_areas(snapshot);
+    let area_summary = summarize_areas(snapshot, areas);
     let excluded_reviewers = vec![snapshot.author.username.clone()];
     let mut recommendation =
         recommend_reviewers(&area_summary, routing_config, &excluded_reviewers);
@@ -187,6 +188,17 @@ mod tests {
             .collect()
     }
 
+    fn test_areas() -> AreasConfig {
+        AreasConfig {
+            definitions: vec![crate::core::model::AreaDefinition {
+                key: "frontend".to_string(),
+                paths: vec!["apps/frontend/**".to_string()],
+                risk: crate::core::model::AreaRisk::Medium,
+                critical: false,
+            }],
+        }
+    }
+
     #[test]
     fn adds_assign_reviewers_action_when_recommendation_exists_for_non_draft() {
         let outcome = RuleOutcome::new();
@@ -196,6 +208,7 @@ mod tests {
         let enriched = enrich_with_reviewer_assignment(
             outcome,
             &snapshot,
+            &test_areas(),
             &config,
             &CodeownersContext::empty(),
         );
@@ -222,6 +235,7 @@ mod tests {
         let enriched = enrich_with_reviewer_assignment(
             outcome,
             &snapshot,
+            &test_areas(),
             &config,
             &CodeownersContext::empty(),
         );
@@ -239,6 +253,7 @@ mod tests {
         let enriched = enrich_with_reviewer_assignment(
             outcome,
             &snapshot,
+            &test_areas(),
             &config,
             &CodeownersContext::empty(),
         );
@@ -265,7 +280,13 @@ mod tests {
             ),
         };
 
-        let enriched = enrich_with_reviewer_assignment(outcome, &snapshot, &config, &codeowners);
+        let enriched = enrich_with_reviewer_assignment(
+            outcome,
+            &snapshot,
+            &test_areas(),
+            &config,
+            &codeowners,
+        );
 
         match &enriched.action_plan.actions[0] {
             Action::AssignReviewers { reviewers } => {

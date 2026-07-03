@@ -44,3 +44,15 @@ pub struct IssueCommentDto {
     pub id: u64,
     pub body: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PullRequestCommitDto {
+    pub sha: String,
+    pub html_url: String,
+    pub commit: GitCommitDto,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitCommitDto {
+    pub message: String,
+}

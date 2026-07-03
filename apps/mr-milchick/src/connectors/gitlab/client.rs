@@ -3,11 +3,12 @@ use reqwest::Client;
 use tracing::{debug, instrument};
 
 use super::api::{
-    GitLabApprovalSummary, GitLabChangedFile, GitLabConfig, GitLabMergeRequest, GitLabSnapshotData,
-    MergeRequestNote,
+    GitLabApprovalSummary, GitLabChangedFile, GitLabCommit, GitLabConfig, GitLabMergeRequest,
+    GitLabSnapshotData, MergeRequestNote,
 };
 use super::dto::{
-    ChangedFileDto, MergeRequestApprovalsDto, MergeRequestChangesDto, MergeRequestDto,
+    ChangedFileDto, MergeRequestApprovalsDto, MergeRequestChangesDto, MergeRequestCommitDto,
+    MergeRequestDto,
 };
 
 #[derive(Debug, Clone)]
@@ -155,6 +156,48 @@ impl GitLabClient {
     }
 
     #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
+    pub async fn get_merge_request_commits(
+        &self,
+        project_id: &str,
+        merge_request_iid: &str,
+    ) -> Result<Vec<GitLabCommit>> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}/commits",
+            self.config.base_url.trim_end_matches('/'),
+            project_id,
+            merge_request_iid
+        );
+
+        let mut commits = self
+            .http
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.config.token)
+            .query(&[("per_page", "100")])
+            .send()
+            .await
+            .context("failed to send commits request to GitLab")?
+            .error_for_status()
+            .context("GitLab returned an error status while fetching merge request commits")?
+            .json::<Vec<MergeRequestCommitDto>>()
+            .await
+            .context("failed to deserialize merge request commits response")?;
+
+        // GitLab returns merge request commits newest-first. The neutral snapshot
+        // contract is chronological so notification sinks can select commits that
+        // follow the last one they recorded without platform-specific branching.
+        commits.reverse();
+
+        Ok(commits
+            .into_iter()
+            .map(|commit| GitLabCommit {
+                id: commit.id,
+                title: commit.title,
+                web_url: commit.web_url,
+            })
+            .collect())
+    }
+
+    #[instrument(skip(self), fields(project_id = %project_id, merge_request_iid = %merge_request_iid))]
     pub async fn get_merge_request_snapshot(
         &self,
         project_id: &str,
@@ -166,6 +209,19 @@ impl GitLabClient {
         let changed_files = self
             .get_merge_request_changes(project_id, merge_request_iid)
             .await?;
+        let commits = match self
+            .get_merge_request_commits(project_id, merge_request_iid)
+            .await
+        {
+            Ok(commits) => commits,
+            Err(err) => {
+                debug!(
+                    error = %err,
+                    "GitLab commits unavailable; Slack commit activity will be empty"
+                );
+                Vec::new()
+            }
+        };
         let approval_summary = match self
             .get_merge_request_approvals(project_id, merge_request_iid)
             .await
@@ -187,6 +243,7 @@ impl GitLabClient {
         Ok(GitLabSnapshotData {
             merge_request,
             changed_files,
+            commits,
             approval_summary,
         })
     }

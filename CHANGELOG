@@ -7,6 +7,45 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.0.0] — 2026-07-03
+
+This major release turns `observe` into the first pipeline intake gate instead of a preview-only command.
+
+### Breaking
+
+- `observe` now mutates review state by applying risk labels and draft labels, sends Slack app intake notifications, and exits nonzero when intake requirements are not met.
+- Repository areas are now required in `mr-milchick.toml` under `[[areas.definitions]]`; Milchick no longer ships hardcoded default area classification.
+- Reviewer `areas` must reference configured area keys exactly.
+- The Slack workflow sink, its Cargo feature, TOML configuration, templates, webhook secret, tests, and documentation have been removed. Slack app is now the only supported notification sink.
+- Slack app installations now require `metadata.message:read` alongside `chat:write` and the relevant conversation-history scope. Reinstall the Slack app after adding the scope.
+
+### Added
+
+- Deterministic observe risk assessment with mutually exclusive `risk::low`, `risk::medium`, and `risk::high` labels.
+- Required-description intake checks that ignore branch-derived issue keys and can compare descriptions against configured local MR/PR templates.
+- Observe-specific Slack templates for thread root, passed intake, blocked intake, draft intake, and refine thread replies.
+- Metadata-backed Slack message identities for one review root plus durable `observe` and `refine` replies.
+- GitLab and GitHub review snapshots now include commit IDs, titles, and URLs for Slack activity updates.
+- Append-only Slack activity messages with a CI summary followed by a linked, bulleted list of commits added since the last recorded update.
+- New tone categories for observe intake, risk levels, description failures, paused pipelines, and refine readiness.
+
+### Changed
+
+- `refine` continues to own reviewer assignment, governance summary comments, pipeline-status governance, and reviewer mentions in Slack threads.
+- GitHub label add/remove actions are implemented for parity with observe risk/draft labeling.
+- Slack app delivery updates the durable `observe` and `refine` replies with `chat.update` instead of adding another stage reply on every pipeline.
+- Managed Slack stage updates and commit activity run even with `notification_policy = "on-applied-action"`, keeping the thread current when no new label or reviewer mutation is needed.
+- Commit activity records only the current head on first adoption of an existing review, then appends every subsequently discovered commit without replaying the full review history.
+- Process logging now defaults to `info`; component-level debug output is opt-in through `RUST_LOG`.
+
+### Fixed
+
+- Mandatory reviewers are added alongside `max_reviewers` rather than being counted as part of that limit, including CODEOWNERS-driven reviewer recommendations.
+- Slack history and thread reads now request full message metadata, allowing durable stage replies to be found and edited and commit activity to be deduplicated.
+- GitLab's newest-first merge-request commit response is normalized into chronological order before selecting unrecorded commits.
+- The Slack integration mock now mirrors Slack's metadata omission unless `include_all_metadata=true`, preventing false-positive update tests.
+
+
 ## [4.1.2] — 2026-05-15
 
 This patch release tightens reviewer assignment limits so required reviewers are always additive to the configured routing cap.

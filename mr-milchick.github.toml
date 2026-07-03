@@ -5,7 +5,6 @@
 # - GITHUB_TOKEN
 # - GITLAB_TOKEN
 # - MR_MILCHICK_SLACK_BOT_TOKEN
-# - MR_MILCHICK_SLACK_WEBHOOK_URL
 #
 # If you want to use a different config file path, set:
 # - MR_MILCHICK_CONFIG_PATH=/path/to/other-config.toml
@@ -30,6 +29,43 @@ kind = "github"
 # Optional GitHub API base URL override.
 # Leave this commented for normal github.com usage.
 # base_url = "https://api.github.com"
+
+[areas]
+# v5 requires each repository to define its own area map. Reviewer routing and
+# observe risk labels use these keys.
+
+[[areas.definitions]]
+key = "apps"
+paths = ["apps/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**", "libs/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".github/**", ".gitlab-ci.yml", "scripts/**"]
+risk = "high"
+
+[[areas.definitions]]
+key = "docs"
+paths = ["docs/**", "README.md"]
+risk = "low"
+
+[observe]
+draft_label = "status::draft"
+
+[observe.risk]
+low_label = "risk::low"
+medium_label = "risk::medium"
+high_label = "risk::high"
+
+[observe.description]
+required = true
+template_paths = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md"]
+ignore_branch_issue_key = true
 
 [reviewers]
 # Maximum number of area-routed reviewers to assign from `reviewers.definitions`.
@@ -98,17 +134,6 @@ kind = "github"
 # Notification sink config lives under the nested sections below.
 # Uncomment only the sink types that match your compiled features and secrets.
 
-# Slack workflow sink configuration.
-# Requires:
-# - binary compiled with `slack-workflow`
-# - MR_MILCHICK_SLACK_WEBHOOK_URL in env
-
-# [notifications.slack_workflow]
-# enabled = true
-#
-# Channel ID passed into the workflow payload.
-# channel = "C01234567"
-
 # Slack app sink configuration.
 # Requires:
 # - binary compiled with `slack-app`
@@ -132,6 +157,11 @@ kind = "github"
 [templates]
 # Message template overrides live under the sections below.
 # If omitted, Milchick uses built-in defaults.
+
+[templates.risk_emojis]
+high = ":alert:"
+medium = ":large_yellow_circle:"
+low = ":white_circle:"
 
 # GitHub governance summary comment override.
 # [templates.github]
@@ -207,20 +237,4 @@ kind = "github"
 # {{findings_block}}
 # {{actions_block}}
 # _{{summary_footer}}_
-# """
-
-# Slack workflow template overrides.
-# [templates.slack_workflow]
-# first_title = "{{notification_subject}}"
-# first_thread = """
-# {{notification_title}}
-# Pull request: {{mr_link}}
-# {{reviewers_line}}
-# """
-# update_title = "{{notification_subject}}"
-# update_thread = """
-# Pull request: {{mr_link}}
-# {{findings_block}}
-# {{actions_block}}
-# {{summary_footer}}
 # """

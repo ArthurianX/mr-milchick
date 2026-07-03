@@ -26,15 +26,34 @@ pub struct ReviewerConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewerDefinition {
     pub username: String,
-    pub areas: Vec<crate::core::domain::code_area::CodeArea>,
+    pub areas: Vec<String>,
     pub is_fallback: bool,
     pub is_mandatory: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AreasConfig {
+    pub definitions: Vec<AreaDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AreaDefinition {
+    pub key: String,
+    pub paths: Vec<String>,
+    pub risk: AreaRisk,
+    pub critical: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaRisk {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationSinkKind {
     SlackApp,
-    SlackWorkflow,
     Teams,
     Discord,
 }
@@ -43,7 +62,6 @@ impl NotificationSinkKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::SlackApp => "slack-app",
-            Self::SlackWorkflow => "slack-workflow",
             Self::Teams => "teams",
             Self::Discord => "discord",
         }
@@ -125,8 +143,16 @@ pub struct ReviewMetadata {
     pub target_branch: Option<String>,
     pub merge_request_state: Option<String>,
     pub commit_count: Option<u32>,
+    pub commits: Vec<ReviewCommit>,
     pub approvals_required: Option<u32>,
     pub approvals_given: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewCommit {
+    pub id: String,
+    pub title: String,
+    pub web_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +232,20 @@ pub struct NotificationMessage {
     pub severity: NotificationSeverity,
     pub thread_key: Option<String>,
     pub prefer_thread_reply: bool,
+    pub conversation_key: Option<String>,
+    pub delivery: NotificationDelivery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationDelivery {
+    Append,
+    UpsertThreadReply {
+        slot: String,
+    },
+    AppendCommitLog {
+        commits: Vec<ReviewCommit>,
+        ci_summary: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

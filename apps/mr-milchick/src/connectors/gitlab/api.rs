@@ -34,9 +34,17 @@ pub struct GitLabChangedFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitLabCommit {
+    pub id: String,
+    pub title: String,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitLabSnapshotData {
     pub merge_request: GitLabMergeRequest,
     pub changed_files: Vec<GitLabChangedFile>,
+    pub commits: Vec<GitLabCommit>,
     pub approval_summary: Option<GitLabApprovalSummary>,
 }
 
