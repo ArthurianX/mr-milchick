@@ -248,6 +248,74 @@ async fn appends_only_new_commits_as_a_ci_summary_with_a_bulleted_list() {
     assert_eq!(text.lines().count(), 3);
 }
 
+#[tokio::test]
+async fn updates_durable_stage_reply_beyond_first_replies_page() {
+    let server = MockGitLabServer::start();
+    let sink = SlackAppSink::new(SlackAppConfig {
+        enabled: true,
+        base_url: server.slack_api_base_url(),
+        bot_token: Some("xoxb-test".to_string()),
+        channel: Some("C0ALY38CW3X".to_string()),
+        user_map: BTreeMap::new(),
+    });
+
+    let mut append_notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: "Mr. Milchick is observing MR #3995".to_string(),
+        body: "Historical update".to_string(),
+        audience: NotificationAudience::Default,
+        severity: NotificationSeverity::Info,
+        thread_key: Some("MR #3995".to_string()),
+        prefer_thread_reply: true,
+        conversation_key: Some("gitlab:412:3995".to_string()),
+        delivery: NotificationDelivery::Append,
+    };
+    sink.send(&append_notification)
+        .await
+        .expect("root thread should be created");
+    for index in 0..205 {
+        append_notification.body = format!("Historical update {index}");
+        sink.send(&append_notification)
+            .await
+            .expect("historical reply should be sent");
+    }
+
+    let mut stage_notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: "Mr. Milchick is considering MR #3995".to_string(),
+        body: "Refine status: reviewers pending".to_string(),
+        audience: NotificationAudience::Default,
+        severity: NotificationSeverity::Info,
+        thread_key: Some("MR #3995".to_string()),
+        prefer_thread_reply: true,
+        conversation_key: Some("gitlab:412:3995".to_string()),
+        delivery: NotificationDelivery::UpsertThreadReply {
+            slot: "refine".to_string(),
+        },
+    };
+    sink.send(&stage_notification)
+        .await
+        .expect("managed stage reply should be created after older replies");
+
+    stage_notification.body = "Refine status: failing CI".to_string();
+    sink.send(&stage_notification)
+        .await
+        .expect("managed stage reply should be updated through pagination");
+
+    assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 1);
+    let updates = server.request_bodies("POST", "/slack/api/chat.update");
+    let update: Value = serde_json::from_str(&updates[0]).expect("update should be JSON");
+    assert_eq!(update["text"], json!("Refine status: failing CI"));
+    assert_eq!(
+        update["metadata"]["event_payload"]["message_key"],
+        json!("slot:refine")
+    );
+    assert!(
+        server.request_count_prefix("GET", "/slack/api/conversations.replies") > 1,
+        "upsert should page through older replies to find the managed stage message"
+    );
+}
+
 fn commit(id: &str, title: &str) -> ReviewCommit {
     ReviewCommit {
         id: id.to_string(),

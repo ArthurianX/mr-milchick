@@ -7,6 +7,16 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.0.1] — 2026-07-10
+
+patch release hardens Slack app managed-thread delivery after the 5.0.0 notification redesign.
+
+### Fixed
+
+- Slack app durable `observe` and `refine` replies now page through all `conversations.replies` results when locating managed message metadata, so large or previously noisy MR threads can still edit the existing stage messages instead appending/recreating them.
+- Added regression coverage proving small-thread CI status changes edit the existing managed `refine` message with latest failing/passing details.
+- Added Slack mock pagination support so managed-message tests exercise Slack's `next_cursor` reply behavior.
+
 ## [5.0.0] — 2026-07-03
 
 This major release turns `observe` into the first pipeline intake gate instead of a preview-only command.

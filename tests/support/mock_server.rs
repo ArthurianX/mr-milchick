@@ -777,11 +777,11 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             let root_ts = query_param(path, "ts").unwrap_or_default();
             let include_all_metadata =
                 query_param(path, "include_all_metadata") == Some("true");
-            let messages = state
-                .slack_messages
-                .iter()
-                .filter(|message| {
-                    message.channel == channel
+                let messages = state
+                    .slack_messages
+                    .iter()
+                    .filter(|message| {
+                        message.channel == channel
                         && (message.ts == root_ts || message.thread_ts.as_deref() == Some(root_ts))
                 })
                 .map(|message| {
@@ -799,15 +799,15 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                         } else if let Some(event_type) = metadata.get("event_type") {
                             payload["metadata"] = json!({"event_type": event_type});
                         }
-                    }
-                    payload
-                })
-                .collect::<Vec<_>>();
-            HttpResponse {
-                status_code: 200,
-                body: json!({"ok": true, "messages": messages}).to_string(),
+                        }
+                        payload
+                    })
+                    .collect::<Vec<_>>();
+                HttpResponse {
+                    status_code: 200,
+                    body: paginated_slack_messages(messages, path),
+                }
             }
-        }
         ("POST", path) if path == slack_update_path => {
             let body: Value =
                 serde_json::from_str(&request.body).expect("Slack update should be JSON");
@@ -872,6 +872,38 @@ fn query_param<'a>(path: &'a str, key: &str) -> Option<&'a str> {
         let (name, value) = pair.split_once('=')?;
         (name == key).then_some(value)
     })
+}
+
+fn paginated_slack_messages(messages: Vec<Value>, path: &str) -> String {
+    let total = messages.len();
+    let limit = query_param(path, "limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(total.max(1));
+    let offset = query_param(path, "cursor")
+        .and_then(|value| value.strip_prefix("offset_"))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let next_offset = offset.saturating_add(limit);
+    let next_cursor = if next_offset < total {
+        format!("offset_{next_offset}")
+    } else {
+        String::new()
+    };
+    let page = messages
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
+
+    json!({
+        "ok": true,
+        "messages": page,
+        "response_metadata": {
+            "next_cursor": next_cursor
+        }
+    })
+    .to_string()
 }
 
 fn user_lookup(username: &str) -> Value {

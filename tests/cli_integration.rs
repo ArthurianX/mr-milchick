@@ -669,6 +669,88 @@ base_url = {slack_base_url}
 
 #[cfg(feature = "slack-app")]
 #[test]
+fn refine_mode_updates_managed_slack_message_when_ci_status_changes() {
+    let server = MockGitLabServer::start();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let status_root = std::env::temp_dir().join(format!("mr-milchick-ci-status-{unique}"));
+    let status_dir = status_root.join("unit_tests").join("milchick-status");
+    fs::create_dir_all(&status_dir).expect("status directory should be created");
+    fs::write(
+        status_dir.join("result.json"),
+        r#"{"job":"unit_tests","success":true,"summary":"Unit tests passed"}"#,
+    )
+    .expect("passed status should be written");
+
+    let config_path = write_temp_config(&format!(
+        r#"[platform]
+kind = "{platform}"
+base_url = {base_url}
+
+[reviewers]
+max_reviewers = 2
+
+[codeowners]
+enabled = false
+
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = {slack_base_url}
+
+[notifications.pipeline_status]
+enabled = true
+search_root = {status_root}
+"#,
+        platform = compiled_platform_connector_kind(),
+        base_url = toml_string(server.api_base_url().as_str()),
+        slack_base_url = toml_string(server.slack_api_base_url().as_str()),
+        status_root = toml_string(status_root.display().to_string().as_str()),
+    ));
+    let mut envs = review_env(&server);
+    envs.push(("MR_MILCHICK_CONFIG_PATH", config_path.clone()));
+    envs.push(("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test".to_string()));
+
+    let first = run_cli("refine", &[], &borrow_env(&envs));
+    assert!(
+        first.status.success(),
+        "first refine failed: {}\n{}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&first.stdout)
+    );
+
+    fs::write(
+        status_dir.join("result.json"),
+        r#"{"job":"unit_tests","success":false,"summary":"One test failed"}"#,
+    )
+    .expect("failed status should be written");
+    let second = run_cli("refine", &[], &borrow_env(&envs));
+    assert!(
+        second.status.success(),
+        "second refine failed: {}\n{}",
+        String::from_utf8_lossy(&second.stderr),
+        String::from_utf8_lossy(&second.stdout)
+    );
+
+    assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 1);
+    let updates = server.request_bodies("POST", "/slack/api/chat.update");
+    let update: serde_json::Value =
+        serde_json::from_str(&updates[0]).expect("Slack update should be JSON");
+    let update_text = update["text"]
+        .as_str()
+        .expect("Slack update text should be string");
+    assert!(
+        update_text.contains(":red_circle: unit_tests: One test failed"),
+        "update text was:\n{update_text}"
+    );
+
+    let _ = fs::remove_dir_all(status_root);
+}
+
+#[cfg(feature = "slack-app")]
+#[test]
 fn refine_mode_uses_partial_slack_template_override_from_config_file() {
     let server = MockGitLabServer::start();
     let config_body = r#"
