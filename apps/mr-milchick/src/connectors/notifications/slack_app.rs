@@ -504,32 +504,48 @@ async fn load_thread_messages(
     channel: &str,
     root_ts: &str,
 ) -> Result<Vec<SlackConversationMessage>> {
-    let mut request = http.get(endpoint).query(&[
-        ("channel", channel),
-        ("ts", root_ts),
-        ("limit", "200"),
-        ("include_all_metadata", "true"),
-    ]);
-    if let Some(token) = bearer_token {
-        request = request.bearer_auth(token);
-    }
+    let mut cursor: Option<String> = None;
+    let mut messages = Vec::new();
 
-    let payload = request
-        .send()
-        .await
-        .context("failed to send Slack conversations.replies request")?
-        .error_for_status()
-        .context("Slack conversations.replies returned an error status")?
-        .json::<SlackConversationsHistoryResponse>()
-        .await
-        .context("failed to deserialize Slack conversations.replies response")?;
-    if !payload.ok {
-        bail!(
-            "Slack conversations.replies failed: {}",
-            payload.error.unwrap_or_else(|| "unknown error".to_string())
-        );
+    loop {
+        let mut request = http.get(endpoint).query(&[
+            ("channel", channel),
+            ("ts", root_ts),
+            ("limit", "200"),
+            ("include_all_metadata", "true"),
+        ]);
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        if let Some(next_cursor) = cursor.as_deref() {
+            request = request.query(&[("cursor", next_cursor)]);
+        }
+
+        let payload = request
+            .send()
+            .await
+            .context("failed to send Slack conversations.replies request")?
+            .error_for_status()
+            .context("Slack conversations.replies returned an error status")?
+            .json::<SlackConversationsHistoryResponse>()
+            .await
+            .context("failed to deserialize Slack conversations.replies response")?;
+        if !payload.ok {
+            bail!(
+                "Slack conversations.replies failed: {}",
+                payload.error.unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+        messages.extend(payload.messages);
+        let next_cursor = payload
+            .response_metadata
+            .and_then(|metadata| metadata.next_cursor)
+            .filter(|value| !value.trim().is_empty());
+        if next_cursor.is_none() {
+            return Ok(messages);
+        }
+        cursor = next_cursor;
     }
-    Ok(payload.messages)
 }
 
 fn find_message_ts<'a>(
