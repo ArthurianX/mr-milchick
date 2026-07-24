@@ -1,4 +1,5 @@
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -44,6 +45,7 @@ const REVIEW_JSON_SCHEMA: &str = r#"{
   "required":["summary","recommendations"]
 }"#;
 const MIN_CLAUDE_CODE_VERSION: [u64; 3] = [2, 1, 218];
+const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 
 pub struct ClaudeCodeReviewInferenceEngine {
     model: String,
@@ -80,11 +82,8 @@ impl ClaudeCodeReviewInferenceEngine {
                     "Claude Code inference requires CLAUDE_CODE_OAUTH_TOKEN".to_string(),
                 )
             })?;
-        let mut command = Command::new("claude");
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
+        let isolated = create_isolated_directory()?;
+        let mut command = self.base_command(&isolated);
         command.env("CLAUDE_CODE_OAUTH_TOKEN", token);
         command.args([
             "--print",
@@ -124,6 +123,12 @@ impl ClaudeCodeReviewInferenceEngine {
             .map_err(|error| {
                 ReviewInferenceError::Analysis(format!("failed to wait for Claude Code: {error}"))
             })?;
+        let _ = std::fs::remove_dir_all(&isolated);
+        if output.stdout.len() > MAX_CAPTURE_BYTES || output.stderr.len() > MAX_CAPTURE_BYTES {
+            return Err(ReviewInferenceError::Analysis(
+                "Claude Code output exceeded the configured capture limit".to_string(),
+            ));
+        }
         if !output.status.success() {
             return Err(ReviewInferenceError::Analysis(format!(
                 "Claude Code exited with status {}",
@@ -155,11 +160,8 @@ impl ClaudeCodeReviewInferenceEngine {
     }
 
     async fn check_version(&self) -> Result<(), ReviewInferenceError> {
-        let mut command = Command::new("claude");
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
+        let isolated = create_isolated_directory()?;
+        let mut command = self.base_command(&isolated);
         command.arg("--version");
         let output = timeout(self.timeout, command.output())
             .await
@@ -169,6 +171,7 @@ impl ClaudeCodeReviewInferenceEngine {
                     "Claude Code executable is unavailable: {error}"
                 ))
             })?;
+        let _ = std::fs::remove_dir_all(&isolated);
         let raw = String::from_utf8_lossy(&output.stdout);
         let parts = raw
             .split_whitespace()
@@ -194,6 +197,49 @@ impl ClaudeCodeReviewInferenceEngine {
         }
         Ok(())
     }
+
+    fn base_command(&self, isolated: &PathBuf) -> Command {
+        let mut command = Command::new("claude");
+        command.env_clear();
+        for name in [
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "TZ",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "NODE_EXTRA_CA_CERTS",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "no_proxy",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command.env("HOME", isolated);
+        command.env("CLAUDE_CONFIG_DIR", isolated.join(".claude"));
+        command.current_dir(isolated);
+        command
+    }
+}
+
+fn create_isolated_directory() -> Result<PathBuf, ReviewInferenceError> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| ReviewInferenceError::Analysis(format!("clock error: {error}")))?
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("mr-milchick-claude-{}-{nanos}", std::process::id()));
+    std::fs::create_dir(&path).map_err(|error| {
+        ReviewInferenceError::Analysis(format!(
+            "failed to create isolated Claude directory: {error}"
+        ))
+    })?;
+    Ok(path)
 }
 
 #[async_trait]
