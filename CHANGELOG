@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.1.0] — 2026-07-24
+
+This minor release adds an optional Claude Code advisory-review backend while retaining local GGUF inference.
+
+### Added
+
+- Explicit `[inference] backend = "claude-code"` selection with a required `model` setting and the `CLAUDE_CODE_OAUTH_TOKEN` pipeline secret.
+- `llm-claude-code` Cargo feature and release artifacts built with both local and Claude Code inference capabilities.
+- Snapshot-only Claude Code execution for `explain`, with tools disabled, isolated runtime paths, a minimum supported CLI version of 2.1.218, bounded output, and advisory failure behavior.
+- A pinned same-project GitLab CI example at `examples/gitlab/claude-code-explain.gitlab-ci.yml`.
+
+### Changed
+
+- Inference configuration now has explicit local and Claude Code backend validation; omitted `backend` remains local for compatibility.
+- Advisory headings now read “AI review recommendations” regardless of the selected backend.
+
+### Docs
+
+- Added Claude Code setup, security, and CI guidance; refreshed the README, quickstart, configuration reference, architecture, capability, and local-inference documentation.
+
 ## [5.0.1] — 2026-07-10
 
 patch release hardens Slack app managed-thread delivery after the 5.0.0 notification redesign.

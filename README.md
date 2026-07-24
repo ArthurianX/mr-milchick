@@ -42,7 +42,7 @@ The tool exists to keep review governance where the decision already happens: in
 
 Today the implemented surface is intentionally focused: GitLab and GitHub are the supported platform connectors, and Slack app is the supported notification sink.
 
-Optional local review suggestions can also be enabled when the binary is built with the `llm-local` feature and pointed at a local GGUF model. That local `llama.cpp`-backed advisory pass runs only during `explain`, which keeps the normal `observe` and `refine` governance flow fast and deterministic while still allowing a slower follow-up comment with structured review hints.
+Optional advisory review suggestions run only during `explain`. Build with `llm-local` and point at a GGUF model for local llama.cpp inference, or build with `llm-claude-code` and select the Claude Code backend in TOML. Both keep `observe` and `refine` inference-free while allowing a slower structured review follow-up.
 
 Internally, the repository now ships as a single crate with layered modules:
 
@@ -154,20 +154,22 @@ If you include `llm-local`, the native `llama.cpp` build also requires `cmake` o
 
 You can always fetch the latest binary, but inside sensitive infrastructures it's much better to build it directly there and use it locally.
 
-## Local LLM Review
+## Advisory LLM Review
 
-Mr Milchick can attach advisory local review suggestions from a GGUF model when compiled with `--features llm-local`. That inference path is now explain-only: `observe` and `refine` stay inference-free, while `explain` can add a separate advisory comment after a prior `refine` run has produced a governance summary worth following up on. The current local inference path uses each model's built-in chat template when available, falls back safely when a template is missing, and supports repeatable smoke tests plus model benchmarking.
+Mr Milchick supports both local GGUF review through `llm-local` and snapshot-only Claude Code review through `llm-claude-code`. Both are explain-only: `observe` and `refine` stay inference-free, while `explain` can add a separate advisory comment after a prior `refine` run has produced a governance summary worth following up on.
 
 The main runtime knobs now live under `[inference]` in `mr-milchick.toml`:
 
 - `enabled`
+- `backend`
 - `model_path`
+- `model`
 - `timeout_ms`
 - `max_patch_bytes`
 - `context_tokens`
 - `trace`
 
-The full setup, CI shape, model repo pattern, smoke testing, and benchmark workflow live in [docs/local-llm.md](docs/local-llm.md).
+The local setup, smoke testing, and benchmark workflow live in [docs/local-llm.md](docs/local-llm.md). For Claude Code configuration, token handling, and the pinned CI job, see [docs/claude-code-llm.md](docs/claude-code-llm.md).
 
 ## Publishing
 

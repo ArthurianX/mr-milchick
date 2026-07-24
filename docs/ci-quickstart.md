@@ -44,7 +44,7 @@ search_root = "${CI_PROJECT_DIR}"
 ```
 
 Put that in `mr-milchick.toml` at the repo root. If you need another path, set `MR_MILCHICK_CONFIG_PATH`.
-That `[inference]` section only affects `explain`; `observe` and `refine` never invoke local inference.
+That `[inference]` section only affects `explain`; `observe` and `refine` never invoke inference. To use Claude Code instead of local GGUF inference, set `backend = "claude-code"`, provide a `model`, build with `llm-claude-code`, and supply the masked `CLAUDE_CODE_OAUTH_TOKEN` only to trusted same-project merge requests.
 
 ## Example GitLab Pipeline
 

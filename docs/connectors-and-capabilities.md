@@ -71,6 +71,12 @@ GitLab plus advisory local review:
 cargo build --release --no-default-features --features "gitlab slack-app llm-local"
 ```
 
+GitLab plus Claude Code advisory review:
+
+```bash
+cargo build --release --no-default-features --features "gitlab slack-app llm-claude-code"
+```
+
 GitHub plus Slack app:
 
 ```bash
@@ -104,7 +110,7 @@ The runtime enforces these invariants:
 
 - exactly one platform connector must be compiled in
 - notification sinks are optional fanout only
-- advisory local review is optional and only used by `explain`
+- advisory inference is optional and only used by `explain`
 - runtime `[platform].kind` must match the compiled platform connector when it is set explicitly
 - runtime notification sections can only be enabled for sinks that were compiled in
 
@@ -121,30 +127,31 @@ Use the version command in CI logs:
 Default build output shape:
 
 ```text
-mr-milchick 4.0.1 (<git-sha> <build-date>)
+mr-milchick 5.1.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
-- advisory local review: not compiled
+- advisory inference: not compiled
 - notification sinks: slack-app
 ```
 
 GitHub-only output shape:
 
 ```text
-mr-milchick 4.0.1 (<git-sha> <build-date>)
+mr-milchick 5.1.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: github
-- advisory local review: not compiled
+- advisory inference: not compiled
 - notification sinks: none
 ```
 
-GitLab plus Slack plus local review output shape:
+GitLab plus Slack plus both advisory backends output shape:
 
 ```text
-mr-milchick 4.0.1 (<git-sha> <build-date>)
+mr-milchick 5.1.0 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
-- advisory local review: llama.cpp
+- advisory inference: local llama.cpp
+- advisory inference: Claude Code CLI
 - notification sinks: slack-app
 ```
 

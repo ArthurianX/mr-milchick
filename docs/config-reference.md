@@ -123,6 +123,9 @@ enabled = true
 
 [inference]
 enabled = ${MR_MILCHICK_LLM_ENABLED:-false}
+# Omit backend for local GGUF inference.
+# backend = "claude-code"
+# model = "fully-versioned-model-name"
 model_path = "${CI_PROJECT_DIR}/models/review.gguf"
 timeout_ms = 15000
 max_patch_bytes = 32768
