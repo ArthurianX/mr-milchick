@@ -10,7 +10,7 @@ use tokio::time::timeout;
 
 use super::{
     ReviewInferenceEngine, ReviewInferenceError, ReviewInferenceOutcome, ReviewPromptStyle,
-    ReviewSnapshot, build_review_prompt, parse_local_inference_output,
+    ReviewSnapshot, build_review_prompt,
 };
 
 #[derive(Debug, Deserialize)]
@@ -154,9 +154,9 @@ impl ClaudeCodeReviewInferenceEngine {
             })?,
             None => envelope.result,
         };
-        Ok(ReviewInferenceOutcome::ready(parse_local_inference_output(
-            &raw,
-        )?))
+        Ok(ReviewInferenceOutcome::ready(
+            super::output::parse_review_output(&raw)?,
+        ))
     }
 
     async fn check_version(&self) -> Result<(), ReviewInferenceError> {

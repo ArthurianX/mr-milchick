@@ -7,6 +7,13 @@ use serde::Deserialize;
 use std::time::Instant;
 use tokio::time::timeout;
 
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+mod output;
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+mod prompt;
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+use prompt::{ReviewPromptStyle, build_review_prompt};
+
 #[cfg(feature = "llm-claude-code")]
 mod claude_code;
 #[cfg(feature = "llm-claude-code")]
@@ -414,29 +421,6 @@ struct LlmReviewRecommendation {
 enum LocalPromptStyle {
     Primary,
     StrictRetry,
-}
-
-#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReviewPromptStyle {
-    Primary,
-    StrictRetry,
-}
-
-#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
-fn build_review_prompt(
-    snapshot: &ReviewSnapshot,
-    max_patch_bytes: usize,
-    style: ReviewPromptStyle,
-) -> String {
-    build_local_inference_prompt(
-        snapshot,
-        max_patch_bytes,
-        match style {
-            ReviewPromptStyle::Primary => LocalPromptStyle::Primary,
-            ReviewPromptStyle::StrictRetry => LocalPromptStyle::StrictRetry,
-        },
-    )
 }
 
 #[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
