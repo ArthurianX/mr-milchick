@@ -10,7 +10,7 @@ Implemented now:
 
 - platform connectors: GitLab, GitHub
 - notification sink: Slack app
-- advisory local review backend: llama.cpp via `llm-local`
+- advisory review backends: llama.cpp via `llm-local`, or Claude Code via `llm-claude-code`
 - commands: `observe`, `refine`, `explain`, `version`
 
 ## Command Roles
@@ -34,9 +34,10 @@ slack-app = []
 teams = []
 discord = []
 llm-local = ["dep:llama-cpp-2"]
+llm-claude-code = []
 ```
 
-Only `gitlab`, `github`, `slack-app`, and `llm-local` correspond to implemented code paths today.
+Only `gitlab`, `github`, `slack-app`, `llm-local`, and `llm-claude-code` correspond to implemented code paths today.
 
 ## Common Build Shapes
 

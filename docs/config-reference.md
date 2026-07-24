@@ -326,11 +326,13 @@ Auto-discovery order:
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `enabled` | No | `false` | Enables advisory local review for `explain`. |
-| `model_path` | No | none | Required when `enabled = true`. |
-| `timeout_ms` | No | `15000` | Must be greater than zero. |
+| `enabled` | No | `false` | Enables advisory review for `explain`. |
+| `backend` | No | `local` | `local` or `claude-code`. |
+| `model_path` | Local | none | Required for enabled local inference. |
+| `model` | Claude Code | none | Required for enabled Claude Code inference. |
+| `timeout_ms` | No | backend-specific | `15000` local; `120000` Claude Code. |
 | `max_patch_bytes` | No | `32768` | Must be greater than zero. |
-| `context_tokens` | No | `4096` | Must be greater than zero. |
+| `context_tokens` | Local | `4096` | Rejected for Claude Code. |
 | `trace` | No | `false` | Prints detailed inference output during `explain`. |
 
 `observe` and `refine` never invoke inference, even when this section is enabled.

@@ -114,6 +114,8 @@ milchick:explain:
 
 `explain` reloads Milchick's managed governance summary comment from the review platform and skips itself when the latest `refine` run reported no governance effect and no blocking outcome.
 
+For remote advisory review, set `backend = "claude-code"` and a non-empty `model` in the root config, build with `llm-claude-code`, and provide masked `CLAUDE_CODE_OAUTH_TOKEN` only to trusted same-project merge requests. See [the pinned GitLab example](../examples/gitlab/claude-code-explain.gitlab-ci.yml) and [Claude Code advisory review](claude-code-llm.md).
+
 ## Required Secrets
 
 - `GITLAB_TOKEN` for GitLab live reads and writes

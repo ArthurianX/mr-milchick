@@ -43,6 +43,7 @@ const REVIEW_JSON_SCHEMA: &str = r#"{
   },
   "required":["summary","recommendations"]
 }"#;
+const MIN_CLAUDE_CODE_VERSION: [u64; 3] = [2, 1, 218];
 
 pub struct ClaudeCodeReviewInferenceEngine {
     model: String,
@@ -152,6 +153,47 @@ impl ClaudeCodeReviewInferenceEngine {
             &raw,
         )?))
     }
+
+    async fn check_version(&self) -> Result<(), ReviewInferenceError> {
+        let mut command = Command::new("claude");
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        command.arg("--version");
+        let output = timeout(self.timeout, command.output())
+            .await
+            .map_err(|_| ReviewInferenceError::TimedOut(self.timeout))?
+            .map_err(|error| {
+                ReviewInferenceError::Configuration(format!(
+                    "Claude Code executable is unavailable: {error}"
+                ))
+            })?;
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let parts = raw
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| {
+                ReviewInferenceError::Configuration(
+                    "Claude Code returned an invalid version".to_string(),
+                )
+            })?;
+        let [major, minor, patch] = parts.as_slice() else {
+            return Err(ReviewInferenceError::Configuration(
+                "Claude Code returned an invalid version".to_string(),
+            ));
+        };
+        if [*major, *minor, *patch] < MIN_CLAUDE_CODE_VERSION {
+            return Err(ReviewInferenceError::Configuration(
+                "Claude Code 2.1.218 or newer is required".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -168,6 +210,9 @@ impl ReviewInferenceEngine for ClaudeCodeReviewInferenceEngine {
             return Ok(ReviewInferenceOutcome::unavailable(
                 "Claude Code inference requires CLAUDE_CODE_OAUTH_TOKEN",
             ));
+        }
+        if let Err(error) = self.check_version().await {
+            return Ok(ReviewInferenceOutcome::unavailable(error.to_string()));
         }
         let primary = self
             .run_prompt(build_review_prompt(

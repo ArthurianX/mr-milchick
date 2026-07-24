@@ -1032,11 +1032,12 @@ fn print_compiled_capabilities() {
         "- platform connector: {}",
         crate::config::compiled_platform_kind().as_str()
     );
-    if crate::config::llm_backend_compiled() {
-        println!("- advisory local review: llama.cpp");
-    } else {
-        println!("- advisory local review: not compiled");
-    }
+    #[cfg(feature = "llm-local")]
+    println!("- advisory inference: local llama.cpp");
+    #[cfg(feature = "llm-claude-code")]
+    println!("- advisory inference: Claude Code CLI");
+    #[cfg(not(any(feature = "llm-local", feature = "llm-claude-code")))]
+    println!("- advisory inference: not compiled");
     let sinks = compiled_notification_sinks()
         .into_iter()
         .map(|sink| sink.as_str())
@@ -2257,6 +2258,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "llm-claude-code"))]
     fn build_inference_connector_reports_uncompiled_claude_backend_as_unavailable() {
         let mut config = sample_resolved_config();
         config.inference.backend = ResolvedInferenceBackend::ClaudeCode {

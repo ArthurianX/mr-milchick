@@ -16,6 +16,7 @@ This directory holds the detailed docs that used to live in the root README. Sta
 - [Connectors and capabilities](connectors-and-capabilities.md): what is implemented today, how compiled features map to runtime behavior, and how to verify the artifact you built.
 - [Architecture](architecture.md): crate boundaries, execution flow, the split between fast governance and slower advisory explain, and managed-comment ownership.
 - [Local LLM review](local-llm.md): optional GGUF-backed advisory review, the explain gate, environment variables, CI model distribution, smoke tests, and repeatable benchmarks.
+- [Claude Code advisory review](claude-code-llm.md): snapshot-only remote review, OAuth token handling, and trusted CI setup.
 
 ## Output And Tone
 
