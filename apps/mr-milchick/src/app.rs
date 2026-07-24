@@ -57,7 +57,8 @@ use crate::runtime::{ExecutionMode, ExecutionStrategy, RuntimeWiring};
 
 use crate::cli::{Cli, FixtureNotificationVariantArg};
 use crate::config::{
-    ResolvedConfig, compiled_notification_sinks, load_resolved_config, resolve_codeowners_path,
+    ResolvedConfig, ResolvedInferenceBackend, compiled_notification_sinks, load_resolved_config,
+    resolve_codeowners_path,
 };
 use crate::context::builder::build_ci_context;
 use crate::fixture::load_review_fixture;
@@ -924,15 +925,14 @@ fn build_inference_connector(
     let timeout = Duration::from_millis(config.inference.timeout_ms);
 
     info!(
-        llm_enabled = config.inference.enabled,
-        llm_model_path = config.inference.model_path.as_deref().unwrap_or(""),
+        llm_enabled = config.inference.is_enabled(),
+        llm_backend = ?config.inference.kind(),
         llm_timeout_ms = config.inference.timeout_ms,
         llm_max_patch_bytes = config.inference.max_patch_bytes,
-        llm_context_tokens = config.inference.context_tokens,
         "resolved advisory local review configuration"
     );
 
-    if !config.inference.enabled {
+    if !config.inference.is_enabled() {
         info!("advisory local review is disabled by configuration");
         return Ok((
             Box::new(ReviewInferenceConnectorAdapter {
@@ -945,11 +945,16 @@ fn build_inference_connector(
         ));
     }
 
-    let model_path = config
-        .inference
-        .model_path
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("LLM review recommendations require a model path"))?;
+    let ResolvedInferenceBackend::Local {
+        model_path,
+        context_tokens,
+    } = &config.inference.backend
+    else {
+        anyhow::bail!("Claude Code inference wiring is not available yet");
+    };
+
+    #[cfg(not(feature = "llm-local"))]
+    let _ = context_tokens;
 
     #[cfg(feature = "llm-local")]
     {
@@ -957,9 +962,9 @@ fn build_inference_connector(
         return Ok((
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(LocalLlamaReviewInferenceEngine::new(
-                    model_path,
+                    model_path.clone(),
                     config.inference.max_patch_bytes,
-                    config.inference.context_tokens,
+                    *context_tokens,
                     timeout,
                 )?),
                 timeout,
@@ -1910,11 +1915,11 @@ mod tests {
                 path: None,
             },
             inference: InferenceConfig {
-                enabled: false,
-                model_path: None,
+                backend: ResolvedInferenceBackend::Disabled {
+                    selected: crate::config::InferenceBackendKind::Local,
+                },
                 timeout_ms: 15_000,
                 max_patch_bytes: 32 * 1024,
-                context_tokens: 4_096,
                 trace: false,
             },
             notifications: NotificationsConfig {
@@ -2217,15 +2222,18 @@ mod tests {
     }
 
     #[test]
-    fn build_inference_connector_requires_model_path_when_enabled() {
+    fn build_inference_connector_rejects_unwired_claude_backend() {
         let mut config = sample_resolved_config();
-        config.inference.enabled = true;
+        config.inference.backend = ResolvedInferenceBackend::ClaudeCode {
+            model: "claude-versioned-model".to_string(),
+            oauth_token: None,
+        };
 
         let error = match build_inference_connector(&config) {
-            Ok(_) => panic!("missing model path should fail"),
+            Ok(_) => panic!("unwired Claude Code backend should fail"),
             Err(error) => error,
         };
-        assert!(error.to_string().contains("require a model path"));
+        assert!(error.to_string().contains("not available yet"));
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub const CONFIG_PATH_ENV: &str = "MR_MILCHICK_CONFIG_PATH";
 pub const GITLAB_TOKEN_ENV: &str = "GITLAB_TOKEN";
 pub const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
 pub const SLACK_BOT_TOKEN_ENV: &str = "MR_MILCHICK_SLACK_BOT_TOKEN";
+pub const CLAUDE_CODE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 pub const REMOVED_APP_CONFIG_ENV_VARS: &[&str] = &[
     "MR_MILCHICK_REVIEWERS",
@@ -35,6 +36,7 @@ pub struct SecretEnv {
     pub gitlab_token: Option<String>,
     pub github_token: Option<String>,
     pub slack_bot_token: Option<String>,
+    pub claude_code_oauth_token: Option<String>,
 }
 
 pub fn load_config_path() -> Option<String> {
@@ -49,6 +51,7 @@ pub fn load_secret_env() -> SecretEnv {
         gitlab_token: read_optional_env(GITLAB_TOKEN_ENV),
         github_token: read_optional_env(GITHUB_TOKEN_ENV),
         slack_bot_token: read_optional_env(SLACK_BOT_TOKEN_ENV),
+        claude_code_oauth_token: read_optional_env(CLAUDE_CODE_OAUTH_TOKEN_ENV),
     }
 }
 
