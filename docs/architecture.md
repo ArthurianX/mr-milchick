@@ -94,6 +94,6 @@ This keeps merge logic out of `app.rs` and makes new features land in one place 
 
 - platform connectors: GitLab, GitHub
 - notification sink: Slack app
-- advisory inference backend: local llama.cpp when compiled with `llm-local`
+- advisory inference backends: local llama.cpp with `llm-local`, or the snapshot-only Claude Code CLI with `llm-claude-code`
 
 For config details, see [config-reference.md](config-reference.md). For build capability mapping, see [connectors-and-capabilities.md](connectors-and-capabilities.md).
