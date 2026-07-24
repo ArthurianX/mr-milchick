@@ -33,6 +33,8 @@ use crate::core::domain::reviewer_routing::{
     ReviewerRoutingConfig, prepend_mandatory_reviewers, recommend_reviewers,
 };
 use crate::core::domain::snapshot_analysis::summarize_areas;
+#[cfg(feature = "llm-claude-code")]
+use crate::core::inference::ClaudeCodeReviewInferenceEngine;
 #[cfg(feature = "llm-local")]
 use crate::core::inference::LocalLlamaReviewInferenceEngine;
 use crate::core::inference::{
@@ -929,11 +931,11 @@ fn build_inference_connector(
         llm_backend = ?config.inference.kind(),
         llm_timeout_ms = config.inference.timeout_ms,
         llm_max_patch_bytes = config.inference.max_patch_bytes,
-        "resolved advisory local review configuration"
+        "resolved advisory review configuration"
     );
 
     if !config.inference.is_enabled() {
-        info!("advisory local review is disabled by configuration");
+        info!("advisory review is disabled by configuration");
         return Ok((
             Box::new(ReviewInferenceConnectorAdapter {
                 engine: Box::new(NoopReviewInferenceEngine::disabled(
@@ -945,12 +947,45 @@ fn build_inference_connector(
         ));
     }
 
+    if let ResolvedInferenceBackend::ClaudeCode { model, oauth_token } = &config.inference.backend {
+        #[cfg(not(feature = "llm-claude-code"))]
+        let _ = (model, oauth_token);
+
+        #[cfg(feature = "llm-claude-code")]
+        {
+            return Ok((
+                Box::new(ReviewInferenceConnectorAdapter {
+                    engine: Box::new(ClaudeCodeReviewInferenceEngine::new(
+                        model.clone(),
+                        oauth_token.clone(),
+                        config.inference.max_patch_bytes,
+                        timeout,
+                    )),
+                    timeout,
+                }),
+                true,
+            ));
+        }
+        #[cfg(not(feature = "llm-claude-code"))]
+        {
+            return Ok((
+                Box::new(ReviewInferenceConnectorAdapter {
+                    engine: Box::new(NoopReviewInferenceEngine::unavailable(
+                        "Claude Code backend support is not compiled into this binary",
+                    )),
+                    timeout,
+                }),
+                false,
+            ));
+        }
+    }
+
     let ResolvedInferenceBackend::Local {
         model_path,
         context_tokens,
     } = &config.inference.backend
     else {
-        anyhow::bail!("Claude Code inference wiring is not available yet");
+        unreachable!("enabled inference must select a concrete backend");
     };
 
     #[cfg(not(feature = "llm-local"))]
@@ -2222,18 +2257,16 @@ mod tests {
     }
 
     #[test]
-    fn build_inference_connector_rejects_unwired_claude_backend() {
+    fn build_inference_connector_reports_uncompiled_claude_backend_as_unavailable() {
         let mut config = sample_resolved_config();
         config.inference.backend = ResolvedInferenceBackend::ClaudeCode {
             model: "claude-versioned-model".to_string(),
             oauth_token: None,
         };
 
-        let error = match build_inference_connector(&config) {
-            Ok(_) => panic!("unwired Claude Code backend should fail"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("not available yet"));
+        let (_, available) =
+            build_inference_connector(&config).expect("uncompiled backend should remain advisory");
+        assert!(!available);
     }
 
     #[test]
