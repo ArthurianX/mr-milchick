@@ -18,7 +18,8 @@ const DEFAULT_MAX_REVIEWERS: usize = 2;
 const DEFAULT_GITLAB_BASE_URL: &str = "https://gitlab.com/api/v4";
 const DEFAULT_GITHUB_BASE_URL: &str = "https://api.github.com";
 const DEFAULT_SLACK_BASE_URL: &str = "https://slack.com/api";
-const DEFAULT_LLM_TIMEOUT_MS: u64 = 15_000;
+const DEFAULT_LOCAL_LLM_TIMEOUT_MS: u64 = 15_000;
+const DEFAULT_CLAUDE_CODE_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_LLM_MAX_PATCH_BYTES: usize = 32 * 1024;
 const DEFAULT_LLM_CONTEXT_TOKENS: usize = 4_096;
 const DEFAULT_DRAFT_LABEL: &str = "status::draft";
@@ -104,12 +105,41 @@ pub struct CodeownersConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferenceConfig {
-    pub enabled: bool,
-    pub model_path: Option<String>,
+    pub backend: ResolvedInferenceBackend,
     pub timeout_ms: u64,
     pub max_patch_bytes: usize,
-    pub context_tokens: usize,
     pub trace: bool,
+}
+
+pub use super::schema::InferenceBackendKind;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedInferenceBackend {
+    Disabled {
+        selected: InferenceBackendKind,
+    },
+    Local {
+        model_path: String,
+        context_tokens: usize,
+    },
+    ClaudeCode {
+        model: String,
+        oauth_token: Option<String>,
+    },
+}
+
+impl InferenceConfig {
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self.backend, ResolvedInferenceBackend::Disabled { .. })
+    }
+
+    pub fn kind(&self) -> InferenceBackendKind {
+        match self.backend {
+            ResolvedInferenceBackend::Disabled { selected } => selected,
+            ResolvedInferenceBackend::Local { .. } => InferenceBackendKind::Local,
+            ResolvedInferenceBackend::ClaudeCode { .. } => InferenceBackendKind::ClaudeCode,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +185,7 @@ pub fn resolve_config(file: schema::ConfigFile, secrets: SecretEnv) -> Result<Re
         execution: resolve_execution_config(&file.execution),
         reviewers: resolve_reviewer_config(&file.reviewers, &file.areas)?,
         codeowners: resolve_codeowners_config(&file.codeowners),
-        inference: resolve_inference_config(&file.inference)?,
+        inference: resolve_inference_config(&file.inference, &secrets)?,
         notifications,
         templates: file.templates,
     })
@@ -631,25 +661,68 @@ fn resolve_codeowners_config(file: &schema::CodeownersConfig) -> CodeownersConfi
     }
 }
 
-fn resolve_inference_config(file: &schema::InferenceConfig) -> Result<InferenceConfig> {
+fn resolve_inference_config(
+    file: &schema::InferenceConfig,
+    secrets: &SecretEnv,
+) -> Result<InferenceConfig> {
+    let enabled = file.enabled.unwrap_or(false);
+    let model_path = sanitize_optional(file.model_path.clone());
+    let model = sanitize_optional(file.model.clone());
+
+    match file.backend {
+        schema::InferenceBackendKind::Local if model.is_some() => {
+            bail!("'inference.model' is only valid for backend 'claude-code'");
+        }
+        schema::InferenceBackendKind::ClaudeCode if model_path.is_some() => {
+            bail!("'inference.model_path' is only valid for backend 'local'");
+        }
+        schema::InferenceBackendKind::ClaudeCode if file.context_tokens.is_some() => {
+            bail!("'inference.context_tokens' is only valid for backend 'local'");
+        }
+        _ => {}
+    }
+
+    let default_timeout = match file.backend {
+        schema::InferenceBackendKind::Local => DEFAULT_LOCAL_LLM_TIMEOUT_MS,
+        schema::InferenceBackendKind::ClaudeCode => DEFAULT_CLAUDE_CODE_TIMEOUT_MS,
+    };
+    let timeout_ms =
+        resolve_positive_u64(file.timeout_ms, default_timeout, "inference.timeout_ms")?;
+    let max_patch_bytes = resolve_positive_usize(
+        file.max_patch_bytes,
+        DEFAULT_LLM_MAX_PATCH_BYTES,
+        "inference.max_patch_bytes",
+    )?;
+
+    let backend = if !enabled {
+        ResolvedInferenceBackend::Disabled {
+            selected: file.backend,
+        }
+    } else {
+        match file.backend {
+            schema::InferenceBackendKind::Local => ResolvedInferenceBackend::Local {
+                model_path: model_path.ok_or_else(|| {
+                    anyhow!("backend 'local' requires non-empty 'inference.model_path'")
+                })?,
+                context_tokens: resolve_positive_usize(
+                    file.context_tokens,
+                    DEFAULT_LLM_CONTEXT_TOKENS,
+                    "inference.context_tokens",
+                )?,
+            },
+            schema::InferenceBackendKind::ClaudeCode => ResolvedInferenceBackend::ClaudeCode {
+                model: model.ok_or_else(|| {
+                    anyhow!("backend 'claude-code' requires non-empty 'inference.model'")
+                })?,
+                oauth_token: secrets.claude_code_oauth_token.clone(),
+            },
+        }
+    };
+
     Ok(InferenceConfig {
-        enabled: file.enabled.unwrap_or(false),
-        model_path: sanitize_optional(file.model_path.clone()),
-        timeout_ms: resolve_positive_u64(
-            file.timeout_ms,
-            DEFAULT_LLM_TIMEOUT_MS,
-            "inference.timeout_ms",
-        )?,
-        max_patch_bytes: resolve_positive_usize(
-            file.max_patch_bytes,
-            DEFAULT_LLM_MAX_PATCH_BYTES,
-            "inference.max_patch_bytes",
-        )?,
-        context_tokens: resolve_positive_usize(
-            file.context_tokens,
-            DEFAULT_LLM_CONTEXT_TOKENS,
-            "inference.context_tokens",
-        )?,
+        backend,
+        timeout_ms,
+        max_patch_bytes,
         trace: file.trace.unwrap_or(false),
     })
 }
@@ -911,6 +984,135 @@ mod tests {
     }
 
     #[test]
+    fn inference_without_backend_remains_local() {
+        let file = toml::from_str::<schema::ConfigFile>(
+            r#"
+[[areas.definitions]]
+key = "core"
+paths = ["src/**"]
+
+[inference]
+enabled = true
+model_path = "/models/review.gguf"
+"#,
+        )
+        .expect("config should parse");
+
+        let config = resolve_config(file, SecretEnv::default()).expect("config should resolve");
+
+        assert_eq!(config.inference.kind(), InferenceBackendKind::Local);
+        assert_eq!(config.inference.timeout_ms, 15_000);
+        assert!(matches!(
+            config.inference.backend,
+            ResolvedInferenceBackend::Local {
+                ref model_path,
+                context_tokens: 4_096,
+            } if model_path == "/models/review.gguf"
+        ));
+    }
+
+    #[test]
+    fn claude_code_uses_remote_timeout_and_pipeline_token() {
+        let file = toml::from_str::<schema::ConfigFile>(
+            r#"
+[[areas.definitions]]
+key = "core"
+paths = ["src/**"]
+
+[inference]
+enabled = true
+backend = "claude-code"
+model = "claude-versioned-model"
+"#,
+        )
+        .expect("config should parse");
+
+        let config = resolve_config(
+            file,
+            SecretEnv {
+                claude_code_oauth_token: Some("oauth-secret".to_string()),
+                ..SecretEnv::default()
+            },
+        )
+        .expect("config should resolve");
+
+        assert_eq!(config.inference.kind(), InferenceBackendKind::ClaudeCode);
+        assert_eq!(config.inference.timeout_ms, 120_000);
+        assert!(matches!(
+            config.inference.backend,
+            ResolvedInferenceBackend::ClaudeCode {
+                ref model,
+                oauth_token: Some(ref token),
+            } if model == "claude-versioned-model" && token == "oauth-secret"
+        ));
+    }
+
+    #[test]
+    fn inference_rejects_backend_specific_field_mismatches() {
+        for (raw, expected) in [
+            (
+                r#"
+[[areas.definitions]]
+key = "core"
+paths = ["src/**"]
+
+[inference]
+enabled = true
+backend = "local"
+model_path = "/m.gguf"
+model = "sonnet"
+"#,
+                "'inference.model' is only valid for backend 'claude-code'",
+            ),
+            (
+                r#"
+[[areas.definitions]]
+key = "core"
+paths = ["src/**"]
+
+[inference]
+enabled = true
+backend = "claude-code"
+model = "sonnet"
+model_path = "/m.gguf"
+"#,
+                "'inference.model_path' is only valid for backend 'local'",
+            ),
+            (
+                r#"
+[[areas.definitions]]
+key = "core"
+paths = ["src/**"]
+
+[inference]
+enabled = true
+backend = "claude-code"
+model = "sonnet"
+context_tokens = 4096
+"#,
+                "'inference.context_tokens' is only valid for backend 'local'",
+            ),
+            (
+                r#"
+[[areas.definitions]]
+key = "core"
+paths = ["src/**"]
+
+[inference]
+enabled = true
+backend = "claude-code"
+model = "   "
+"#,
+                "backend 'claude-code' requires non-empty 'inference.model'",
+            ),
+        ] {
+            let file = toml::from_str::<schema::ConfigFile>(raw).expect("config should parse");
+            let error = resolve_config(file, SecretEnv::default()).expect_err("config should fail");
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+    }
+
+    #[test]
     fn parses_full_config_file_shape() {
         let raw = r###"
 [platform]
@@ -1007,6 +1209,7 @@ first_root = "hello"
                 gitlab_token: Some("gitlab-token".to_string()),
                 github_token: None,
                 slack_bot_token: Some("xoxb-token".to_string()),
+                ..SecretEnv::default()
             },
         )
         .expect("resolved config should load");
@@ -1047,7 +1250,7 @@ first_root = "hello"
             config.codeowners.path.as_deref(),
             Some(".gitlab/CODEOWNERS")
         );
-        assert!(config.inference.enabled);
+        assert!(config.inference.is_enabled());
         assert!(config.inference.trace);
         assert_eq!(
             config.notifications.slack_app.channel.as_deref(),
@@ -1098,6 +1301,7 @@ channel = "C123"
                 gitlab_token: Some("gitlab-token".to_string()),
                 github_token: None,
                 slack_bot_token: Some("xoxb-token".to_string()),
+                ..SecretEnv::default()
             },
         )
         .expect("resolved config should load");

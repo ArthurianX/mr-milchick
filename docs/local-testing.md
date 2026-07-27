@@ -144,7 +144,7 @@ That is useful for previewing governance execution, but because `dry_run` does n
 
 ## Live Refine And Explain
 
-If you want to test the full governance-plus-advisory flow against a live review, first run `observe` successfully, then build with `llm-local`, enable `[inference]`, turn `dry_run` off, run `refine` once, then run `explain`:
+If you want to test the full governance-plus-advisory flow against a live review, first run `observe` successfully, enable `[inference]`, turn `dry_run` off, run `refine` once, then run `explain`. Build with `llm-local` for a GGUF model or `llm-claude-code` for Claude Code; see [Claude Code advisory review](claude-code-llm.md) for its token and trusted-pipeline requirements.
 
 ```toml
 [execution]

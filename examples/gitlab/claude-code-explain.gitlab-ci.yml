@@ -1,0 +1,38 @@
+# Configure the root mr-milchick.toml with backend = "claude-code" and a model.
+# Store CLAUDE_CODE_OAUTH_TOKEN as a masked CI variable. Do not expose it to
+# fork or untrusted pipelines.
+stages: [build, review]
+
+variables:
+  CLAUDE_CODE_VERSION: "2.1.218"
+
+build:milchick:
+  stage: build
+  image: rust:1.86
+  script:
+    - cargo build --release --locked --no-default-features --features "gitlab slack-app llm-claude-code"
+    - mkdir -p dist
+    - cp target/release/mr-milchick dist/
+  artifacts:
+    paths: [dist/mr-milchick]
+
+milchick:refine:
+  stage: review
+  image: debian:bookworm-slim
+  needs: [build:milchick]
+  script:
+    - ./dist/mr-milchick refine
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+milchick:explain:
+  stage: review
+  image: node:22-bookworm-slim
+  needs: [build:milchick, milchick:refine]
+  before_script:
+    - npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+    - claude --version
+  script:
+    - ./dist/mr-milchick explain
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID && $CLAUDE_CODE_OAUTH_TOKEN'

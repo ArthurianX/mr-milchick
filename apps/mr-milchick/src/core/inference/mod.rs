@@ -1,15 +1,27 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 use serde::Deserialize;
 #[cfg(feature = "llm-local")]
 use std::time::Instant;
 use tokio::time::timeout;
+
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+mod output;
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+mod prompt;
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+use prompt::{ReviewPromptStyle, build_review_prompt};
+
+#[cfg(feature = "llm-claude-code")]
+mod claude_code;
+#[cfg(feature = "llm-claude-code")]
+pub use claude_code::ClaudeCodeReviewInferenceEngine;
 #[cfg(feature = "llm-local")]
 use tracing::{debug, info, warn};
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 use crate::core::model::ChangeType;
 use crate::core::model::ReviewSnapshot;
 
@@ -50,7 +62,7 @@ const LOCAL_BATCH_CAPACITY: usize = 512;
 const LOCAL_MAX_GENERATION_TOKENS: usize = 384;
 #[cfg(feature = "llm-local")]
 const LOCAL_QWEN_SAMPLER_SEED: u32 = 23_042;
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 const LOCAL_MAX_RECOMMENDATIONS: usize = 4;
 
 #[cfg(feature = "llm-local")]
@@ -387,7 +399,7 @@ fn should_retry_local_inference(err: &ReviewInferenceError) -> bool {
     )
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 #[derive(Debug, Deserialize)]
 struct LlmReviewResponse {
     #[serde(default)]
@@ -396,21 +408,22 @@ struct LlmReviewResponse {
     recommendations: Vec<LlmReviewRecommendation>,
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 #[derive(Debug, Deserialize)]
 struct LlmReviewRecommendation {
     category: String,
     message: String,
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum LocalPromptStyle {
     Primary,
     StrictRetry,
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn build_local_inference_prompt(
     snapshot: &ReviewSnapshot,
     max_patch_bytes: usize,
@@ -556,7 +569,7 @@ fn build_local_inference_prompt(
     prompt
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn truncate_utf8(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
         return input.to_string();
@@ -570,7 +583,7 @@ fn truncate_utf8(input: &str, max_bytes: usize) -> String {
     input[..end].to_string()
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn format_change_type(change_type: ChangeType) -> &'static str {
     match change_type {
         ChangeType::Added => "Added",
@@ -581,7 +594,7 @@ fn format_change_type(change_type: ChangeType) -> &'static str {
     }
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn infer_review_cues(snapshot: &ReviewSnapshot) -> Vec<String> {
     let mut cues = Vec::new();
 
@@ -659,7 +672,7 @@ fn infer_review_cues(snapshot: &ReviewSnapshot) -> Vec<String> {
     cues
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn looks_like_test_path(path: &str) -> bool {
     let normalized = path.to_ascii_lowercase();
     normalized.contains("/test")
@@ -674,7 +687,7 @@ fn looks_like_test_path(path: &str) -> bool {
         || normalized.ends_with(".spec.jsx")
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn contains_any_ascii_case_insensitive(haystack: &str, needles: &[&str]) -> bool {
     let normalized = haystack
         .chars()
@@ -685,7 +698,7 @@ fn contains_any_ascii_case_insensitive(haystack: &str, needles: &[&str]) -> bool
     needles.iter().any(|needle| normalized.contains(needle))
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn parse_local_inference_output(raw: &str) -> Result<ReviewInsights, ReviewInferenceError> {
     let json_payloads = extract_json_objects(raw);
     if json_payloads.is_empty() {
@@ -709,7 +722,8 @@ fn parse_local_inference_output(raw: &str) -> Result<ReviewInsights, ReviewInfer
     Ok(llm_response_to_review_insights(response))
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
+#[allow(dead_code)]
 fn first_non_empty_review_response(raw: &str) -> Option<ReviewInsights> {
     extract_json_objects(raw)
         .into_iter()
@@ -718,7 +732,7 @@ fn first_non_empty_review_response(raw: &str) -> Option<ReviewInsights> {
         .find(|insights| !insights.is_empty())
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn preview_inference_output(raw: &str) -> String {
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     let preview = truncate_utf8(&collapsed, 240);
@@ -729,7 +743,7 @@ fn preview_inference_output(raw: &str) -> String {
     }
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn extract_json_objects(raw: &str) -> Vec<&str> {
     let mut objects = Vec::new();
     let mut start_index = None;
@@ -775,7 +789,7 @@ fn extract_json_objects(raw: &str) -> Vec<&str> {
     objects
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 #[cfg(test)]
 fn contains_parseable_review_response(raw: &str) -> bool {
     extract_json_objects(raw)
@@ -783,7 +797,7 @@ fn contains_parseable_review_response(raw: &str) -> bool {
         .any(|payload| serde_json::from_str::<LlmReviewResponse>(payload).is_ok())
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn llm_response_to_review_insights(response: LlmReviewResponse) -> ReviewInsights {
     let summary = normalize_optional_text(response.summary);
     let recommendations = response
@@ -803,7 +817,7 @@ fn llm_response_to_review_insights(response: LlmReviewResponse) -> ReviewInsight
     }
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let normalized = value.trim();
@@ -820,7 +834,7 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
-#[cfg(any(feature = "llm-local", test))]
+#[cfg(any(feature = "llm-local", feature = "llm-claude-code", test))]
 fn parse_recommendation_category(raw: &str) -> Option<RecommendationCategory> {
     let normalized = raw
         .chars()
@@ -1398,6 +1412,30 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "llm-claude-code")]
+    #[tokio::test]
+    async fn claude_code_engine_without_token_is_unavailable() {
+        let engine = ClaudeCodeReviewInferenceEngine::new(
+            "claude-versioned-model",
+            None,
+            4_096,
+            Duration::from_secs(1),
+        );
+
+        let outcome = engine
+            .analyze(&sample_snapshot())
+            .await
+            .expect("missing token should remain advisory");
+
+        assert_eq!(outcome.status, ReviewInferenceStatus::Unavailable);
+        assert!(
+            outcome
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("CLAUDE_CODE_OAUTH_TOKEN"))
+        );
+    }
+
     #[test]
     fn prompt_builder_truncates_patch_budget_across_files() {
         let mut snapshot = sample_snapshot();
@@ -1416,6 +1454,16 @@ mod tests {
         assert!(prompt.contains("[patch truncated to fit configured patch budget]"));
         assert!(prompt.contains("Patch: [omitted after reaching configured patch budget]"));
         assert!(prompt.contains("Previous path: src/old.rs"));
+    }
+
+    #[test]
+    fn shared_prompt_builder_preserves_patch_budget_behavior() {
+        let snapshot = sample_snapshot();
+
+        let prompt = build_review_prompt(&snapshot, 8, ReviewPromptStyle::Primary);
+
+        assert!(prompt.contains("File: src/lib.rs [Modified]"));
+        assert!(prompt.contains("[patch truncated to fit configured patch budget]"));
     }
 
     #[test]

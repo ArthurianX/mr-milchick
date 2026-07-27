@@ -1,5 +1,7 @@
 # Local LLM Review
 
+This guide covers the local llama.cpp provider only. For subscription-backed remote review through the Claude Code CLI, see [Claude Code advisory review](claude-code-llm.md).
+
 Local advisory review is now configured from `mr-milchick.toml`.
 
 ## Runtime Config

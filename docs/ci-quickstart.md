@@ -44,7 +44,7 @@ search_root = "${CI_PROJECT_DIR}"
 ```
 
 Put that in `mr-milchick.toml` at the repo root. If you need another path, set `MR_MILCHICK_CONFIG_PATH`.
-That `[inference]` section only affects `explain`; `observe` and `refine` never invoke local inference.
+That `[inference]` section only affects `explain`; `observe` and `refine` never invoke inference. To use Claude Code instead of local GGUF inference, set `backend = "claude-code"`, provide a `model`, build with `llm-claude-code`, and supply the masked `CLAUDE_CODE_OAUTH_TOKEN` only to trusted same-project merge requests.
 
 ## Example GitLab Pipeline
 
@@ -113,6 +113,8 @@ milchick:explain:
 ```
 
 `explain` reloads Milchick's managed governance summary comment from the review platform and skips itself when the latest `refine` run reported no governance effect and no blocking outcome.
+
+For remote advisory review, set `backend = "claude-code"` and a non-empty `model` in the root config, build with `llm-claude-code`, and provide masked `CLAUDE_CODE_OAUTH_TOKEN` only to trusted same-project merge requests. See [the pinned GitLab example](../examples/gitlab/claude-code-explain.gitlab-ci.yml) and [Claude Code advisory review](claude-code-llm.md).
 
 ## Required Secrets
 

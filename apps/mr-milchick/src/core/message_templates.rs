@@ -1304,9 +1304,9 @@ fn format_recommendations_block(
     let mut lines = Vec::new();
     match style {
         RenderStyle::GitLab | RenderStyle::GitHub => {
-            lines.push("### Local review recommendations".to_string())
+            lines.push("### AI review recommendations".to_string())
         }
-        RenderStyle::SlackApp => lines.push("*Local review recommendations*".to_string()),
+        RenderStyle::SlackApp => lines.push("*AI review recommendations*".to_string()),
     }
 
     if let Some(summary) = &inference.summary {
@@ -1637,7 +1637,8 @@ mod tests {
         );
 
         assert!(rendered.contains("Mr. Milchick Advisory Explain"));
-        assert!(rendered.contains("Local review recommendations"));
+        assert!(rendered.contains("AI review recommendations"));
+        assert!(!rendered.contains("Local review recommendations"));
         assert!(rendered.contains("Check that first-time reviewer notifications"));
     }
 

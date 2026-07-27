@@ -202,26 +202,25 @@ notification_policy = "always"
 # path = ".gitlab/CODEOWNERS"
 
 [inference]
-# Local advisory inference is available only when the binary is compiled with
-# the `llm-local` feature. If configured without that feature, Milchick will
-# report that inference is configured but not compiled in.
+# Inference runs only during `explain`. Omit `backend` for backward-compatible
+# local llama.cpp inference, or select `backend = "claude-code"` explicitly.
+# enabled = false
 
-# Enable local advisory review suggestions.
-# enabled = ${MR_MILCHICK_LLM_ENABLED:-false}
-
-# Path to a local GGUF model file.
+# Local-only fields (requires the `llm-local` feature):
+# backend = "local"
 # model_path = "${CI_PROJECT_DIR}/models/review.gguf"
-
-# Timeout budget for the local inference pass, in milliseconds.
-# timeout_ms = 15000
-
-# Maximum total patch bytes included in the advisory prompt.
-# max_patch_bytes = 32768
-
-# Context window budget for the model runtime.
 # context_tokens = 4096
 
-# Emit detailed advisory inference diagnostics in command output.
+# Claude Code-only fields (requires `llm-claude-code`):
+# backend = "claude-code"
+# model = "fully-versioned-model-name"
+# `model` is required when enabled. Aliases are accepted, but a full versioned
+# identifier is recommended for reproducible CI behavior. The credential is
+# read only from CLAUDE_CODE_OAUTH_TOKEN; never put it in this TOML file.
+
+# Shared fields. Claude Code defaults to 120000 ms; local defaults to 15000 ms.
+# timeout_ms = 120000
+# max_patch_bytes = 32768
 # trace = false
 
 [notifications]

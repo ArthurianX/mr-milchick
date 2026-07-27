@@ -210,7 +210,11 @@ pub struct InferenceConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
+    pub backend: InferenceBackendKind,
+    #[serde(default)]
     pub model_path: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
     #[serde(default)]
@@ -219,6 +223,14 @@ pub struct InferenceConfig {
     pub context_tokens: Option<usize>,
     #[serde(default)]
     pub trace: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum InferenceBackendKind {
+    #[default]
+    Local,
+    ClaudeCode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
