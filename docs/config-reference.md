@@ -278,7 +278,7 @@ any = [
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `draft_label` | No | `status::draft` | Added by `observe` when the review is draft. |
+| `draft_label` | No | `status::draft` | Added by `observe` when the review is draft and removed when it is ready. |
 
 ### `[observe.risk]`
 
@@ -297,7 +297,7 @@ any = [
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `required` | No | `true` | When true, observe blocks non-draft reviews without meaningful description text. |
+| `required` | No | `true` | When true, observe blocks reviews without meaningful description text. |
 | `template_paths` | No | `[]` | Local MR/PR template paths to compare against when present. |
 | `ignore_branch_issue_key` | No | `true` | Ignores branch-derived issue keys such as `ABC-123` when judging meaningful text. |
 

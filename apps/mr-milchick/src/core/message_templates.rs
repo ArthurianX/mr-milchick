@@ -603,7 +603,9 @@ pub fn build_observe_template_context(
             ObserveStatus::Blocked => selector
                 .select(ToneCategory::PipelinePaused, ctx)
                 .to_string(),
-            ObserveStatus::Draft => "Draft review observed; refinement is deferred.".to_string(),
+            ObserveStatus::Draft => {
+                "Draft review observed; full governance is underway.".to_string()
+            }
         },
     }
 }
@@ -742,10 +744,12 @@ fn select_observe_template<'a>(
     blocked: &'a str,
     draft: &'a str,
 ) -> &'a str {
-    match context.observe_status.as_str() {
-        "blocked" => blocked,
-        "draft" => draft,
-        _ => default,
+    if context.observe_status == "blocked" {
+        blocked
+    } else if context.snapshot.is_draft {
+        draft
+    } else {
+        default
     }
 }
 
@@ -1686,6 +1690,27 @@ mod tests {
 
         assert!(body.contains("Risk: high\n"));
         assert!(!body.contains(":alert:"));
+    }
+
+    #[test]
+    fn renders_draft_template_for_a_passing_draft_observe_plan() {
+        let mut snapshot = sample_snapshot();
+        snapshot.is_draft = true;
+        let mut catalog = TemplateCatalog::default();
+        catalog.slack_app.observe_thread = "PASSED TEMPLATE".to_string();
+        catalog.slack_app.observe_draft_thread = "DRAFT TEMPLATE {{is_draft}}".to_string();
+
+        let body = render_slack_app_observe_notification(
+            &catalog,
+            &build_observe_template_context(
+                &sample_observe_plan(RiskLevel::Low),
+                &snapshot,
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+        );
+
+        assert_eq!(body, "DRAFT TEMPLATE true");
     }
 
     #[test]

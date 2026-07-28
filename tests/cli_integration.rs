@@ -462,7 +462,7 @@ fn refine_mode_runs_end_to_end_through_runtime_wiring() {
 }
 
 #[test]
-fn refine_mode_does_not_post_platform_or_slack_messages_for_drafts() {
+fn refine_mode_processes_draft_reviews_end_to_end() {
     let server = MockGitLabServer::start_draft();
     #[cfg(feature = "github")]
     let platform_base_url = server.github_api_base_url();
@@ -508,12 +508,11 @@ enabled = false
         String::from_utf8_lossy(&output.stdout)
     );
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("platform comments and notifications are suppressed"));
-    assert_eq!(server.request_count("POST", &review_comments_path()), 0);
+    assert_eq!(server.request_count("POST", &review_comments_path()), 1);
+    #[cfg(feature = "slack-app")]
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        0
+        3
     );
     let _ = fs::remove_file(config_path);
 }
@@ -874,6 +873,29 @@ fn observe_mode_supports_fixture_without_ci_env_without_notification_sinks() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Observe intake status:"));
     assert!(stdout.contains("No notification previews were produced."));
+}
+
+#[test]
+fn explain_mode_processes_draft_fixture_when_governance_gate_allows_it() {
+    let output = run_cli(
+        "explain",
+        &["--fixture", "fixtures/draft-explain.toml"],
+        &[("RUST_LOG", "off")],
+    );
+
+    assert!(
+        output.status.success(),
+        "draft explain fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Advisory explain comment preview:"),
+        "unexpected explain output: {stdout}"
+    );
+    assert!(stdout.contains("[ExplainCommentPosted]"));
 }
 
 #[cfg(feature = "slack-app")]

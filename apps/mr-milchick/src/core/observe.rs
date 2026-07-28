@@ -120,26 +120,22 @@ pub fn plan_observe(
     let description = assess_description(ctx, snapshot, config);
     let mut blocking_reasons = Vec::new();
 
-    if !snapshot.is_draft {
-        for reason in &description.reasons {
-            if !matches!(
-                description.status,
-                DescriptionStatus::Meaningful | DescriptionStatus::NotRequired
-            ) {
-                blocking_reasons.push(reason.clone());
-            }
-        }
-        if !risk.unmatched_paths.is_empty() {
-            blocking_reasons.push(format!(
-                "Unmatched changed paths require area configuration: {}.",
-                risk.unmatched_paths.join(", ")
-            ));
+    for reason in &description.reasons {
+        if !matches!(
+            description.status,
+            DescriptionStatus::Meaningful | DescriptionStatus::NotRequired
+        ) {
+            blocking_reasons.push(reason.clone());
         }
     }
+    if !risk.unmatched_paths.is_empty() {
+        blocking_reasons.push(format!(
+            "Unmatched changed paths require area configuration: {}.",
+            risk.unmatched_paths.join(", ")
+        ));
+    }
 
-    let status = if snapshot.is_draft {
-        ObserveStatus::Draft
-    } else if blocking_reasons.is_empty() {
+    let status = if blocking_reasons.is_empty() {
         ObserveStatus::Passed
     } else {
         ObserveStatus::Blocked
@@ -166,6 +162,10 @@ pub fn plan_observe(
     });
     if snapshot.is_draft {
         actions.push(ReviewAction::AddLabels {
+            labels: vec![config.draft_label.clone()],
+        });
+    } else {
+        actions.push(ReviewAction::RemoveLabels {
             labels: vec![config.draft_label.clone()],
         });
     }
@@ -579,17 +579,32 @@ mod tests {
     }
 
     #[test]
-    fn draft_plan_applies_draft_label_without_blocking() {
+    fn draft_plan_blocks_missing_description_and_applies_draft_label() {
         let mut snapshot = snapshot(None, vec!["apps/roulette/src/lib.rs"]);
         snapshot.is_draft = true;
 
         let plan = plan_observe(&ctx(), &snapshot, &areas(), &observe_config());
 
-        assert_eq!(plan.status, ObserveStatus::Draft);
-        assert!(!plan.should_fail());
+        assert_eq!(plan.status, ObserveStatus::Blocked);
+        assert!(plan.should_fail());
         assert!(plan.actions.iter().any(|action| matches!(
             action,
             ReviewAction::AddLabels { labels } if labels == &vec!["status::draft".to_string()]
+        )));
+    }
+
+    #[test]
+    fn ready_plan_removes_draft_label() {
+        let plan = plan_observe(
+            &ctx(),
+            &snapshot(Some("real description"), vec!["apps/roulette/src/lib.rs"]),
+            &areas(),
+            &observe_config(),
+        );
+
+        assert!(plan.actions.iter().any(|action| matches!(
+            action,
+            ReviewAction::RemoveLabels { labels } if labels == &vec!["status::draft".to_string()]
         )));
     }
 

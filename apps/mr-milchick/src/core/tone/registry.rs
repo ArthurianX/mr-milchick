@@ -79,9 +79,9 @@ pub fn messages_for(category: ToneCategory) -> &'static [&'static str] {
             "The first gate has identified a structural omission.",
         ],
         ToneCategory::ObserveDraft => &[
-            "This request remains in draft. Further ceremony is deferred.",
+            "This request remains in draft. Full governance has begun.",
             "Draft status has been observed and recorded.",
-            "The department will wait for a more final posture.",
+            "The department will proceed while the request remains in draft.",
         ],
         ToneCategory::RiskLow => &[
             "Risk has been assessed as low.",

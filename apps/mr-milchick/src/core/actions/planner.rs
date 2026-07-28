@@ -72,20 +72,6 @@ pub fn enrich_with_reviewer_assignment(
         }
     }
 
-    if snapshot.is_draft {
-        if !recommendation.reviewers.is_empty() {
-            outcome.push(RuleFinding::info(
-                "Reviewer assignment is deferred because the merge request is draft.",
-            ));
-        }
-        info!(
-            deferred_reviewer_count = recommendation.reviewers.len(),
-            "reviewer assignment deferred for draft merge request"
-        );
-
-        return outcome;
-    }
-
     let recommended_reviewers = recommendation.reviewers.len();
     let existing_reviewers = snapshot.reviewer_usernames();
     let missing_reviewers: Vec<Actor> = recommendation
@@ -227,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn does_not_assign_reviewers_for_draft_merge_request() {
+    fn assigns_reviewers_for_draft_merge_request() {
         let outcome = RuleOutcome::new();
         let snapshot = sample_snapshot(true, vec![]);
         let config = ReviewerRoutingConfig::example();
@@ -240,8 +226,12 @@ mod tests {
             &CodeownersContext::empty(),
         );
 
-        assert!(enriched.action_plan.is_empty());
-        assert_eq!(enriched.findings.len(), 1);
+        assert!(matches!(
+            enriched.action_plan.actions.as_slice(),
+            [Action::AssignReviewers { reviewers }]
+                if reviewer_usernames(reviewers)
+                    == vec!["principal-reviewer".to_string(), "bob".to_string()]
+        ));
     }
 
     #[test]
