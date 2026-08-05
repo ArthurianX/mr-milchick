@@ -45,7 +45,7 @@ use crate::core::message_templates::{
     build_explain_template_context, build_notification_template_context,
     build_observe_template_context, build_summary_template_context, notification_template_variant,
     render_notification, render_observe_notification, render_review_explain, render_review_summary,
-    resolve_template_catalog,
+    render_slack_app_explain, resolve_template_catalog,
 };
 use crate::core::model::{
     NotificationAudience, NotificationDelivery, NotificationMessage, NotificationSeverity,
@@ -377,6 +377,7 @@ pub async fn run_mode(
                 &template_catalog,
                 &selector,
                 send_notifications,
+                &preview_sink_kinds,
             )
             .await?;
         }
@@ -645,6 +646,7 @@ async fn run_explain_mode(
     template_catalog: &TemplateCatalog,
     selector: &ToneSelector,
     send_notifications: bool,
+    preview_sink_kinds: &[NotificationSinkKind],
 ) -> Result<()> {
     print_outcome(&prepared.outcome);
     print_action_plan(&prepared.outcome, false);
@@ -667,16 +669,20 @@ async fn run_explain_mode(
         print_inference_details(&inference_outcome);
     }
 
-    let explain_markdown = render_review_explain(
+    let explain_context = build_explain_template_context(
+        &prepared.outcome,
+        &prepared.snapshot,
+        &inference_outcome,
+        selector,
+        &prepared.ctx,
+    );
+    let explain_markdown =
+        render_review_explain(template_catalog, &explain_context, compiled_platform_kind());
+    let notifications = build_explain_notifications(
+        &prepared.snapshot,
         template_catalog,
-        &build_explain_template_context(
-            &prepared.outcome,
-            &prepared.snapshot,
-            &inference_outcome,
-            selector,
-            &prepared.ctx,
-        ),
-        compiled_platform_kind(),
+        &explain_context,
+        preview_sink_kinds,
     );
     println!("Advisory explain comment preview:");
     println!("---");
@@ -698,9 +704,22 @@ async fn run_explain_mode(
         )
         .await?;
 
+    if prepared.fixture_mode {
+        print_notification_previews(&notifications);
+    }
+    let notification_reports = prepared
+        .wiring
+        .deliver_notifications(
+            strategy,
+            app_config.config.execution.notification_policy,
+            &notifications,
+            &review_report,
+        )
+        .await?;
+
     print_execution_report(&crate::runtime::ExecutionReport {
         review_report,
-        notification_reports: Vec::new(),
+        notification_reports,
     });
 
     Ok(())
@@ -1235,6 +1254,35 @@ fn build_observe_notifications(
             Some(std::iter::once(stage).chain(commit_log))
         })
         .flatten()
+        .collect()
+}
+
+fn build_explain_notifications(
+    snapshot: &crate::core::model::ReviewSnapshot,
+    template_catalog: &TemplateCatalog,
+    context: &crate::core::message_templates::SummaryTemplateContext,
+    sink_kinds: &[NotificationSinkKind],
+) -> Vec<NotificationMessage> {
+    let thread_key = Some(format!("MR #{}", snapshot.review_ref.review_id));
+    let conversation_key = Some(notification_conversation_key(snapshot));
+
+    sink_kinds
+        .iter()
+        .filter(|&&sink| matches!(sink, NotificationSinkKind::SlackApp))
+        .map(|sink| NotificationMessage {
+            sink: *sink,
+            subject: format!(
+                "Mr. Milchick advisory explain for MR #{}",
+                snapshot.review_ref.review_id
+            ),
+            body: render_slack_app_explain(template_catalog, context),
+            audience: NotificationAudience::Default,
+            severity: NotificationSeverity::Info,
+            thread_key: thread_key.clone(),
+            prefer_thread_reply: true,
+            conversation_key: conversation_key.clone(),
+            delivery: NotificationDelivery::Append,
+        })
         .collect()
 }
 
@@ -1975,6 +2023,40 @@ mod tests {
 
         assert!(text.contains("UpsertExplain"));
         assert!(text.to_lowercase().contains("explain"));
+    }
+
+    #[test]
+    fn slack_explain_notification_appends_to_the_review_thread() {
+        let snapshot = sample_snapshot(Vec::new());
+        let notifications = build_explain_notifications(
+            &snapshot,
+            &TemplateCatalog::default(),
+            &build_explain_template_context(
+                &RuleOutcome::new(),
+                &snapshot,
+                &ReviewInferenceOutcome::ready(Default::default()),
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+            &[NotificationSinkKind::SlackApp],
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].thread_key.as_deref(), Some("MR #456"));
+        assert_eq!(
+            notifications[0].conversation_key.as_deref(),
+            Some("gitlab:123:456")
+        );
+        assert!(notifications[0].prefer_thread_reply);
+        assert!(matches!(
+            notifications[0].delivery,
+            NotificationDelivery::Append
+        ));
+        assert!(
+            notifications[0]
+                .body
+                .contains("Mr. Milchick Advisory Explain")
+        );
     }
 
     #[test]

@@ -203,3 +203,100 @@ fn notification_skip_reason(
         .find(|action| action.action != ReviewActionKind::UpsertExplain)
         .map(|action| format!("skipped because {}", action.reason))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::{
+        NotificationAudience, NotificationDeliveryReport, NotificationMessage,
+        NotificationSeverity, ReviewActionReport, ReviewSnapshot,
+    };
+    use crate::runtime::{ConnectorError, ConnectorResult};
+
+    struct FailingSlackSink;
+
+    #[async_trait::async_trait]
+    impl NotificationSink for FailingSlackSink {
+        fn kind(&self) -> NotificationSinkKind {
+            NotificationSinkKind::SlackApp
+        }
+
+        async fn send(
+            &self,
+            _notification: &NotificationMessage,
+        ) -> ConnectorResult<NotificationDeliveryReport> {
+            Err(ConnectorError::Request("Slack unavailable".to_string()))
+        }
+    }
+
+    struct NoopPlatformConnector;
+
+    #[async_trait::async_trait]
+    impl PlatformConnector for NoopPlatformConnector {
+        fn kind(&self) -> ReviewPlatformKind {
+            ReviewPlatformKind::GitLab
+        }
+
+        async fn load_snapshot(&self) -> ConnectorResult<ReviewSnapshot> {
+            Err(ConnectorError::Other("unused in test".to_string()))
+        }
+
+        async fn load_managed_comment(
+            &self,
+            _marker: &str,
+        ) -> ConnectorResult<Option<crate::core::model::ManagedReviewComment>> {
+            Ok(None)
+        }
+
+        async fn apply_review_actions(
+            &self,
+            _actions: &[ReviewAction],
+        ) -> ConnectorResult<ReviewActionReport> {
+            Ok(ReviewActionReport::default())
+        }
+    }
+
+    fn wiring_with_failing_slack_sink() -> RuntimeWiring {
+        RuntimeWiring::new(
+            Box::new(NoopPlatformConnector),
+            None,
+            vec![Box::new(FailingSlackSink)],
+        )
+    }
+
+    fn sample_slack_append_notification() -> NotificationMessage {
+        NotificationMessage {
+            sink: NotificationSinkKind::SlackApp,
+            subject: "Mr. Milchick advisory explain for MR #3995".to_string(),
+            body: "Advisory review details".to_string(),
+            audience: NotificationAudience::Default,
+            severity: NotificationSeverity::Info,
+            thread_key: Some("MR #3995".to_string()),
+            prefer_thread_reply: true,
+            conversation_key: Some("gitlab:412:3995".to_string()),
+            delivery: NotificationDelivery::Append,
+        }
+    }
+
+    #[tokio::test]
+    async fn reports_notification_sink_failure_without_failing_delivery() {
+        let reports = wiring_with_failing_slack_sink()
+            .deliver_notifications(
+                ExecutionStrategy::Real,
+                NotificationPolicy::Always,
+                &[sample_slack_append_notification()],
+                &ReviewActionReport::default(),
+            )
+            .await
+            .expect("notification failures should be reported, not returned");
+
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].delivered);
+        assert!(
+            reports[0]
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("Slack unavailable"))
+        );
+    }
+}

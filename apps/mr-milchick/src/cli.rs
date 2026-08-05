@@ -60,6 +60,10 @@ pub struct ObserveArgs {
 pub struct ExplainArgs {
     #[command(flatten)]
     pub fixture: FixtureArgs,
+
+    /// Actually deliver notifications when running from a fixture
+    #[arg(long)]
+    pub send_notifications: bool,
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -103,6 +107,7 @@ impl Command {
     pub fn send_notifications(&self) -> bool {
         match self {
             Command::Refine(args) => args.send_notifications,
+            Command::Explain(args) => args.send_notifications,
             _ => false,
         }
     }

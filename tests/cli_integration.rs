@@ -900,6 +900,72 @@ fn explain_mode_processes_draft_fixture_when_governance_gate_allows_it() {
 
 #[cfg(feature = "slack-app")]
 #[test]
+fn explain_mode_fixture_sends_slack_advisory_reply() {
+    let server = MockGitLabServer::start();
+    let slack_base_url = server.slack_api_base_url();
+    let config_path = write_temp_config(&format!(
+        r#"
+[platform]
+kind = "{platform}"
+base_url = {base_url}
+
+[notifications.slack_app]
+enabled = true
+channel = "C0ALY38CW3X"
+base_url = {slack_base_url}
+"#,
+        platform = compiled_platform_connector_kind(),
+        base_url = toml_string(default_platform_base_url()),
+        slack_base_url = toml_string(slack_base_url.as_str()),
+    ));
+
+    let output = run_cli(
+        "explain",
+        &[
+            "--fixture",
+            "fixtures/draft-explain.toml",
+            "--send-notifications",
+        ],
+        &[
+            ("MR_MILCHICK_CONFIG_PATH", config_path.as_str()),
+            ("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test"),
+            ("RUST_LOG", "off"),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "explain fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[Notification SlackApp] delivered=true sent"));
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        2
+    );
+    assert_eq!(
+        server.request_count_prefix("GET", "/slack/api/conversations.history"),
+        1
+    );
+    let posts = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    let reply: serde_json::Value =
+        serde_json::from_str(&posts[1]).expect("Slack reply should be JSON");
+    assert_eq!(reply["thread_ts"], serde_json::json!("1700000000.000001"));
+    assert!(
+        reply["text"]
+            .as_str()
+            .expect("Slack reply text should be a string")
+            .contains("Mr. Milchick Advisory Explain")
+    );
+
+    let _ = fs::remove_file(config_path);
+}
+
+#[cfg(feature = "slack-app")]
+#[test]
 fn observe_mode_fixture_variant_override_can_force_update_preview() {
     let config_path = write_temp_config(&format!(
         r#"[platform]

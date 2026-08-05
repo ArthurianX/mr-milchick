@@ -1701,9 +1701,7 @@ mod tests {
     fn applies_slack_explain_thread_template_override() {
         let catalog = resolve_template_catalog(&TemplatesConfig {
             slack_app: SlackAppTemplates {
-                explain_thread: Some(
-                    "*{{summary_title}}* {{recommendations_count}}".to_string(),
-                ),
+                explain_thread: Some("*{{summary_title}}* {{recommendations_count}}".to_string()),
                 ..SlackAppTemplates::default()
             },
             ..TemplatesConfig::default()

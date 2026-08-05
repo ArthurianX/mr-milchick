@@ -71,6 +71,52 @@ async fn sends_compact_slack_message_and_thread_payload() {
 }
 
 #[tokio::test]
+async fn append_notifications_never_update_managed_thread_messages() {
+    let server = MockGitLabServer::start();
+    let sink = SlackAppSink::new(SlackAppConfig {
+        enabled: true,
+        base_url: server.slack_api_base_url(),
+        bot_token: Some("xoxb-test".to_string()),
+        channel: Some("C0ALY38CW3X".to_string()),
+        user_map: BTreeMap::new(),
+    });
+
+    let root = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: "Mr. Milchick advisory explain for MR #3995".to_string(),
+        body: "Initial advisory review".to_string(),
+        audience: NotificationAudience::Default,
+        severity: NotificationSeverity::Info,
+        thread_key: Some("MR #3995".to_string()),
+        prefer_thread_reply: false,
+        conversation_key: Some("gitlab:412:3995".to_string()),
+        delivery: NotificationDelivery::Append,
+    };
+    sink.send(&root).await.expect("root should be created");
+
+    let append = NotificationMessage {
+        prefer_thread_reply: true,
+        body: "Advisory review details".to_string(),
+        ..root
+    };
+    sink.send(&append)
+        .await
+        .expect("first append should succeed");
+    sink.send(&append)
+        .await
+        .expect("second append should succeed");
+
+    assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 0);
+    let posts = server.request_bodies("POST", "/slack/api/chat.postMessage");
+    assert_eq!(posts.len(), 4);
+    for post in posts.iter().skip(1) {
+        let payload: Value = serde_json::from_str(post).expect("post should be JSON");
+        assert_eq!(payload["thread_ts"], json!("1700000000.000001"));
+        assert!(payload["metadata"].is_null());
+    }
+}
+
+#[tokio::test]
 async fn replies_to_existing_new_mr_thread_for_update_notifications() {
     let server = MockGitLabServer::start();
     let mut user_map = BTreeMap::new();
