@@ -44,6 +44,7 @@ explain
   -> gate on prior governance metadata
   -> optional advisory inference
   -> upsert separate advisory explain comment
+  -> append full advisory explain reply to the Slack MR thread
 ```
 
 The three commands still share one deterministic planning path, but they now diverge more intentionally at the end.
@@ -52,7 +53,7 @@ The three commands still share one deterministic planning path, but they now div
 
 - `observe`: deterministic intake gate. It applies draft and risk labels, validates that a meaningful description exists, sends the intake Slack message into the MR thread, and exits nonzero when the first gate is not satisfied. It never invokes inference.
 - `refine`: fast governance execution. It applies reviewer or label actions, always upserts the deterministic governance summary comment, can deliver configured notifications, and fails the current pipeline when blocking policy remains unresolved.
-- `explain`: slow advisory follow-up. It first reloads Milchick's managed governance summary comment, parses the hidden metadata appended by `refine`, and skips itself when the latest governance pass reported no applied effect and no blocking outcome. When the gate passes, it runs advisory inference and upserts only the managed explain comment.
+- `explain`: slow advisory follow-up. It first reloads Milchick's managed governance summary comment, parses the hidden metadata appended by `refine`, and skips itself when the latest governance pass reported no applied effect and no blocking outcome. When the gate passes, it runs advisory inference, upserts the managed explain comment, and appends the full Slack-native advisory review to the existing MR thread when the Slack app sink is configured.
 
 ## Managed Comments
 
@@ -88,7 +89,7 @@ This keeps merge logic out of `app.rs` and makes new features land in one place 
 - `dry_run` affects platform writes in `refine` and `explain`; live `observe` mutates labels by design, while fixture observe uses dry-run execution.
 - Notification delivery follows the resolved notification policy, not sink-specific heuristics.
 - `observe` and `refine` do not wire the inference backend.
-- `explain` never assigns reviewers, changes labels, fails the pipeline, or sends notifications.
+- `explain` never assigns reviewers, changes labels, or fails the pipeline. Its optional Slack delivery is append-only and does not update prior explain replies.
 
 ## Current Implemented Surface
 

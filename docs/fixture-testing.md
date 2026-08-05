@@ -161,7 +161,7 @@ MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
 ```
 
-`explain` never sends notifications, even in fixture mode.
+`explain` can send its append-only Slack advisory reply in fixture mode when invoked with `--send-notifications`.
 
 ## Config Path
 

@@ -17,9 +17,9 @@ Implemented now:
 
 - `observe`: mutating intake gate for risk/draft labels, description checks, and Slack intake notifications
 - `refine`: fast governance execution plus optional notifications
-- `explain`: slower advisory follow-up that may upsert the managed explain comment
+- `explain`: slower advisory follow-up that upserts the managed explain comment and may append a full advisory reply to the Slack MR thread
 
-`observe` and `refine` can change labels, fail the pipeline, and deliver configured Slack notifications. Only `refine` assigns reviewers and owns the governance summary comment. The Slack app keeps one root per review, updates the durable stage replies in place, and appends commit/CI activity beneath them.
+`observe` and `refine` can change labels, fail the pipeline, and deliver configured Slack notifications. Only `refine` assigns reviewers and owns the governance summary comment. `explain` appends its full advisory output as a new Slack thread reply after the platform explain comment completes. The Slack app keeps one root per review, updates the durable stage replies in place, and appends commit/CI activity beneath them.
 
 ## Cargo Features
 
@@ -127,7 +127,7 @@ Use the version command in CI logs:
 Default build output shape:
 
 ```text
-mr-milchick 5.1.0 (<git-sha> <build-date>)
+mr-milchick 5.1.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - advisory inference: not compiled
@@ -137,7 +137,7 @@ Compiled capabilities:
 GitHub-only output shape:
 
 ```text
-mr-milchick 5.1.0 (<git-sha> <build-date>)
+mr-milchick 5.1.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: github
 - advisory inference: not compiled
@@ -147,7 +147,7 @@ Compiled capabilities:
 GitLab plus Slack plus both advisory backends output shape:
 
 ```text
-mr-milchick 5.1.0 (<git-sha> <build-date>)
+mr-milchick 5.1.1 (<git-sha> <build-date>)
 Compiled capabilities:
 - platform connector: gitlab
 - advisory inference: local llama.cpp

@@ -7,6 +7,19 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.1.1] — 2026-08-05
+
+This patch release completes Slack visibility for advisory reviews and improves diagnostics for Slack API failures.
+
+### Added
+
+- `explain` now appends the full Slack-native advisory review to the existing MR thread after its managed platform explain comment completes. Each completed explain run creates a new thread reply rather than updating a prior advisory reply.
+- Optional `[templates.slack_app].explain_thread` overrides the Slack-only advisory reply while retaining the GitLab and GitHub explain templates.
+
+### Fixed
+
+- Slack history failures now retain the HTTP status, a bounded response body, and `Retry-After` guidance for rate-limited requests instead of discarding the actionable API detail.
+
 ## [5.1.0] — 2026-07-24
 
 This minor release adds an optional Claude Code advisory-review backend while retaining local GGUF inference.

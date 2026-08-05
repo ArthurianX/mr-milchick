@@ -361,6 +361,16 @@ low = ":white_circle:"
 # {{pipeline_status_block}}
 # _{{summary_footer}}_
 # """
+# explain_thread = """
+# *{{summary_title}}*
+# Merge request: {{mr_link}}
+#
+# {{summary_intro}}
+# {{findings_block}}
+# {{actions_block}}
+# {{recommendations_block}}
+# _{{closing_tone_message}}_
+# """
 # Legacy first/update fields are still accepted but are not used by v5 observe/refine notifications.
 # first_root = ":gitlab: {{notification_subject}} :pepe-review:"
 # first_thread = """

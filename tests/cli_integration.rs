@@ -964,6 +964,14 @@ base_url = {slack_base_url}
     let _ = fs::remove_file(config_path);
 }
 
+#[test]
+fn version_command_reports_5_1_1() {
+    let output = run_cli("version", &[], &[("RUST_LOG", "off")]);
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.1.1 ("));
+}
+
 #[cfg(feature = "slack-app")]
 #[test]
 fn observe_mode_fixture_variant_override_can_force_update_preview() {
