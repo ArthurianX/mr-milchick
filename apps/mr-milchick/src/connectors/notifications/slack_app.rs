@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, warn};
@@ -615,6 +615,51 @@ fn escape_slack_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+async fn slack_response_or_error(response: Response, operation: &str) -> Result<Response> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+
+    let status = response.status().to_string();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|error| format!("<unable to read Slack error response: {error}>"));
+
+    bail!(
+        "{}",
+        format_slack_http_error(operation, &status, retry_after.as_deref(), &body)
+    );
+}
+
+fn format_slack_http_error(
+    operation: &str,
+    status: &str,
+    retry_after: Option<&str>,
+    body: &str,
+) -> String {
+    const MAX_ERROR_BODY_CHARS: usize = 512;
+
+    let body = body.trim();
+    let body = if body.chars().count() > MAX_ERROR_BODY_CHARS {
+        let prefix = body.chars().take(MAX_ERROR_BODY_CHARS).collect::<String>();
+        format!("{prefix}…")
+    } else {
+        body.to_string()
+    };
+    let retry_after = retry_after
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("; retry_after={}s", value.trim()))
+        .unwrap_or_default();
+
+    format!("Slack {operation} returned HTTP {status}{retry_after}; body={body}")
+}
+
 async fn find_existing_thread_root_ts(
     http: &Client,
     endpoint: &str,
@@ -646,9 +691,7 @@ async fn find_existing_thread_root_ts(
             .await
             .context("failed to send Slack conversations.history request")?;
 
-        let response = response
-            .error_for_status()
-            .context("Slack conversations.history returned an error status")?;
+        let response = slack_response_or_error(response, "conversations.history").await?;
 
         let payload = response
             .json::<SlackConversationsHistoryResponse>()
@@ -854,6 +897,21 @@ mod tests {
         assert!(!is_first_look_message(
             update_root.text.as_deref().unwrap_or_default()
         ));
+    }
+
+    #[test]
+    fn formats_rate_limit_errors_with_retry_guidance_and_a_bounded_body() {
+        let rendered = format_slack_http_error(
+            "conversations.history",
+            "429 Too Many Requests",
+            Some("60"),
+            r#"{"ok":false,"error":"ratelimited"}"#,
+        );
+
+        assert_eq!(
+            rendered,
+            "Slack conversations.history returned HTTP 429 Too Many Requests; retry_after=60s; body={\"ok\":false,\"error\":\"ratelimited\"}"
+        );
     }
 
     #[test]
