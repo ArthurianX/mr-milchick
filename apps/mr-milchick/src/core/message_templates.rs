@@ -36,6 +36,18 @@ const GITHUB_EXPLAIN_TEMPLATE: &str = GITLAB_EXPLAIN_TEMPLATE;
 const SLACK_APP_FIRST_ROOT_TEMPLATE: &str = "{{notification_subject}}";
 const SLACK_APP_THREAD_ROOT_TEMPLATE: &str =
     "Mr. Milchick is observing {{thread_key}}: {{mr_title}}";
+const SLACK_APP_EXPLAIN_THREAD_TEMPLATE: &str = r#"*{{summary_title}}*
+Merge request: {{mr_link}}
+
+{{summary_intro}}
+
+{{findings_block}}
+
+{{actions_block}}
+
+{{recommendations_block}}
+
+_{{closing_tone_message}}_"#;
 const SLACK_APP_OBSERVE_THREAD_TEMPLATE: &str = r#"*{{notification_title}}*
 Review: {{mr_link}}
 Status: {{observe_status}}
@@ -188,6 +200,7 @@ impl Default for TemplateCatalog {
             },
             slack_app: SlackAppTemplateCatalog {
                 thread_root: SLACK_APP_THREAD_ROOT_TEMPLATE.to_string(),
+                explain_thread: SLACK_APP_EXPLAIN_THREAD_TEMPLATE.to_string(),
                 observe_thread: SLACK_APP_OBSERVE_THREAD_TEMPLATE.to_string(),
                 observe_blocked_thread: SLACK_APP_OBSERVE_BLOCKED_THREAD_TEMPLATE.to_string(),
                 observe_draft_thread: SLACK_APP_OBSERVE_DRAFT_THREAD_TEMPLATE.to_string(),
@@ -234,6 +247,7 @@ pub struct GitHubTemplateCatalog {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAppTemplateCatalog {
     pub thread_root: String,
+    pub explain_thread: String,
     pub observe_thread: String,
     pub observe_blocked_thread: String,
     pub observe_draft_thread: String,
@@ -355,6 +369,7 @@ enum TemplateField {
     GitHubSummary,
     GitHubExplain,
     SlackAppThreadRoot,
+    SlackAppExplainThread,
     SlackAppObserveThread,
     SlackAppObserveBlockedThread,
     SlackAppObserveDraftThread,
@@ -380,6 +395,7 @@ impl TemplateField {
             Self::GitHubSummary => "templates.github.summary",
             Self::GitHubExplain => "templates.github.explain",
             Self::SlackAppThreadRoot => "templates.slack_app.thread_root",
+            Self::SlackAppExplainThread => "templates.slack_app.explain_thread",
             Self::SlackAppObserveThread => "templates.slack_app.observe_thread",
             Self::SlackAppObserveBlockedThread => "templates.slack_app.observe_blocked_thread",
             Self::SlackAppObserveDraftThread => "templates.slack_app.observe_draft_thread",
@@ -398,6 +414,7 @@ impl TemplateField {
             Self::GitHubSummary => GITHUB_SUMMARY_PLACEHOLDERS,
             Self::GitHubExplain => GITHUB_SUMMARY_PLACEHOLDERS,
             Self::SlackAppThreadRoot
+            | Self::SlackAppExplainThread
             | Self::SlackAppObserveThread
             | Self::SlackAppObserveBlockedThread
             | Self::SlackAppObserveDraftThread
@@ -442,6 +459,11 @@ pub fn resolve_template_catalog(templates: &TemplatesConfig) -> TemplateCatalog 
         &mut catalog.slack_app.thread_root,
         templates.slack_app.thread_root.as_deref(),
         TemplateField::SlackAppThreadRoot,
+    );
+    apply_template_override(
+        &mut catalog.slack_app.explain_thread,
+        templates.slack_app.explain_thread.as_deref(),
+        TemplateField::SlackAppExplainThread,
     );
     apply_template_override(
         &mut catalog.slack_app.observe_thread,
@@ -661,6 +683,16 @@ pub fn render_review_explain(
     };
 
     render_template(template, &context.variables(style, true))
+}
+
+pub fn render_slack_app_explain(
+    catalog: &TemplateCatalog,
+    context: &SummaryTemplateContext,
+) -> String {
+    render_template(
+        &catalog.slack_app.explain_thread,
+        &context.variables(RenderStyle::SlackApp, true),
+    )
 }
 
 pub fn render_slack_app_notification(
@@ -1644,6 +1676,51 @@ mod tests {
         assert!(rendered.contains("AI review recommendations"));
         assert!(!rendered.contains("Local review recommendations"));
         assert!(rendered.contains("Check that first-time reviewer notifications"));
+    }
+
+    #[test]
+    fn renders_default_slack_explain_template() {
+        let rendered = render_slack_app_explain(
+            &TemplateCatalog::default(),
+            &build_explain_template_context(
+                &RuleOutcome::new(),
+                &sample_snapshot(),
+                &sample_inference_outcome(),
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+        );
+
+        assert!(rendered.starts_with("*Mr. Milchick Advisory Explain*"));
+        assert!(rendered.contains("AI review recommendations"));
+        assert!(rendered.contains("Check that first-time reviewer notifications"));
+        assert!(!rendered.contains("## Mr. Milchick Advisory Explain"));
+    }
+
+    #[test]
+    fn applies_slack_explain_thread_template_override() {
+        let catalog = resolve_template_catalog(&TemplatesConfig {
+            slack_app: SlackAppTemplates {
+                explain_thread: Some(
+                    "*{{summary_title}}* {{recommendations_count}}".to_string(),
+                ),
+                ..SlackAppTemplates::default()
+            },
+            ..TemplatesConfig::default()
+        });
+
+        let rendered = render_slack_app_explain(
+            &catalog,
+            &build_explain_template_context(
+                &RuleOutcome::new(),
+                &sample_snapshot(),
+                &sample_inference_outcome(),
+                &ToneSelector::default(),
+                &sample_context(),
+            ),
+        );
+
+        assert_eq!(rendered, "*Mr. Milchick Advisory Explain* 2");
     }
 
     #[test]

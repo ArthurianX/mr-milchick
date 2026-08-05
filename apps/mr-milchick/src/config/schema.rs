@@ -314,6 +314,8 @@ pub struct SlackAppTemplates {
     #[serde(default)]
     pub thread_root: Option<String>,
     #[serde(default)]
+    pub explain_thread: Option<String>,
+    #[serde(default)]
     pub observe_thread: Option<String>,
     #[serde(default)]
     pub observe_blocked_thread: Option<String>,
