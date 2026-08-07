@@ -7,6 +7,29 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.2.0] — 2026-08-07
+
+This minor release lets a repository put every eligible reviewer on a merge request instead of only the minimum needed to satisfy approval demand.
+
+Until now the number of assigned reviewers was a side effect of how many approvals a CODEOWNERS section required. A section written `[Roulette][2]` with four eligible owners assigned exactly two reviewers, because CODEOWNERS planning solves for the smallest set that covers demand. Teams that wanted the whole group to see a merge request had no way to ask for it without also raising the approval count and thereby blocking merges.
+
+`assignment_mode` separates the two questions. Approval requirements continue to come from the `[N]` in CODEOWNERS; assignment breadth is now configured independently.
+
+### Added
+
+- `[codeowners].assignment_mode` accepting `"minimal"` (default, unchanged behaviour) or `"all-eligible"`. Under `all-eligible`, every eligible owner of every matched section is assigned, while unmet-demand tracking and coverage-gap reporting are preserved.
+- `[reviewers].assignment_mode` with the same two values, governing area-based routing. Under `all-eligible`, every reviewer registered for a matching area is assigned rather than one per area.
+
+### Changed
+
+- `[reviewers].max_reviewers = 0` now means "no ceiling" instead of failing config resolution. The cap otherwise truncates `all-eligible` assignment, so a whole-team roster requires setting it to `0`.
+- Area-based routing previously selected at most one reviewer per matching area even when several were registered for it. Under `assignment_mode = "all-eligible"` it now selects all of them, bounded by `max_reviewers`. The `minimal` default preserves one-per-area selection.
+
+### Notes
+
+- Both settings default to `minimal`, so upgrading without config changes leaves reviewer assignment byte-identical.
+- The two modes are configured independently and must both be set when CODEOWNERS routing is enabled, because a CODEOWNERS match replaces area-based routing entirely.
+
 ## [5.1.1] — 2026-08-05
 
 This patch release completes Slack visibility for advisory reviews and improves diagnostics for Slack API failures.

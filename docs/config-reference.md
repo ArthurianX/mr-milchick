@@ -35,8 +35,8 @@ When a valid file is present, omitted optional settings use defaults:
 - platform base URL: GitLab `https://gitlab.com/api/v4`, GitHub `https://api.github.com`
 - notification policy: `always`
 - dry run: `false`
-- reviewers: empty list, `max_reviewers = 2`
-- CODEOWNERS: enabled with auto-discovery
+- reviewers: empty list, `max_reviewers = 2`, `assignment_mode = "minimal"`
+- CODEOWNERS: enabled with auto-discovery, `assignment_mode = "minimal"`
 - inference: disabled
 - Slack sinks: disabled
 - templates: built-in defaults
@@ -101,6 +101,7 @@ notification_policy = "always"
 
 [reviewers]
 max_reviewers = 2
+assignment_mode = "minimal"
 
 [[reviewers.definitions]]
 username = "milchick-duty"
@@ -120,6 +121,7 @@ areas = ["backend"]
 
 [codeowners]
 enabled = true
+assignment_mode = "minimal"
 
 [inference]
 enabled = ${MR_MILCHICK_LLM_ENABLED:-false}
@@ -305,7 +307,8 @@ any = [
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `max_reviewers` | No | `2` | Caps only non-mandatory area-routed reviewers. |
+| `max_reviewers` | No | `2` | Caps only non-mandatory reviewers, including CODEOWNERS-derived ones. `0` removes the ceiling. |
+| `assignment_mode` | No | `"minimal"` | `"minimal"` assigns one reviewer per matching area; `"all-eligible"` assigns every eligible reviewer in every matching area. |
 | `username` | Yes | none | Reviewer username. |
 | `areas` | No | `[]` | Area keys from `[[areas.definitions]]`. Unknown keys are rejected. |
 | `fallback` | No | `false` | Marks fallback reviewer. |
@@ -317,6 +320,7 @@ any = [
 | --- | --- | --- | --- |
 | `enabled` | No | `true` | Enables CODEOWNERS planning. |
 | `path` | No | auto-discovery | Overrides lookup path. |
+| `assignment_mode` | No | `"minimal"` | `"minimal"` assigns the smallest set of owners that satisfies each section's `[N]` approval demand; `"all-eligible"` assigns every eligible owner of every matched section. Approval requirements are unchanged either way. |
 
 Auto-discovery order:
 

@@ -142,6 +142,7 @@ fn load_app_config_context() -> Result<AppConfigContext> {
         enabled: config.codeowners.enabled,
         file: resolve_codeowners_path(&config.codeowners)
             .and_then(|path| parse_codeowners_file(&path).ok()),
+        assignment_mode: config.codeowners.assignment_mode,
     };
 
     Ok(AppConfigContext {
@@ -1797,7 +1798,11 @@ fn print_codeowners_details(
     let mut recommendation_reasons = fallback.reasons;
 
     if let Some(codeowners) = &app_config.codeowners.file {
-        let codeowners_plan = plan_codeowners_assignments(codeowners, snapshot);
+        let codeowners_plan = plan_codeowners_assignments(
+            codeowners,
+            snapshot,
+            app_config.codeowners.assignment_mode,
+        );
         if !codeowners_plan.matched_sections.is_empty() {
             recommendation_reviewers = prepend_mandatory_reviewers(
                 &app_config.routing_config,
@@ -1961,10 +1966,12 @@ mod tests {
             reviewers: crate::core::model::ReviewerConfig {
                 definitions: Vec::new(),
                 max_reviewers: 2,
+                assignment_mode: crate::config::AssignmentMode::Minimal,
             },
             codeowners: CodeownersConfig {
                 enabled: true,
                 path: None,
+                assignment_mode: crate::config::AssignmentMode::Minimal,
             },
             inference: InferenceConfig {
                 backend: ResolvedInferenceBackend::Disabled {
@@ -2284,11 +2291,13 @@ mod tests {
                 &crate::core::model::ReviewerConfig {
                     definitions: Vec::new(),
                     max_reviewers: 2,
+                    assignment_mode: crate::config::AssignmentMode::Minimal,
                 },
             ),
             codeowners: CodeownersContext {
                 enabled: false,
                 file: None,
+                assignment_mode: crate::config::AssignmentMode::Minimal,
             },
         };
 

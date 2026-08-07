@@ -101,6 +101,7 @@ pub struct ExecutionConfig {
 pub struct CodeownersConfig {
     pub enabled: bool,
     pub path: Option<String>,
+    pub assignment_mode: AssignmentMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +112,7 @@ pub struct InferenceConfig {
     pub trace: bool,
 }
 
+pub use super::schema::AssignmentMode;
 pub use super::schema::InferenceBackendKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -597,8 +599,10 @@ fn resolve_reviewer_config(
     file: &schema::ReviewersConfig,
     areas: &schema::AreasConfig,
 ) -> Result<ReviewerConfig> {
+    // `0` means "no ceiling"; it is the only way `all-eligible` routing can
+    // assign a whole team without being truncated by the cap.
     let max_reviewers = match file.max_reviewers {
-        Some(0) => bail!("'reviewers.max_reviewers' must be greater than zero"),
+        Some(0) => usize::MAX,
         Some(value) => value,
         None => DEFAULT_MAX_REVIEWERS,
     };
@@ -651,6 +655,7 @@ fn resolve_reviewer_config(
     Ok(ReviewerConfig {
         definitions,
         max_reviewers,
+        assignment_mode: file.assignment_mode.unwrap_or_default(),
     })
 }
 
@@ -658,6 +663,7 @@ fn resolve_codeowners_config(file: &schema::CodeownersConfig) -> CodeownersConfi
     CodeownersConfig {
         enabled: file.enabled.unwrap_or(true),
         path: sanitize_optional(file.path.clone()),
+        assignment_mode: file.assignment_mode.unwrap_or_default(),
     }
 }
 
@@ -1314,8 +1320,8 @@ channel = "C123"
     }
 
     #[test]
-    fn rejects_positive_values_of_zero() {
-        let error = resolve_config(
+    fn zero_max_reviewers_means_no_ceiling() {
+        let config = resolve_config(
             toml::from_str::<schema::ConfigFile>(
                 r#"
 [[areas.definitions]]
@@ -1330,9 +1336,61 @@ max_reviewers = 0
             .expect("config file should parse"),
             SecretEnv::default(),
         )
-        .expect_err("zero max reviewers should fail");
+        .expect("zero max reviewers should resolve");
 
-        assert!(error.to_string().contains("reviewers.max_reviewers"));
+        assert_eq!(config.reviewers.max_reviewers, usize::MAX);
+    }
+
+    #[test]
+    fn assignment_modes_default_to_minimal() {
+        let config = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect("resolved config should load");
+
+        assert_eq!(config.reviewers.assignment_mode, AssignmentMode::Minimal);
+        assert_eq!(config.codeowners.assignment_mode, AssignmentMode::Minimal);
+    }
+
+    #[test]
+    fn parses_all_eligible_assignment_modes() {
+        let config = resolve_config(
+            toml::from_str::<schema::ConfigFile>(
+                r#"
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[reviewers]
+assignment_mode = "all-eligible"
+
+[codeowners]
+assignment_mode = "all-eligible"
+"#,
+            )
+            .expect("config file should parse"),
+            SecretEnv::default(),
+        )
+        .expect("resolved config should load");
+
+        assert_eq!(
+            config.reviewers.assignment_mode,
+            AssignmentMode::AllEligible
+        );
+        assert_eq!(
+            config.codeowners.assignment_mode,
+            AssignmentMode::AllEligible
+        );
     }
 
     #[test]

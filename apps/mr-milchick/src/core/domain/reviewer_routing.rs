@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::config::AssignmentMode;
 use crate::core::domain::area_summary::MergeRequestAreaSummary;
 use crate::core::model::ReviewerConfig;
 #[cfg(test)]
@@ -11,6 +12,7 @@ pub struct ReviewerRoutingConfig {
     pub fallback_reviewers: Vec<String>,
     pub mandatory_reviewers: Vec<String>,
     pub max_reviewers: usize,
+    pub assignment_mode: AssignmentMode,
 }
 
 impl ReviewerRoutingConfig {
@@ -41,6 +43,7 @@ impl ReviewerRoutingConfig {
             fallback_reviewers,
             mandatory_reviewers,
             max_reviewers: config.max_reviewers,
+            assignment_mode: config.assignment_mode,
         }
     }
 
@@ -68,6 +71,12 @@ impl ReviewerRoutingConfig {
                 },
                 ReviewerDefinition {
                     username: "bob".to_string(),
+                    areas: vec!["frontend".to_string()],
+                    is_fallback: false,
+                    is_mandatory: false,
+                },
+                ReviewerDefinition {
+                    username: "trent".to_string(),
                     areas: vec!["frontend".to_string()],
                     is_fallback: false,
                     is_mandatory: false,
@@ -116,6 +125,7 @@ impl ReviewerRoutingConfig {
                 },
             ],
             max_reviewers: 2,
+            assignment_mode: AssignmentMode::Minimal,
         };
 
         Self::from_config(&raw)
@@ -161,7 +171,7 @@ pub fn recommend_reviewers(
         return ReviewerRecommendation { reviewers, reasons };
     }
 
-    for area in significant_areas {
+    'areas: for area in significant_areas {
         if reviewers.len().saturating_sub(mandatory_count) >= config.max_reviewers {
             reasons.push(format!(
                 "Reviewer selection reached configured limit of {}.",
@@ -170,24 +180,42 @@ pub fn recommend_reviewers(
             break;
         }
 
-        if let Some(pool) = config.reviewers_by_area.get(&area) {
-            if let Some(candidate) =
-                first_non_excluded_and_unselected(pool, excluded_reviewers, &selected)
-            {
-                reviewers.push(candidate.clone());
-                selected.insert(candidate.clone());
-                reasons.push(format!(
-                    "Selected reviewer '{}' for area '{}'.",
-                    candidate, area
-                ));
-            } else {
-                reasons.push(format!(
-                    "No eligible reviewer remained for area '{}'.",
-                    area
-                ));
-            }
-        } else {
+        let Some(pool) = config.reviewers_by_area.get(&area) else {
             reasons.push(format!("No reviewer pool configured for area '{}'.", area));
+            continue;
+        };
+
+        let candidates = non_excluded_and_unselected(pool, excluded_reviewers, &selected);
+        if candidates.is_empty() {
+            reasons.push(format!(
+                "No eligible reviewer remained for area '{}'.",
+                area
+            ));
+            continue;
+        }
+
+        // Minimal routing needs one owner per area; all-eligible puts the whole
+        // area pool up for review.
+        let take = match config.assignment_mode {
+            AssignmentMode::Minimal => 1,
+            AssignmentMode::AllEligible => candidates.len(),
+        };
+
+        for candidate in candidates.into_iter().take(take) {
+            if reviewers.len().saturating_sub(mandatory_count) >= config.max_reviewers {
+                reasons.push(format!(
+                    "Reviewer selection reached configured limit of {}.",
+                    config.max_reviewers
+                ));
+                break 'areas;
+            }
+
+            reviewers.push(candidate.clone());
+            selected.insert(candidate.clone());
+            reasons.push(format!(
+                "Selected reviewer '{}' for area '{}'.",
+                candidate, area
+            ));
         }
     }
 
@@ -264,9 +292,22 @@ fn first_non_excluded_and_unselected<'a>(
     excluded: &[String],
     selected: &HashSet<String>,
 ) -> Option<&'a String> {
-    pool.iter().find(|candidate| {
-        !excluded.iter().any(|excluded| excluded == *candidate) && !selected.contains(*candidate)
-    })
+    non_excluded_and_unselected(pool, excluded, selected)
+        .into_iter()
+        .next()
+}
+
+fn non_excluded_and_unselected<'a>(
+    pool: &'a [String],
+    excluded: &[String],
+    selected: &HashSet<String>,
+) -> Vec<&'a String> {
+    pool.iter()
+        .filter(|candidate| {
+            !excluded.iter().any(|excluded| excluded == *candidate)
+                && !selected.contains(*candidate)
+        })
+        .collect()
 }
 
 fn add_mandatory_reviewers(
@@ -371,6 +412,73 @@ mod tests {
             vec![
                 "principal-reviewer".to_string(),
                 "milchick-duty".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn all_eligible_selects_every_reviewer_in_a_matched_area() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add("frontend");
+
+        let mut config = ReviewerRoutingConfig::example();
+        config.assignment_mode = AssignmentMode::AllEligible;
+        config.max_reviewers = usize::MAX;
+
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec![
+                "principal-reviewer".to_string(),
+                "alice".to_string(),
+                "bob".to_string(),
+                "trent".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn all_eligible_excludes_the_merge_request_author() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add("frontend");
+
+        let mut config = ReviewerRoutingConfig::example();
+        config.assignment_mode = AssignmentMode::AllEligible;
+        config.max_reviewers = usize::MAX;
+
+        let recommendation = recommend_reviewers(&summary, &config, &["alice".to_string()]);
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec![
+                "principal-reviewer".to_string(),
+                "bob".to_string(),
+                "trent".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn all_eligible_stops_at_the_configured_reviewer_limit() {
+        let mut summary = MergeRequestAreaSummary::new();
+        summary.add("frontend");
+        summary.add("frontend");
+        summary.add("backend");
+
+        let mut config = ReviewerRoutingConfig::example();
+        config.assignment_mode = AssignmentMode::AllEligible;
+        config.max_reviewers = 3;
+
+        let recommendation = recommend_reviewers(&summary, &config, &[]);
+
+        assert_eq!(
+            recommendation.reviewers,
+            vec![
+                "principal-reviewer".to_string(),
+                "alice".to_string(),
+                "bob".to_string(),
+                "trent".to_string()
             ]
         );
     }

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::config::AssignmentMode;
 use crate::core::domain::codeowners::matcher::collect_section_requirements_for_snapshot;
 use crate::core::domain::codeowners::model::{
     CodeownersAssignmentPlan, CodeownersFile, CoverageGap, MatchedSectionRequirement,
@@ -9,6 +10,7 @@ use crate::core::model::ReviewSnapshot;
 pub fn plan_codeowners_assignments(
     codeowners: &CodeownersFile,
     snapshot: &ReviewSnapshot,
+    assignment_mode: AssignmentMode,
 ) -> CodeownersAssignmentPlan {
     let author = snapshot.author.username.as_str();
     let current_reviewers = snapshot.reviewer_usernames();
@@ -37,36 +39,24 @@ pub fn plan_codeowners_assignments(
         selected.insert(reviewer.clone());
     }
 
-    let mut additional_assignments = Vec::new();
     let candidate_pool = collect_candidate_pool(&matched_sections);
 
-    while has_unmet_demand(&unmet) {
-        let Some(next_reviewer) =
-            select_best_candidate(&matched_sections, &unmet, &selected, &candidate_pool)
-        else {
-            break;
-        };
-
-        selected.insert(next_reviewer.clone());
-        additional_assignments.push(next_reviewer.clone());
-        let covered_sections = sections_covered_by(&matched_sections, &unmet, &next_reviewer);
-
-        for section_id in covered_sections.keys() {
-            if let Some(remaining) = unmet.get_mut(section_id) {
-                *remaining = remaining.saturating_sub(1);
-            }
-        }
-
-        let section_names = covered_sections
-            .values()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        reasons.push(format!(
-            "Selected reviewer '{}' because they reduce unmet CODEOWNERS coverage for {}.",
-            next_reviewer, section_names
-        ));
-    }
+    let additional_assignments = match assignment_mode {
+        AssignmentMode::Minimal => select_minimal_cover(
+            &matched_sections,
+            &mut unmet,
+            &mut selected,
+            &candidate_pool,
+            &mut reasons,
+        ),
+        AssignmentMode::AllEligible => select_all_eligible(
+            &matched_sections,
+            &mut unmet,
+            &mut selected,
+            &candidate_pool,
+            &mut reasons,
+        ),
+    };
 
     let uncovered_sections = matched_sections
         .iter()
@@ -106,13 +96,98 @@ pub fn plan_codeowners_assignments(
     }
 }
 
+/// Greedily assigns the fewest reviewers that satisfy every section's
+/// `required_approvals`.
+fn select_minimal_cover(
+    matched_sections: &[MatchedSectionRequirement],
+    unmet: &mut BTreeMap<String, usize>,
+    selected: &mut BTreeSet<String>,
+    candidate_pool: &BTreeSet<String>,
+    reasons: &mut Vec<String>,
+) -> Vec<String> {
+    let mut assignments = Vec::new();
+
+    while has_unmet_demand(unmet) {
+        let Some(next_reviewer) =
+            select_best_candidate(matched_sections, unmet, selected, candidate_pool)
+        else {
+            break;
+        };
+
+        selected.insert(next_reviewer.clone());
+        assignments.push(next_reviewer.clone());
+        let covered_sections = sections_covered_by(matched_sections, unmet, &next_reviewer);
+        reduce_unmet_demand(unmet, &covered_sections);
+
+        let section_names = covered_sections
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        reasons.push(format!(
+            "Selected reviewer '{}' because they reduce unmet CODEOWNERS coverage for {}.",
+            next_reviewer, section_names
+        ));
+    }
+
+    assignments
+}
+
+/// Assigns every eligible owner of every matched section, regardless of how
+/// many approvals those sections require. Approval demand is still tracked so
+/// coverage gaps are reported unchanged.
+fn select_all_eligible(
+    matched_sections: &[MatchedSectionRequirement],
+    unmet: &mut BTreeMap<String, usize>,
+    selected: &mut BTreeSet<String>,
+    candidate_pool: &BTreeSet<String>,
+    reasons: &mut Vec<String>,
+) -> Vec<String> {
+    let mut assignments = Vec::new();
+
+    for candidate in candidate_pool {
+        if selected.contains(candidate) {
+            continue;
+        }
+
+        selected.insert(candidate.clone());
+        assignments.push(candidate.clone());
+
+        let covered_sections = sections_covered_by(matched_sections, unmet, candidate);
+        reduce_unmet_demand(unmet, &covered_sections);
+
+        let section_names = matched_sections
+            .iter()
+            .filter(|section| section.eligible_users.iter().any(|user| user == candidate))
+            .map(|section| section.section_name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        reasons.push(format!(
+            "Selected reviewer '{}' because they are an eligible CODEOWNER for {}.",
+            candidate, section_names
+        ));
+    }
+
+    assignments
+}
+
+fn reduce_unmet_demand(unmet: &mut BTreeMap<String, usize>, covered: &BTreeMap<String, String>) {
+    for section_id in covered.keys() {
+        if let Some(remaining) = unmet.get_mut(section_id) {
+            *remaining = remaining.saturating_sub(1);
+        }
+    }
+}
+
 fn normalize_requirements(
     requirements: Vec<MatchedSectionRequirement>,
     author_username: &str,
 ) -> Vec<MatchedSectionRequirement> {
+    // Sections whose pool empties out are kept deliberately: they still carry
+    // approval demand and must surface as coverage gaps.
     requirements
         .into_iter()
-        .filter_map(|mut requirement| {
+        .map(|mut requirement| {
             requirement.eligible_users = requirement
                 .eligible_users
                 .into_iter()
@@ -121,11 +196,7 @@ fn normalize_requirements(
                 .into_iter()
                 .collect();
 
-            if requirement.eligible_users.is_empty() {
-                return Some(requirement);
-            }
-
-            Some(requirement)
+            requirement
         })
         .collect()
 }
@@ -298,6 +369,7 @@ mod tests {
                 "anon01",
                 &[],
             ),
+            AssignmentMode::Minimal,
         );
 
         assert_eq!(
@@ -324,6 +396,7 @@ mod tests {
         let plan = plan_codeowners_assignments(
             &codeowners,
             &snapshot(&["packages/a.ts"], "anon01", &["anon04"]),
+            AssignmentMode::Minimal,
         );
 
         assert_eq!(plan.assigned_reviewers, vec!["anon05".to_string()]);
@@ -339,8 +412,105 @@ mod tests {
 "#,
         );
 
-        let plan =
-            plan_codeowners_assignments(&codeowners, &snapshot(&["packages/a.ts"], "anon01", &[]));
+        let plan = plan_codeowners_assignments(
+            &codeowners,
+            &snapshot(&["packages/a.ts"], "anon01", &[]),
+            AssignmentMode::Minimal,
+        );
+
+        assert_eq!(plan.assigned_reviewers, vec!["anon04".to_string()]);
+        assert_eq!(plan.uncovered_sections.len(), 1);
+        assert_eq!(plan.uncovered_sections[0].section_name, "Libraries");
+    }
+
+    #[test]
+    fn all_eligible_assigns_every_owner_not_just_enough_to_meet_demand() {
+        let codeowners = parse(
+            r#"
+[Libraries][2] @anon04 @anon05 @anon06 @anon01
+/packages/
+"#,
+        );
+
+        let plan = plan_codeowners_assignments(
+            &codeowners,
+            &snapshot(&["packages/a.ts"], "anon01", &[]),
+            AssignmentMode::AllEligible,
+        );
+
+        assert_eq!(
+            plan.assigned_reviewers,
+            vec![
+                "anon04".to_string(),
+                "anon05".to_string(),
+                "anon06".to_string()
+            ]
+        );
+        assert!(plan.uncovered_sections.is_empty());
+    }
+
+    #[test]
+    fn all_eligible_deduplicates_owners_shared_between_sections() {
+        let codeowners = parse(
+            r#"
+[Libraries][2] @anon04 @anon05
+/packages/
+[Lobby][2] @anon04 @anon03
+/apps/lobby/
+"#,
+        );
+
+        let plan = plan_codeowners_assignments(
+            &codeowners,
+            &snapshot(&["packages/a.ts", "apps/lobby/a.ts"], "anon01", &[]),
+            AssignmentMode::AllEligible,
+        );
+
+        assert_eq!(
+            plan.assigned_reviewers,
+            vec![
+                "anon03".to_string(),
+                "anon04".to_string(),
+                "anon05".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn all_eligible_skips_reviewers_already_on_the_merge_request() {
+        let codeowners = parse(
+            r#"
+[Libraries][2] @anon04 @anon05 @anon06
+/packages/
+"#,
+        );
+
+        let plan = plan_codeowners_assignments(
+            &codeowners,
+            &snapshot(&["packages/a.ts"], "anon01", &["anon04"]),
+            AssignmentMode::AllEligible,
+        );
+
+        assert_eq!(
+            plan.assigned_reviewers,
+            vec!["anon05".to_string(), "anon06".to_string()]
+        );
+    }
+
+    #[test]
+    fn all_eligible_still_reports_sections_it_cannot_cover() {
+        let codeowners = parse(
+            r#"
+[Libraries][2] @anon01 @anon04
+/packages/
+"#,
+        );
+
+        let plan = plan_codeowners_assignments(
+            &codeowners,
+            &snapshot(&["packages/a.ts"], "anon01", &[]),
+            AssignmentMode::AllEligible,
+        );
 
         assert_eq!(plan.assigned_reviewers, vec!["anon04".to_string()]);
         assert_eq!(plan.uncovered_sections.len(), 1);

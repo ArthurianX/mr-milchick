@@ -37,7 +37,8 @@ pub fn enrich_with_reviewer_assignment(
     );
 
     if let Some(file) = &codeowners_ctx.file {
-        let codeowners_plan = plan_codeowners_assignments(file, snapshot);
+        let codeowners_plan =
+            plan_codeowners_assignments(file, snapshot, codeowners_ctx.assignment_mode);
         debug!(
             matched_sections = codeowners_plan.matched_sections.len(),
             assigned_reviewers = codeowners_plan.assigned_reviewers.len(),
@@ -268,6 +269,7 @@ mod tests {
                 )
                 .expect("codeowners should parse"),
             ),
+            assignment_mode: crate::config::AssignmentMode::Minimal,
         };
 
         let enriched = enrich_with_reviewer_assignment(

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::config::AssignmentMode;
 use crate::core::context::model::{BranchKind, PipelineState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,7 @@ impl ReviewPlatformKind {
 pub struct ReviewerConfig {
     pub definitions: Vec<ReviewerDefinition>,
     pub max_reviewers: usize,
+    pub assignment_mode: AssignmentMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -174,11 +174,25 @@ pub struct ExecutionConfig {
     pub notification_policy: Option<NotificationPolicy>,
 }
 
+/// How many of the eligible reviewers a routing pass assigns.
+///
+/// `Minimal` assigns the smallest set that satisfies demand; `AllEligible`
+/// assigns every eligible candidate. Approval requirements are unaffected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssignmentMode {
+    #[default]
+    Minimal,
+    AllEligible,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewersConfig {
     #[serde(default)]
     pub max_reviewers: Option<usize>,
+    #[serde(default)]
+    pub assignment_mode: Option<AssignmentMode>,
     #[serde(default)]
     pub definitions: Vec<ReviewerDefinitionConfig>,
 }
@@ -202,6 +216,8 @@ pub struct CodeownersConfig {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
+    pub assignment_mode: Option<AssignmentMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

@@ -965,11 +965,11 @@ base_url = {slack_base_url}
 }
 
 #[test]
-fn version_command_reports_5_1_1() {
+fn version_command_reports_5_2_0() {
     let output = run_cli("version", &[], &[("RUST_LOG", "off")]);
 
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.1.1 ("));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.2.0 ("));
 }
 
 #[cfg(feature = "slack-app")]
