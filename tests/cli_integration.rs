@@ -1178,7 +1178,7 @@ base_url = {slack_base_url}
 
     assert_eq!(
         server.request_count_prefix("GET", "/slack/api/conversations.history"),
-        4
+        2
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");

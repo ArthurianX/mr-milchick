@@ -106,6 +106,10 @@ async fn append_notifications_never_update_managed_thread_messages() {
         .await
         .expect("second append should succeed");
 
+    assert_eq!(
+        server.request_count_prefix("GET", "/slack/api/conversations.history"),
+        0
+    );
     assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 0);
     let posts = server.request_bodies("POST", "/slack/api/chat.postMessage");
     assert_eq!(posts.len(), 4);
@@ -114,6 +118,47 @@ async fn append_notifications_never_update_managed_thread_messages() {
         assert_eq!(payload["thread_ts"], json!("1700000000.000001"));
         assert!(payload["metadata"].is_null());
     }
+}
+
+#[tokio::test]
+async fn defers_thread_delivery_when_slack_history_lookup_fails() {
+    let server = MockGitLabServer::start();
+    server.fail_slack_history(429, r#"{"ok":false,"error":"ratelimited"}"#);
+    let sink = SlackAppSink::new(SlackAppConfig {
+        enabled: true,
+        base_url: server.slack_api_base_url(),
+        bot_token: Some("xoxb-test".to_string()),
+        channel: Some("C0ALY38CW3X".to_string()),
+        user_map: BTreeMap::new(),
+    });
+    let notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: "Mr. Milchick is observing MR #3995".to_string(),
+        body: "Observe status: ready".to_string(),
+        audience: NotificationAudience::Default,
+        severity: NotificationSeverity::Info,
+        thread_key: Some("MR #3995".to_string()),
+        prefer_thread_reply: true,
+        conversation_key: Some("gitlab:412:3995".to_string()),
+        delivery: NotificationDelivery::UpsertThreadReply {
+            slot: "observe".to_string(),
+        },
+    };
+
+    let report = sink
+        .send(&notification)
+        .await
+        .expect("delivery should defer");
+
+    assert!(!report.delivered);
+    assert_eq!(
+        report.detail.as_deref(),
+        Some("deferred: Slack thread lookup failed")
+    );
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        0
+    );
 }
 
 #[tokio::test]
@@ -167,7 +212,7 @@ async fn replies_to_existing_new_mr_thread_for_update_notifications() {
 
     assert_eq!(
         server.request_count_prefix("GET", "/slack/api/conversations.history"),
-        1
+        0
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");

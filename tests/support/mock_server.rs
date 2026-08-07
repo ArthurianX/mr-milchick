@@ -55,6 +55,7 @@ struct ServerState {
     labels: Vec<String>,
     notes: Vec<MockNote>,
     slack_messages: Vec<MockSlackMessage>,
+    slack_history_failure: Option<(u16, String)>,
     github_files: Vec<MockGithubFile>,
     request_log: Vec<RequestRecord>,
     next_note_id: u64,
@@ -121,6 +122,7 @@ impl MockGitLabServer {
             labels: labels.into_iter().map(|value| value.to_string()).collect(),
             notes: Vec::new(),
             slack_messages: Vec::new(),
+            slack_history_failure: None,
             github_files: github_files(file_count),
             request_log: Vec::new(),
             next_note_id: 1,
@@ -158,6 +160,13 @@ impl MockGitLabServer {
 
     pub fn slack_api_base_url(&self) -> String {
         format!("http://{}/slack/api", self.address)
+    }
+
+    pub fn fail_slack_history(&self, status_code: u16, body: &str) {
+        self.state
+            .lock()
+            .expect("state lock should succeed")
+            .slack_history_failure = Some((status_code, body.to_string()));
     }
 
     pub fn github_api_base_url(&self) -> String {
@@ -730,6 +739,12 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             }
         }
         ("GET", path) if path.starts_with(slack_history_path) => {
+            if let Some((status_code, body)) = &state.slack_history_failure {
+                return HttpResponse {
+                    status_code: *status_code,
+                    body: body.clone(),
+                };
+            }
             let channel = query_param(path, "channel").unwrap_or_default();
             let include_all_metadata =
                 query_param(path, "include_all_metadata") == Some("true");

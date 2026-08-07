@@ -2,7 +2,12 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tracing::{debug, warn};
 
 use crate::core::model::{
@@ -24,6 +29,7 @@ pub struct SlackAppConfig {
 pub struct SlackAppSink {
     http: Client,
     config: SlackAppConfig,
+    thread_roots: Arc<Mutex<BTreeMap<String, String>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,11 +108,26 @@ struct SlackResponseMetadata {
     next_cursor: Option<String>,
 }
 
+#[derive(Debug)]
+struct SlackHttpError {
+    message: String,
+    retry_after: Option<Duration>,
+}
+
+impl std::fmt::Display for SlackHttpError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for SlackHttpError {}
+
 impl SlackAppSink {
     pub fn new(config: SlackAppConfig) -> Self {
         Self {
             http: Client::new(),
             config,
+            thread_roots: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -160,7 +181,25 @@ impl NotificationSink for SlackAppSink {
 
         if notification.prefer_thread_reply {
             if let Some(thread_key) = notification.thread_key.as_deref() {
-                match find_existing_thread_root_ts(
+                if let Some(root_ts) = self.cached_thread_root(conversation_key) {
+                    return deliver_thread_notification(
+                        &self.http,
+                        &post_message_endpoint,
+                        &update_message_endpoint,
+                        &format!("{base_url}/conversations.replies"),
+                        Some(bot_token),
+                        channel,
+                        &root_ts,
+                        conversation_key,
+                        notification,
+                        &subject,
+                        &text,
+                    )
+                    .await
+                    .map_err(|err| ConnectorError::Request(err.to_string()));
+                }
+
+                match find_existing_thread_root_ts_with_retry(
                     &self.http,
                     &format!("{base_url}/conversations.history"),
                     Some(bot_token),
@@ -171,6 +210,7 @@ impl NotificationSink for SlackAppSink {
                 .await
                 {
                     Ok(Some(root_ts)) => {
+                        self.remember_thread_root(conversation_key, &root_ts);
                         return deliver_thread_notification(
                             &self.http,
                             &post_message_endpoint,
@@ -188,12 +228,20 @@ impl NotificationSink for SlackAppSink {
                         .map_err(|err| ConnectorError::Request(err.to_string()));
                     }
                     Ok(None) => {}
-                    Err(err) => warn!(
-                        channel,
-                        thread_key,
-                        error = %err,
-                        "failed to resolve existing Slack thread; falling back to root post"
-                    ),
+                    Err(err) => {
+                        warn!(
+                            channel,
+                            thread_key,
+                            error = %err,
+                            "failed to resolve existing Slack thread; deferring notification"
+                        );
+                        return Ok(NotificationDeliveryReport {
+                            sink: self.kind(),
+                            delivered: false,
+                            destination: None,
+                            detail: Some("deferred: Slack thread lookup failed".to_string()),
+                        });
+                    }
                 }
             }
         }
@@ -211,6 +259,7 @@ impl NotificationSink for SlackAppSink {
         .map_err(|err| ConnectorError::Request(err.to_string()))?;
 
         if let Some(root_ts) = root_ts.as_deref() {
+            self.remember_thread_root(conversation_key, root_ts);
             return deliver_thread_notification(
                 &self.http,
                 &post_message_endpoint,
@@ -234,6 +283,21 @@ impl NotificationSink for SlackAppSink {
             destination: root_ts,
             detail: Some("sent".to_string()),
         })
+    }
+}
+
+impl SlackAppSink {
+    fn cached_thread_root(&self, conversation_key: &str) -> Option<String> {
+        self.thread_roots
+            .lock()
+            .ok()
+            .and_then(|roots| roots.get(conversation_key).cloned())
+    }
+
+    fn remember_thread_root(&self, conversation_key: &str, root_ts: &str) {
+        if let Ok(mut roots) = self.thread_roots.lock() {
+            roots.insert(conversation_key.to_string(), root_ts.to_string());
+        }
     }
 }
 
@@ -631,10 +695,15 @@ async fn slack_response_or_error(response: Response, operation: &str) -> Result<
         .await
         .unwrap_or_else(|error| format!("<unable to read Slack error response: {error}>"));
 
-    bail!(
-        "{}",
-        format_slack_http_error(operation, &status, retry_after.as_deref(), &body)
-    );
+    Err(SlackHttpError {
+        message: format_slack_http_error(operation, &status, retry_after.as_deref(), &body),
+        retry_after: retry_after.as_deref().and_then(parse_retry_after),
+    }
+    .into())
+}
+
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    value.trim().parse::<u64>().ok().map(Duration::from_secs)
 }
 
 fn format_slack_http_error(
@@ -746,6 +815,52 @@ async fn find_existing_thread_root_ts(
         }
 
         cursor = next_cursor;
+    }
+}
+
+async fn find_existing_thread_root_ts_with_retry(
+    http: &Client,
+    endpoint: &str,
+    bearer_token: Option<&str>,
+    channel: &str,
+    thread_key: &str,
+    conversation_key: &str,
+) -> Result<Option<String>> {
+    match find_existing_thread_root_ts(
+        http,
+        endpoint,
+        bearer_token,
+        channel,
+        thread_key,
+        conversation_key,
+    )
+    .await
+    {
+        Ok(root_ts) => Ok(root_ts),
+        Err(error) => {
+            let retry_after = error
+                .downcast_ref::<SlackHttpError>()
+                .and_then(|error| error.retry_after);
+            if let Some(retry_after) = retry_after {
+                warn!(
+                    channel,
+                    thread_key,
+                    retry_after_seconds = retry_after.as_secs(),
+                    "Slack thread lookup was rate-limited; retrying once"
+                );
+                tokio::time::sleep(retry_after).await;
+                return find_existing_thread_root_ts(
+                    http,
+                    endpoint,
+                    bearer_token,
+                    channel,
+                    thread_key,
+                    conversation_key,
+                )
+                .await;
+            }
+            Err(error)
+        }
     }
 }
 
@@ -912,6 +1027,19 @@ mod tests {
             rendered,
             "Slack conversations.history returned HTTP 429 Too Many Requests; retry_after=60s; body={\"ok\":false,\"error\":\"ratelimited\"}"
         );
+    }
+
+    #[test]
+    fn parses_slack_retry_after_seconds() {
+        assert_eq!(
+            parse_retry_after("10"),
+            Some(std::time::Duration::from_secs(10))
+        );
+        assert_eq!(
+            parse_retry_after(" 60 "),
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert_eq!(parse_retry_after("later"), None);
     }
 
     #[test]
