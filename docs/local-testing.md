@@ -230,7 +230,7 @@ What to check in Slack:
 - compact commit and CI updates are appended below the durable replies
 - reviewer mentions appear only in the REFINE reply
 
-`explain` appends the full advisory review to the existing Slack MR thread after the platform explain comment completes.
+`explain` creates or updates the existing durable advisory reply in the Slack MR thread after the platform explain comment completes; repeated runs update that managed reply.
 
 ## Config Path
 

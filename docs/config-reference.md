@@ -263,7 +263,7 @@ any = [
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `dry_run` | No | `false` | Prevents live platform writes in `refine` and `explain`. Live `observe` mutates intake labels by design. |
-| `notification_policy` | No | `always` | `always` or `on-applied-action`. Managed Slack stage updates and commit activity always run so their thread state remains current. Completed `explain` runs append their advisory reply when Slack is configured. |
+| `notification_policy` | No | `always` | `always` or `on-applied-action`. Managed Slack stage updates and commit activity always run so their thread state remains current. Completed `explain` runs create or update the current advisory reply when Slack is configured. |
 
 ### `[areas]` and `[[areas.definitions]]`
 
@@ -448,7 +448,7 @@ Useful review-comment placeholders include:
 
 `[templates.*].explain` controls the advisory comment owned by `explain`.
 
-Slack `thread_root`, `explain_thread`, `observe_*`, and `refine_thread` templates control the v5 notification path. `explain_thread` uses the review-comment placeholders and renders the full advisory explain output as a new append-only thread reply; it does not alter the GitLab or GitHub explain comment. The first/update Slack fields are still parsed for compatibility with existing TOML files, but observe/refine render through the command-specific fields.
+Slack `thread_root`, `explain_thread`, `observe_*`, and `refine_thread` templates control the v5 notification path. `explain_thread` uses the review-comment placeholders and renders the full advisory explain output as one durable thread reply, updated after later completed reviews; its footer carries a Slack viewer-local latest-review date and time. It does not alter the GitLab or GitHub explain comment. The first/update Slack fields are still parsed for compatibility with existing TOML files, but observe/refine render through the command-specific fields. Historical pre-5.2.1 append-only replies are left untouched.
 
 `[templates.risk_emojis]` controls the rendered value of `{{risk_emoji}}` for observe templates. `{{risk_emoji_suffix}}` renders as empty when no emoji is configured, or as a leading space followed by the configured emoji when present.
 
@@ -482,6 +482,6 @@ These still belong to the CI context layer, not the app config layer:
 ## Notes
 
 - Live `observe` mutates intake labels by design. `dry_run` only changes `refine` and `explain`; fixture observe remains dry-run.
-- Configured Slack notifications are sent during live `observe` and `refine`; `explain` does not notify Slack.
+- Configured Slack notifications are sent during live `observe`, `refine`, and `explain`; explain maintains one current advisory reply per MR thread.
 - Config validation is strict. Unknown TOML fields fail parsing, and legacy app-config env vars fail startup.
 - Platform and sink configuration must agree with compiled capabilities.

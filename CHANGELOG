@@ -7,6 +7,15 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.2.1] — 2026-09-01
+
+This patch release keeps advisory Slack threads current without adding a new review reply after every explain run.
+
+### Changed
+
+- `explain` now creates one managed advisory reply per Slack MR thread and updates it in place after later completed reviews, while historical append-only replies remain untouched.
+- The current Slack advisory reply ends with a viewer-local latest-review date and time so readers can tell when its contents were refreshed.
+
 ## [5.2.0] — 2026-08-07
 
 This minor release lets a repository put every eligible reviewer on a merge request instead of only the minimum needed to satisfy approval demand.

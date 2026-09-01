@@ -961,15 +961,56 @@ base_url = {slack_base_url}
             .contains("Mr. Milchick Advisory Explain")
     );
 
+    let second = run_cli(
+        "explain",
+        &[
+            "--fixture",
+            "fixtures/draft-explain.toml",
+            "--send-notifications",
+        ],
+        &[
+            ("MR_MILCHICK_CONFIG_PATH", config_path.as_str()),
+            ("MR_MILCHICK_SLACK_BOT_TOKEN", "xoxb-test"),
+            ("RUST_LOG", "off"),
+        ],
+    );
+    assert!(
+        second.status.success(),
+        "second explain fixture failed: {}\n{}",
+        String::from_utf8_lossy(&second.stderr),
+        String::from_utf8_lossy(&second.stdout)
+    );
+
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        2
+    );
+    assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 1);
+    let update_bodies = server.request_bodies("POST", "/slack/api/chat.update");
+    let update_payload: serde_json::Value =
+        serde_json::from_str(&update_bodies[0]).expect("Slack update should be JSON");
+    for payload in [&reply, &update_payload] {
+        assert_eq!(
+            payload["metadata"]["event_payload"]["message_key"],
+            serde_json::json!("slot:explain")
+        );
+        let text = payload["text"]
+            .as_str()
+            .expect("Slack review text should be a string");
+        assert!(text.contains("Mr. Milchick Advisory Explain"));
+        assert!(text.contains("The Board has reviewed the refinements. Latest review: <!date^"));
+        assert!(text.ends_with("^{date_long_pretty} at {time}|latest review time>._"));
+    }
+
     let _ = fs::remove_file(config_path);
 }
 
 #[test]
-fn version_command_reports_5_2_0() {
+fn version_command_reports_5_2_1() {
     let output = run_cli("version", &[], &[("RUST_LOG", "off")]);
 
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.2.0 ("));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.2.1 ("));
 }
 
 #[cfg(feature = "slack-app")]

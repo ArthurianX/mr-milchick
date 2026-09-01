@@ -89,7 +89,7 @@ This keeps merge logic out of `app.rs` and makes new features land in one place 
 - `dry_run` affects platform writes in `refine` and `explain`; live `observe` mutates labels by design, while fixture observe uses dry-run execution.
 - Notification delivery follows the resolved notification policy, not sink-specific heuristics.
 - `observe` and `refine` do not wire the inference backend.
-- `explain` never assigns reviewers, changes labels, or fails the pipeline. Its optional Slack delivery is append-only and does not update prior explain replies.
+- `explain` never assigns reviewers, changes labels, or fails the pipeline. Its platform explain comment is upserted first, followed by one durable Slack advisory reply per MR thread that is updated with each completed review.
 
 ## Current Implemented Surface
 

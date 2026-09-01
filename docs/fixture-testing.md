@@ -161,7 +161,7 @@ MR_MILCHICK_SLACK_BOT_TOKEN=xoxb-your-slack-bot-token \
 cargo run -- refine --fixture fixtures/first-notification.toml --send-notifications
 ```
 
-`explain` can send its append-only Slack advisory reply in fixture mode when invoked with `--send-notifications`.
+`explain` can send its durable Slack advisory reply in fixture mode when invoked with `--send-notifications`; repeated runs update the existing managed reply.
 
 ## Config Path
 

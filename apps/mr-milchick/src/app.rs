@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 #[cfg(feature = "github")]
@@ -1264,6 +1264,10 @@ fn build_explain_notifications(
     context: &crate::core::message_templates::SummaryTemplateContext,
     sink_kinds: &[NotificationSinkKind],
 ) -> Vec<NotificationMessage> {
+    let reviewed_at_epoch_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let thread_key = Some(format!("MR #{}", snapshot.review_ref.review_id));
     let conversation_key = Some(notification_conversation_key(snapshot));
 
@@ -1276,15 +1280,28 @@ fn build_explain_notifications(
                 "Mr. Milchick advisory explain for MR #{}",
                 snapshot.review_ref.review_id
             ),
-            body: render_slack_app_explain(template_catalog, context),
+            body: append_latest_review_footer(
+                &render_slack_app_explain(template_catalog, context),
+                reviewed_at_epoch_seconds,
+            ),
             audience: NotificationAudience::Default,
             severity: NotificationSeverity::Info,
             thread_key: thread_key.clone(),
             prefer_thread_reply: true,
             conversation_key: conversation_key.clone(),
-            delivery: NotificationDelivery::Append,
+            delivery: NotificationDelivery::UpsertThreadReply {
+                slot: "explain".to_string(),
+            },
         })
         .collect()
+}
+
+fn append_latest_review_footer(body: &str, reviewed_at_epoch_seconds: u64) -> String {
+    format!(
+        "{}\n\n_The Board has reviewed the refinements. Latest review: <!date^{}^{{date_long_pretty}} at {{time}}|latest review time>._",
+        body.trim_end(),
+        reviewed_at_epoch_seconds,
+    )
 }
 
 fn build_notifications(
@@ -2033,7 +2050,7 @@ mod tests {
     }
 
     #[test]
-    fn slack_explain_notification_appends_to_the_review_thread() {
+    fn slack_explain_notification_updates_the_latest_review_thread_slot() {
         let snapshot = sample_snapshot(Vec::new());
         let notifications = build_explain_notifications(
             &snapshot,
@@ -2056,13 +2073,31 @@ mod tests {
         );
         assert!(notifications[0].prefer_thread_reply);
         assert!(matches!(
-            notifications[0].delivery,
-            NotificationDelivery::Append
+            &notifications[0].delivery,
+            NotificationDelivery::UpsertThreadReply { slot } if slot == "explain"
         ));
         assert!(
             notifications[0]
                 .body
                 .contains("Mr. Milchick Advisory Explain")
+        );
+        assert!(
+            notifications[0]
+                .body
+                .contains("The Board has reviewed the refinements. Latest review: <!date^")
+        );
+        assert!(
+            notifications[0]
+                .body
+                .ends_with("^{date_long_pretty} at {time}|latest review time>._")
+        );
+    }
+
+    #[test]
+    fn latest_review_footer_uses_a_slack_viewer_local_timestamp() {
+        assert_eq!(
+            append_latest_review_footer("Advisory review", 1_788_220_800),
+            "Advisory review\n\n_The Board has reviewed the refinements. Latest review: <!date^1788220800^{date_long_pretty} at {time}|latest review time>._"
         );
     }
 
