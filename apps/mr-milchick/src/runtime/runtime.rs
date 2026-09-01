@@ -107,7 +107,7 @@ impl RuntimeWiring {
                 let managed_slack_lifecycle = matches!(
                     notification.delivery,
                     NotificationDelivery::UpsertThreadReply { .. }
-                        | NotificationDelivery::AppendCommitLog { .. }
+                        | NotificationDelivery::DirectPipelineFailure { .. }
                 );
                 let report = if let Some(reason) = notification_skip_reason
                     .as_ref()
@@ -208,8 +208,9 @@ fn notification_skip_reason(
 mod tests {
     use super::*;
     use crate::core::model::{
-        NotificationAudience, NotificationDeliveryReport, NotificationMessage,
-        NotificationSeverity, ReviewActionReport, ReviewSnapshot,
+        NotificationAudience, NotificationDelivery, NotificationDeliveryReport,
+        NotificationMessage, NotificationSeverity, ReviewActionKind, ReviewActionReport,
+        ReviewCommit, ReviewSnapshot,
     };
     use crate::runtime::{ConnectorError, ConnectorResult};
 
@@ -278,6 +279,31 @@ mod tests {
         }
     }
 
+    fn sample_slack_failure_notification() -> NotificationMessage {
+        NotificationMessage {
+            sink: NotificationSinkKind::SlackApp,
+            subject: String::new(),
+            body: String::new(),
+            audience: NotificationAudience::User("arthur".to_string()),
+            severity: NotificationSeverity::Critical,
+            thread_key: None,
+            prefer_thread_reply: false,
+            conversation_key: Some("gitlab:412:3995".to_string()),
+            delivery: NotificationDelivery::DirectPipelineFailure {
+                review_url: "https://gitlab.example.com/mr/3995".to_string(),
+                review_label: "MR #3995".to_string(),
+                head_commit: ReviewCommit {
+                    id: "2222222222222222222222222222222222222222".to_string(),
+                    title: "Second".to_string(),
+                    web_url:
+                        "https://gitlab.example.com/commit/2222222222222222222222222222222222222222"
+                            .to_string(),
+                },
+                failed_checks: vec!["lint".to_string()],
+            },
+        }
+    }
+
     #[tokio::test]
     async fn reports_notification_sink_failure_without_failing_delivery() {
         let reports = wiring_with_failing_slack_sink()
@@ -292,6 +318,33 @@ mod tests {
 
         assert_eq!(reports.len(), 1);
         assert!(!reports[0].delivered);
+        assert!(
+            reports[0]
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("Slack unavailable"))
+        );
+    }
+
+    #[tokio::test]
+    async fn failure_dm_bypasses_on_applied_action_notification_policy() {
+        let reports = wiring_with_failing_slack_sink()
+            .deliver_notifications(
+                ExecutionStrategy::Real,
+                NotificationPolicy::OnAppliedAction,
+                &[sample_slack_failure_notification()],
+                &ReviewActionReport {
+                    applied: Vec::new(),
+                    skipped: vec![crate::core::model::SkippedReviewAction {
+                        action: ReviewActionKind::AssignReviewers,
+                        reason: "unchanged".to_string(),
+                    }],
+                },
+            )
+            .await
+            .expect("notification failures should be reported, not returned");
+
+        assert_eq!(reports.len(), 1);
         assert!(
             reports[0]
                 .detail

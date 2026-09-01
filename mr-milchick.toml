@@ -241,8 +241,10 @@ notification_policy = "always"
 # Optional Slack API base URL override for tests and local mocks.
 # base_url = "https://slack.com/api"
 
-# Optional mapping from review-platform usernames to Slack user IDs.
-# This lets Milkchick rewrite mentions like `@alice` into `<@U123...>`.
+# Mapping from review-platform usernames to Slack user IDs. Required for
+# parsed pipeline-failure DMs to review authors; missing mappings never fall
+# back to the shared channel. Also rewrites mentions like `@alice` into
+# `<@U123...>`.
     # [notifications.slack_app.user_map]
 # "arthur" = "U028DDKDJ4E"
 # "principal-reviewer" = "U03D9NN5HB6"

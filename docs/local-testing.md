@@ -190,7 +190,7 @@ base_url = "https://slack.com/api"
 "bob" = "U07654321"
 ```
 
-The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages, read channel history, and read Milchick's message metadata so it can find the existing review thread and its durable stage replies. In Slack OAuth terms, that means `chat:write`, `metadata.message:read`, plus the relevant history scope for the channel type you use.
+The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages, read channel history, read Milchick's message metadata, and open/read direct messages. In Slack OAuth terms, that means `chat:write`, `metadata.message:read`, `im:write`, `im:history`, plus the relevant shared-channel history scope (`channels:history` or `groups:history`). Reinstall the app after scope changes. Author DMs require a valid `[notifications.slack_app.user_map]` entry and never fall back to the shared channel.
 
 Secrets stay in env. First run `observe`; it should create the root MR message and a thread reply:
 
@@ -227,7 +227,7 @@ What to check in Slack:
 - one channel-level root message for the MR, containing `MR #3995`
 - OBSERVE intake details appear as a durable thread reply that is updated in place
 - REFINE details appear as a second durable thread reply that is updated in place
-- compact commit and CI updates are appended below the durable replies
+- a parsed CI failure creates one author DM per failing head commit; passed and unknown statuses create no activity message
 - reviewer mentions appear only in the REFINE reply
 
 `explain` creates or updates the existing durable advisory reply in the Slack MR thread after the platform explain comment completes; repeated runs update that managed reply.

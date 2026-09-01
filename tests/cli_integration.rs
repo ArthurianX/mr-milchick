@@ -512,7 +512,7 @@ enabled = false
     #[cfg(feature = "slack-app")]
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        3
+        2
     );
     let _ = fs::remove_file(config_path);
 }
@@ -583,13 +583,12 @@ base_url = {slack_base_url}
         second_stdout.contains("[Notification SlackApp] delivered=true updated"),
         "stdout was:\n{second_stdout}"
     );
-    assert!(second_stdout.contains("[Notification SlackApp] delivered=false already present"));
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        3
+        2
     );
     let _ = fs::remove_file(config_path);
 }
@@ -654,13 +653,12 @@ base_url = {slack_base_url}
     let second_stdout = String::from_utf8_lossy(&second.stdout);
     assert!(second_stdout.contains("[CommentSkippedAlreadyPresent] Mr. Milchick summary comment"));
     assert!(second_stdout.contains("[Notification SlackApp] delivered=true updated"));
-    assert!(second_stdout.contains("[Notification SlackApp] delivered=false already present"));
 
     assert_eq!(server.request_count("POST", &review_comments_path()), 1);
     assert_eq!(server.note_bodies().len(), 1);
     assert_eq!(
         server.request_count("POST", "/slack/api/chat.postMessage"),
-        3
+        2
     );
     assert_eq!(server.request_count("POST", "/slack/api/chat.update"), 1);
     let _ = fs::remove_file(config_path);
@@ -789,7 +787,7 @@ thread_root = "Template override for {{mr_ref}}"
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 3);
+    assert_eq!(bodies.len(), 2);
     assert!(
         bodies
             .iter()
@@ -845,7 +843,7 @@ update_root = "Template override for {{unknown_placeholder}}"
     );
 
     let bodies = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(bodies.len(), 3);
+    assert_eq!(bodies.len(), 2);
     assert!(
         bodies
             .iter()
@@ -1006,11 +1004,11 @@ base_url = {slack_base_url}
 }
 
 #[test]
-fn version_command_reports_5_2_1() {
+fn version_command_reports_5_2_2() {
     let output = run_cli("version", &[], &[("RUST_LOG", "off")]);
 
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.2.1 ("));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("mr-milchick 5.2.2 ("));
 }
 
 #[cfg(feature = "slack-app")]

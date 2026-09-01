@@ -19,7 +19,7 @@ Implemented now:
 - `refine`: fast governance execution plus optional notifications
 - `explain`: slower advisory follow-up that upserts the managed explain comment and creates or updates one current advisory reply in the Slack MR thread
 
-`observe` and `refine` can change labels, fail the pipeline, and deliver configured Slack notifications. Only `refine` assigns reviewers and owns the governance summary comment. `explain` creates or updates one durable advisory reply after the platform explain comment completes. The current reply ends with a Slack viewer-local latest-review date and time; historical append-only replies remain untouched. The Slack app keeps one root per review, updates durable stage replies in place, and appends commit/CI activity beneath them.
+`observe` and `refine` can change labels, fail the pipeline, and deliver configured Slack notifications. Only `refine` assigns reviewers and owns the governance summary comment. `explain` creates or updates one durable advisory reply after the platform explain comment completes. The current reply ends with a Slack viewer-local latest-review date and time; historical append-only replies remain untouched. The Slack app keeps one root per review and updates durable stage replies in place. Parsed failures create one DM to the mapped review author per failing head commit; passed and unknown statuses create no activity message, and missing mappings never fall back to the shared channel.
 
 ## Cargo Features
 

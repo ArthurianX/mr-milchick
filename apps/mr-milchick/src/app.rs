@@ -1238,21 +1238,7 @@ fn build_observe_notifications(
                     slot: "observe".to_string(),
                 },
             };
-            let commit_log = plan.should_fail().then(|| NotificationMessage {
-                sink: *sink,
-                subject,
-                body: String::new(),
-                audience: NotificationAudience::Default,
-                severity: NotificationSeverity::Critical,
-                thread_key: thread_key.clone(),
-                prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
-                conversation_key: conversation_key.clone(),
-                delivery: NotificationDelivery::AppendCommitLog {
-                    commits: snapshot.metadata.commits.clone(),
-                    ci_summary: "🔴 CI: blocked at intake".to_string(),
-                },
-            });
-            Some(std::iter::once(stage).chain(commit_log))
+            Some(std::iter::once(stage))
         })
         .flatten()
         .collect()
@@ -1332,11 +1318,6 @@ fn build_notifications(
     );
 
     let conversation_key = Some(notification_conversation_key(snapshot));
-    let ci_summary = if blocked {
-        "🔴 CI: blocked by governance".to_string()
-    } else {
-        pipeline_ci_summary(pipeline_statuses)
-    };
     sink_kinds
         .iter()
         .filter_map(|sink| {
@@ -1361,25 +1342,47 @@ fn build_notifications(
                     slot: "refine".to_string(),
                 },
             };
-            let commit_log = NotificationMessage {
-                sink: *sink,
-                subject,
-                body: String::new(),
-                audience: NotificationAudience::Default,
-                severity: if blocked {
-                    NotificationSeverity::Critical
-                } else {
-                    NotificationSeverity::Info
-                },
-                thread_key,
-                prefer_thread_reply: matches!(*sink, NotificationSinkKind::SlackApp),
-                conversation_key: conversation_key.clone(),
-                delivery: NotificationDelivery::AppendCommitLog {
-                    commits: snapshot.metadata.commits.clone(),
-                    ci_summary: ci_summary.clone(),
-                },
+            let failure = if matches!(*sink, NotificationSinkKind::SlackApp) {
+                let failed_checks = pipeline_statuses
+                    .iter()
+                    .filter(|status| status.state == PipelineStatusState::Failed)
+                    .map(|status| status.label.clone())
+                    .collect::<Vec<_>>();
+                snapshot
+                    .review_ref
+                    .web_url
+                    .clone()
+                    .zip(snapshot.metadata.commits.last().cloned())
+                    .filter(|(review_url, _)| {
+                        !failed_checks.is_empty() && !review_url.trim().is_empty()
+                    })
+                    .map(|(review_url, head_commit)| NotificationMessage {
+                        sink: *sink,
+                        subject: String::new(),
+                        body: String::new(),
+                        audience: NotificationAudience::User(snapshot.author.username.clone()),
+                        severity: NotificationSeverity::Critical,
+                        thread_key: None,
+                        prefer_thread_reply: false,
+                        conversation_key: conversation_key.clone(),
+                        delivery: NotificationDelivery::DirectPipelineFailure {
+                            review_url,
+                            review_label: match snapshot.review_ref.platform {
+                                ReviewPlatformKind::GitLab => {
+                                    format!("MR #{}", snapshot.review_ref.review_id)
+                                }
+                                ReviewPlatformKind::GitHub => {
+                                    format!("PR #{}", snapshot.review_ref.review_id)
+                                }
+                            },
+                            head_commit,
+                            failed_checks,
+                        },
+                    })
+            } else {
+                None
             };
-            Some([stage, commit_log])
+            Some(std::iter::once(stage).chain(failure))
         })
         .flatten()
         .collect()
@@ -1392,27 +1395,6 @@ fn notification_conversation_key(snapshot: &crate::core::model::ReviewSnapshot) 
         snapshot.review_ref.project_key,
         snapshot.review_ref.review_id
     )
-}
-
-fn pipeline_ci_summary(statuses: &[PipelineStatusTemplateEntry]) -> String {
-    if statuses.is_empty() {
-        return "🟡 CI: status unavailable".to_string();
-    }
-    let passed = statuses
-        .iter()
-        .filter(|status| status.state == PipelineStatusState::Passed)
-        .count();
-    let icon = if statuses
-        .iter()
-        .any(|status| status.state == PipelineStatusState::Failed)
-    {
-        "🔴"
-    } else if passed == statuses.len() {
-        "🟢"
-    } else {
-        "🟡"
-    };
-    format!("{icon} CI: {passed}/{} passed", statuses.len())
 }
 
 fn load_pipeline_status_entries(config: &ResolvedConfig) -> Vec<PipelineStatusTemplateEntry> {
@@ -1872,7 +1854,8 @@ mod tests {
         ReviewContextRef, ReviewId,
     };
     use crate::core::model::{
-        Actor, ChangeType, ChangedFile, RepositoryRef, ReviewMetadata, ReviewRef, ReviewSnapshot,
+        Actor, ChangeType, ChangedFile, RepositoryRef, ReviewCommit, ReviewMetadata, ReviewRef,
+        ReviewSnapshot,
     };
     use crate::core::rules::model::{FindingSeverity, RuleFinding};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2173,7 +2156,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications.len(), 1);
         assert!(
             notifications[0]
                 .body
@@ -2184,6 +2167,63 @@ mod tests {
                 .body
                 .contains("Local review recommendations")
         );
+    }
+
+    #[test]
+    fn failed_pipeline_builds_one_author_failure_dm_without_compact_activity() {
+        let outcome = RuleOutcome::new();
+        let mut snapshot = sample_snapshot(Vec::new());
+        snapshot.metadata.commits = vec![ReviewCommit {
+            id: "2222222222222222222222222222222222222222".to_string(),
+            title: "Second".to_string(),
+            web_url: "https://gitlab.example.com/commit/2222222222222222222222222222222222222222"
+                .to_string(),
+        }];
+        let notifications = build_notifications(
+            &outcome,
+            &snapshot,
+            &TemplateCatalog::default(),
+            &ToneSelector::default(),
+            &sample_context(),
+            &[
+                PipelineStatusTemplateEntry {
+                    label: "unit-tests".to_string(),
+                    state: PipelineStatusState::Passed,
+                    detail: None,
+                },
+                PipelineStatusTemplateEntry {
+                    label: "lint".to_string(),
+                    state: PipelineStatusState::Failed,
+                    detail: Some("1 error".to_string()),
+                },
+            ],
+            &[NotificationSinkKind::SlackApp],
+            None,
+        );
+
+        assert_eq!(
+            notifications
+                .iter()
+                .filter(|message| matches!(
+                    message.delivery,
+                    NotificationDelivery::DirectPipelineFailure { .. }
+                ))
+                .count(),
+            1
+        );
+        let failure = notifications
+            .iter()
+            .find(|message| {
+                matches!(
+                    message.delivery,
+                    NotificationDelivery::DirectPipelineFailure { .. }
+                )
+            })
+            .expect("failure DM should be present");
+        assert!(matches!(
+            failure.audience,
+            NotificationAudience::User(ref username) if username == "arthur"
+        ));
     }
 
     #[test]
@@ -2208,7 +2248,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications.len(), 1);
         assert!(
             notifications[0]
                 .subject
@@ -2255,7 +2295,7 @@ mod tests {
             &[NotificationSinkKind::SlackApp],
         );
 
-        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].sink, NotificationSinkKind::SlackApp);
         assert!(notifications[0].prefer_thread_reply);
         assert!(notifications[0].body.contains("Description: missing"));

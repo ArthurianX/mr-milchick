@@ -244,9 +244,11 @@ pub enum NotificationDelivery {
     UpsertThreadReply {
         slot: String,
     },
-    AppendCommitLog {
-        commits: Vec<ReviewCommit>,
-        ci_summary: String,
+    DirectPipelineFailure {
+        review_url: String,
+        review_label: String,
+        head_commit: ReviewCommit,
+        failed_checks: Vec<String>,
     },
 }
 

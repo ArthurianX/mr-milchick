@@ -151,7 +151,7 @@ Set:
 
 - `MR_MILCHICK_SLACK_BOT_TOKEN`
 
-The installed Slack app needs `chat:write`, `metadata.message:read`, and the relevant conversation-history scope (`channels:history` for public channels or `groups:history` for private channels).
+The installed Slack app needs `chat:write`, `metadata.message:read`, `im:write`, `im:history`, and the relevant shared-channel history scope (`channels:history` for public channels or `groups:history` for private channels). Reinstall the Slack app after changing scopes. A valid `[notifications.slack_app.user_map]` entry is required for author failure DMs; missing mappings never fall back to the shared channel.
 
 ## Interpolation Notes
 
@@ -163,7 +163,7 @@ The installed Slack app needs `chat:write`, `metadata.message:read`, and the rel
 
 ## Optional Prior-Job Status Input
 
-Some internal CI setups have earlier jobs write compact JSON files under `milchick-status/` directories and then let Milchick include those results in Slack notifications.
+Some internal CI setups have earlier jobs write JSON files under `milchick-status/` directories and then let Milchick include those results in Slack notifications. A parsed failure sends one author DM per failing head commit; passed and unknown results do not create activity messages.
 
 If you use that pattern, enable:
 

@@ -132,7 +132,7 @@ milchick:review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and optional user mapping now live in `mr-milchick.toml`. The Slack app keeps one root per review, updates the durable `observe` and `refine` replies in place, and appends compact commit/CI lines beneath them. A deeper setup guide lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
+To make that pipeline work, store `GITLAB_TOKEN` as a CI secret. This build shape includes Slack app support, so you can enable it in `mr-milchick.toml` whenever you are ready and then provide `MR_MILCHICK_SLACK_BOT_TOKEN` as the secret input for the sink. Channel selection, Slack base URL overrides for tests, and author user mapping now live in `mr-milchick.toml`. The Slack app keeps one root per review and updates durable `observe` and `refine` replies in place. Parsed failures create one DM to the mapped review author per failing head commit; passed and unknown statuses create no activity message. A deeper setup guide lives in [docs/ci-quickstart.md](docs/ci-quickstart.md).
 
 Some internal teams also use an optional convention where earlier CI jobs write compact JSON files under `*/milchick-status/*.json`, and Milchick later folds those prior-job outcomes into Slack notifications. That path is intentionally optional and documented in the configuration and template guides rather than treated as a required workflow.
 

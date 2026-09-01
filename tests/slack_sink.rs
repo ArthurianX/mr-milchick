@@ -277,66 +277,123 @@ async fn updates_durable_stage_reply_instead_of_appending_another_message() {
 }
 
 #[tokio::test]
-async fn appends_only_new_commits_as_a_ci_summary_with_a_bulleted_list() {
+async fn sends_pipeline_failure_to_author_dm_and_deduplicates_same_head() {
     let server = MockGitLabServer::start();
+    let mut user_map = BTreeMap::new();
+    user_map.insert("arthur".to_string(), "U01234567".to_string());
     let sink = SlackAppSink::new(SlackAppConfig {
         enabled: true,
         base_url: server.slack_api_base_url(),
         bot_token: Some("xoxb-test".to_string()),
         channel: Some("C0ALY38CW3X".to_string()),
-        user_map: BTreeMap::new(),
+        user_map,
     });
     let commits = vec![commit("11111111", "First"), commit("22222222", "Second")];
     let mut notification = NotificationMessage {
         sink: NotificationSinkKind::SlackApp,
         subject: "Mr. Milchick is observing MR #3995".to_string(),
         body: String::new(),
-        audience: NotificationAudience::Default,
+        audience: NotificationAudience::User("arthur".to_string()),
         severity: NotificationSeverity::Info,
-        thread_key: Some("MR #3995".to_string()),
-        prefer_thread_reply: true,
+        thread_key: None,
+        prefer_thread_reply: false,
         conversation_key: Some("gitlab:412:3995".to_string()),
-        delivery: NotificationDelivery::AppendCommitLog {
-            commits,
-            ci_summary: "🟢 CI: 18/18 passed".to_string(),
+        delivery: NotificationDelivery::DirectPipelineFailure {
+            review_url: "https://gitlab.example.com/group/project/-/merge_requests/3995"
+                .to_string(),
+            review_label: "MR #3995".to_string(),
+            head_commit: commits[1].clone(),
+            failed_checks: vec!["lint".to_string()],
         },
     };
 
     sink.send(&notification)
         .await
-        .expect("first commit send should succeed");
-    notification.delivery = NotificationDelivery::AppendCommitLog {
-        commits: vec![
-            commit("11111111", "First"),
-            commit("22222222", "Second"),
-            commit("33333333", "Third"),
-            commit("44444444", "Fourth"),
-        ],
-        ci_summary: "🔴 CI: 16/18 passed".to_string(),
+        .expect("first failure send should succeed");
+    notification.delivery = NotificationDelivery::DirectPipelineFailure {
+        review_url: "https://gitlab.example.com/group/project/-/merge_requests/3995".to_string(),
+        review_label: "MR #3995".to_string(),
+        head_commit: commit("4444444444444444444444444444444444444444", "Fourth"),
+        failed_checks: vec!["lint".to_string()],
     };
     sink.send(&notification)
         .await
-        .expect("new commits should send");
-    sink.send(&notification)
+        .expect("new head should send");
+    notification.delivery = NotificationDelivery::DirectPipelineFailure {
+        review_url: "https://gitlab.example.com/group/project/-/merge_requests/3995".to_string(),
+        review_label: "MR #3995".to_string(),
+        head_commit: commit("4444444444444444444444444444444444444444", "Fourth"),
+        failed_checks: vec!["lint".to_string()],
+    };
+    let duplicate = sink
+        .send(&notification)
         .await
-        .expect("duplicate should be skipped");
+        .expect("duplicate should succeed");
+    assert!(!duplicate.delivered);
+    assert_eq!(duplicate.detail.as_deref(), Some("already present"));
 
     let posts = server.request_bodies("POST", "/slack/api/chat.postMessage");
-    assert_eq!(posts.len(), 3);
-    let first_update: Value = serde_json::from_str(&posts[1]).expect("post should be JSON");
+    assert_eq!(posts.len(), 2);
+    let first = serde_json::from_str::<Value>(&posts[0]).expect("post should be JSON");
+    let second = serde_json::from_str::<Value>(&posts[1]).expect("post should be JSON");
+    for payload in [&first, &second] {
+        assert_eq!(payload["channel"], json!("D01234567"));
+        assert!(payload["thread_ts"].is_null());
+        assert!(payload["metadata"]["event_type"].is_string());
+    }
     assert!(
-        first_update["text"]
+        first["text"]
             .as_str()
             .unwrap()
-            .contains("`22222222` Second")
+            .contains("Change under test")
     );
-    assert!(!first_update["text"].as_str().unwrap().contains("First"));
-    let second_update: Value = serde_json::from_str(&posts[2]).expect("post should be JSON");
-    let text = second_update["text"].as_str().unwrap();
-    assert!(text.starts_with("🔴 CI: 16/18 passed\n"));
-    assert!(text.contains("`33333333` Third"));
-    assert!(text.contains("`44444444` Fourth"));
-    assert_eq!(text.lines().count(), 3);
+    assert!(first["text"].as_str().unwrap().contains("Failed checks"));
+    assert_eq!(
+        server.request_count("POST", "/slack/api/conversations.open"),
+        3
+    );
+}
+
+#[tokio::test]
+async fn skips_pipeline_failure_dm_without_valid_author_mapping_or_fallback() {
+    let server = MockGitLabServer::start();
+    let sink = SlackAppSink::new(SlackAppConfig {
+        enabled: true,
+        base_url: server.slack_api_base_url(),
+        bot_token: Some("xoxb-test".to_string()),
+        channel: Some("C0ALY38CW3X".to_string()),
+        user_map: BTreeMap::from([(String::from("arthur"), String::from("not-a-user-id"))]),
+    });
+    let notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: String::new(),
+        body: String::new(),
+        audience: NotificationAudience::User("arthur".to_string()),
+        severity: NotificationSeverity::Critical,
+        thread_key: None,
+        prefer_thread_reply: false,
+        conversation_key: Some("gitlab:412:3995".to_string()),
+        delivery: NotificationDelivery::DirectPipelineFailure {
+            review_url: "https://gitlab.example.com/mr/3995".to_string(),
+            review_label: "MR #3995".to_string(),
+            head_commit: commit("2222222222222222222222222222222222222222", "Second"),
+            failed_checks: vec!["lint".to_string()],
+        },
+    };
+
+    let report = sink
+        .send(&notification)
+        .await
+        .expect("skip should be reported");
+    assert!(!report.delivered);
+    assert_eq!(
+        server.request_count("POST", "/slack/api/conversations.open"),
+        0
+    );
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        0
+    );
 }
 
 #[tokio::test]

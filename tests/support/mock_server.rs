@@ -388,6 +388,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
     let issue_comments_path =
         format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
     let slack_post_message_path = "/slack/api/chat.postMessage";
+    let slack_open_path = "/slack/api/conversations.open";
     let slack_history_path = "/slack/api/conversations.history";
     let slack_replies_path = "/slack/api/conversations.replies";
     let slack_update_path = "/slack/api/chat.update";
@@ -706,6 +707,10 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: json!({"id": note_id}).to_string(),
             }
         }
+        ("POST", path) if path == slack_open_path => HttpResponse {
+            status_code: 200,
+            body: json!({"ok": true, "channel": {"id": "D01234567"}}).to_string(),
+        },
         ("POST", path) if path == slack_post_message_path => {
             let body: Value =
                 serde_json::from_str(&request.body).expect("Slack post should be JSON");

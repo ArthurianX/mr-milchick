@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     error::Error,
     sync::{Arc, Mutex},
     time::Duration,
@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 
 use crate::core::model::{
     NotificationAudience, NotificationDelivery, NotificationDeliveryReport, NotificationMessage,
-    NotificationSinkKind, ReviewCommit,
+    NotificationSinkKind,
 };
 use crate::runtime::{ConnectorError, ConnectorResult, NotificationSink};
 
@@ -72,6 +72,23 @@ struct SlackPostMessageResponse {
     ts: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct SlackConversationsOpenRequest<'a> {
+    users: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackConversationsOpenResponse {
+    ok: bool,
+    error: Option<String>,
+    channel: Option<SlackConversationChannel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackConversationChannel {
+    id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct SlackConversationsHistoryResponse {
     ok: bool,
@@ -99,8 +116,6 @@ struct SlackConversationMetadata {
 struct SlackConversationEventPayload {
     conversation_key: Option<String>,
     message_key: Option<String>,
-    #[serde(default)]
-    commit_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,7 +147,7 @@ impl SlackAppSink {
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.config.enabled && self.config.bot_token.is_some() && self.config.channel.is_some()
+        self.config.enabled && self.config.bot_token.is_some()
     }
 }
 
@@ -159,6 +174,44 @@ impl NotificationSink for SlackAppSink {
             self.config.bot_token.as_deref().ok_or_else(|| {
                 ConnectorError::Configuration("missing Slack bot token".to_string())
             })?;
+
+        if let NotificationDelivery::DirectPipelineFailure {
+            review_url,
+            review_label,
+            head_commit,
+            failed_checks,
+        } = &notification.delivery
+        {
+            let NotificationAudience::User(username) = &notification.audience else {
+                return Err(ConnectorError::Configuration(
+                    "DirectPipelineFailure requires a Slack user audience".to_string(),
+                ));
+            };
+            let Some(user_id) = normalize_slack_user_id(self.config.user_map.get(username)) else {
+                return Ok(NotificationDeliveryReport {
+                    sink: self.kind(),
+                    delivered: false,
+                    destination: None,
+                    detail: Some("author Slack user mapping unavailable".to_string()),
+                });
+            };
+            return deliver_direct_pipeline_failure(
+                &self.http,
+                base_url(&self.config),
+                bot_token,
+                user_id,
+                notification
+                    .conversation_key
+                    .as_deref()
+                    .unwrap_or("mr-milchick"),
+                review_url,
+                review_label,
+                head_commit,
+                failed_checks,
+            )
+            .await
+            .map_err(|err| ConnectorError::Request(err.to_string()));
+        }
 
         let channel = match &notification.audience {
             NotificationAudience::Default => self.config.channel.as_deref().ok_or_else(|| {
@@ -286,6 +339,10 @@ impl NotificationSink for SlackAppSink {
     }
 }
 
+fn base_url(config: &SlackAppConfig) -> String {
+    config.base_url.trim_end_matches('/').to_string()
+}
+
 impl SlackAppSink {
     fn cached_thread_root(&self, conversation_key: &str) -> Option<String> {
         self.thread_roots
@@ -349,6 +406,141 @@ async fn post_message(
     Ok(payload.ts.or(payload.channel))
 }
 
+async fn deliver_direct_pipeline_failure(
+    http: &Client,
+    base_url: String,
+    bearer_token: &str,
+    user_id: &str,
+    conversation_key: &str,
+    review_url: &str,
+    review_label: &str,
+    head_commit: &crate::core::model::ReviewCommit,
+    failed_checks: &[String],
+) -> Result<NotificationDeliveryReport> {
+    let open_endpoint = format!("{base_url}/conversations.open");
+    let payload = http
+        .post(&open_endpoint)
+        .json(&SlackConversationsOpenRequest { users: user_id })
+        .bearer_auth(bearer_token)
+        .send()
+        .await
+        .context("failed to send Slack conversations.open request")?
+        .error_for_status()
+        .context("Slack conversations.open returned an error status")?
+        .json::<SlackConversationsOpenResponse>()
+        .await
+        .context("failed to deserialize Slack conversations.open response")?;
+    if !payload.ok {
+        bail!(
+            "Slack conversations.open failed: {}",
+            payload.error.unwrap_or_else(|| "unknown error".to_string())
+        );
+    }
+    let channel = payload
+        .channel
+        .and_then(|channel| channel.id)
+        .filter(|channel| channel.starts_with('D'))
+        .ok_or_else(|| anyhow::anyhow!("Slack conversations.open returned no DM channel"))?;
+
+    let messages = load_channel_messages(
+        http,
+        &format!("{base_url}/conversations.history"),
+        Some(bearer_token),
+        &channel,
+    )
+    .await?;
+    let message_key = format!("pipeline-failure:{}", head_commit.id);
+    if let Some(existing_ts) = find_message_ts(&messages, conversation_key, &message_key) {
+        return Ok(NotificationDeliveryReport {
+            sink: NotificationSinkKind::SlackApp,
+            delivered: false,
+            destination: Some(existing_ts.to_string()),
+            detail: Some("already present".to_string()),
+        });
+    }
+
+    let checks = failed_checks
+        .iter()
+        .map(|check| escape_slack_text(check))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let short_id = head_commit.id.chars().take(8).collect::<String>();
+    let text = format!(
+        ":red_circle: CI failed for <{}|{}>.
+*Change under test:* <{}|`{}` {}>
+*Failed checks:* {}",
+        escape_slack_text(review_url),
+        escape_slack_text(review_label),
+        escape_slack_text(&head_commit.web_url),
+        short_id,
+        escape_slack_text(&head_commit.title),
+        checks,
+    );
+    let ts = post_message(
+        http,
+        &format!("{base_url}/chat.postMessage"),
+        Some(bearer_token),
+        &channel,
+        &text,
+        None,
+        Some(message_metadata(conversation_key, &message_key, None)),
+    )
+    .await?;
+
+    Ok(NotificationDeliveryReport {
+        sink: NotificationSinkKind::SlackApp,
+        delivered: true,
+        destination: ts.or(Some(channel)),
+        detail: Some("sent".to_string()),
+    })
+}
+
+async fn load_channel_messages(
+    http: &Client,
+    endpoint: &str,
+    bearer_token: Option<&str>,
+    channel: &str,
+) -> Result<Vec<SlackConversationMessage>> {
+    let mut cursor: Option<String> = None;
+    let mut messages = Vec::new();
+    loop {
+        let mut request = http.get(endpoint).query(&[
+            ("channel", channel),
+            ("limit", "200"),
+            ("include_all_metadata", "true"),
+        ]);
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        if let Some(next_cursor) = cursor.as_deref() {
+            request = request.query(&[("cursor", next_cursor)]);
+        }
+        let payload = request
+            .send()
+            .await
+            .context("failed to send Slack conversations.history request")?
+            .error_for_status()
+            .context("Slack conversations.history returned an error status")?
+            .json::<SlackConversationsHistoryResponse>()
+            .await
+            .context("failed to deserialize Slack conversations.history response")?;
+        if !payload.ok {
+            bail!(
+                "Slack conversations.history failed: {}",
+                payload.error.unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+        messages.extend(payload.messages);
+        cursor = payload
+            .response_metadata
+            .and_then(|metadata| metadata.next_cursor)
+            .filter(|value| !value.trim().is_empty());
+        if cursor.is_none() {
+            return Ok(messages);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn deliver_thread_notification(
     http: &Client,
@@ -370,11 +562,13 @@ async fn deliver_thread_notification(
     };
     let messages = match &notification.delivery {
         NotificationDelivery::Append => Vec::new(),
-        NotificationDelivery::UpsertThreadReply { .. }
-        | NotificationDelivery::AppendCommitLog { .. } => {
+        NotificationDelivery::UpsertThreadReply { .. } => {
             load_thread_messages(http, replies_endpoint, bearer_token, channel, root_ts)
                 .await
                 .map_err(|err| ConnectorError::Request(err.to_string()))?
+        }
+        NotificationDelivery::DirectPipelineFailure { .. } => {
+            unreachable!("direct pipeline failures are delivered outside shared Slack threads")
         }
     };
     debug!(
@@ -452,51 +646,8 @@ async fn deliver_thread_notification(
                 (true, ts.or_else(|| Some(root_ts.to_string())), "sent")
             }
         }
-        NotificationDelivery::AppendCommitLog {
-            commits,
-            ci_summary,
-        } => {
-            let known_ids = known_commit_ids(&messages, conversation_key);
-            let new_commits = select_new_commits(commits, &known_ids);
-            debug!(
-                channel,
-                root_ts,
-                conversation_key,
-                commit_count = commits.len(),
-                known_commit_count = known_ids.len(),
-                new_commit_count = new_commits.len(),
-                head_commit_id = commits.last().map(|commit| commit.id.as_str()),
-                "selected commits for Slack activity line"
-            );
-            if new_commits.is_empty() {
-                (false, Some(root_ts.to_string()), "already present")
-            } else {
-                let commit_ids = new_commits
-                    .iter()
-                    .map(|commit| commit.id.clone())
-                    .collect::<Vec<_>>();
-                let message_key = format!(
-                    "commits:{}",
-                    commit_ids.last().map(String::as_str).unwrap_or_default()
-                );
-                let commit_text = render_commit_log_message(ci_summary, &new_commits);
-                let ts = post_message(
-                    http,
-                    post_endpoint,
-                    bearer_token,
-                    channel,
-                    &commit_text,
-                    Some(root_ts),
-                    Some(message_metadata(
-                        conversation_key,
-                        &message_key,
-                        Some(&commit_ids),
-                    )),
-                )
-                .await
-                .map_err(|err| ConnectorError::Request(err.to_string()))?;
-                (true, ts.or_else(|| Some(root_ts.to_string())), "sent")
-            }
+        NotificationDelivery::DirectPipelineFailure { .. } => {
+            unreachable!("direct pipeline failures are delivered outside shared Slack threads")
         }
     };
 
@@ -626,51 +777,6 @@ fn find_message_ts<'a>(
         .then_some(message.ts.as_deref())
         .flatten()
     })
-}
-
-fn known_commit_ids(
-    messages: &[SlackConversationMessage],
-    conversation_key: &str,
-) -> BTreeSet<String> {
-    messages
-        .iter()
-        .filter_map(|message| message.metadata.as_ref())
-        .filter(|metadata| metadata.event_type.as_deref() == Some("mr_milchick"))
-        .filter_map(|metadata| metadata.event_payload.as_ref())
-        .filter(|payload| payload.conversation_key.as_deref() == Some(conversation_key))
-        .flat_map(|payload| payload.commit_ids.iter().cloned())
-        .collect()
-}
-
-fn select_new_commits<'a>(
-    commits: &'a [ReviewCommit],
-    known_ids: &BTreeSet<String>,
-) -> Vec<&'a ReviewCommit> {
-    if commits.is_empty() {
-        return Vec::new();
-    }
-    if known_ids.is_empty() {
-        return commits.last().into_iter().collect();
-    }
-
-    let last_known = commits
-        .iter()
-        .rposition(|commit| known_ids.contains(&commit.id));
-    match last_known {
-        Some(index) => commits[index + 1..].iter().collect(),
-        None => commits.last().into_iter().collect(),
-    }
-}
-
-fn render_commit_log_message(ci_summary: &str, commits: &[&ReviewCommit]) -> String {
-    std::iter::once(ci_summary.trim().to_string())
-        .chain(commits.iter().map(|commit| {
-            let short_id = commit.id.chars().take(8).collect::<String>();
-            let title = escape_slack_text(&commit.title);
-            format!("• <{}|`{}` {}>", commit.web_url, short_id, title)
-        }))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn escape_slack_text(text: &str) -> String {
@@ -1040,60 +1146,5 @@ mod tests {
             Some(std::time::Duration::from_secs(60))
         );
         assert_eq!(parse_retry_after("later"), None);
-    }
-
-    #[test]
-    fn first_commit_log_records_only_the_current_head() {
-        let commits = sample_commits();
-
-        let selected = select_new_commits(&commits, &BTreeSet::new());
-
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].id, "3333333333333333");
-    }
-
-    #[test]
-    fn later_commit_log_records_every_commit_after_the_last_known_one() {
-        let commits = sample_commits();
-        let known = BTreeSet::from(["1111111111111111".to_string()]);
-
-        let selected = select_new_commits(&commits, &known);
-
-        assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0].id, "2222222222222222");
-        assert_eq!(selected[1].id, "3333333333333333");
-    }
-
-    #[test]
-    fn renders_commit_and_ci_update_as_a_bulleted_list() {
-        let commits = sample_commits();
-        let selected = vec![&commits[1], &commits[2]];
-
-        let rendered = render_commit_log_message("🟢 CI: 18/18 passed", &selected);
-
-        assert_eq!(rendered.lines().count(), 3);
-        assert_eq!(rendered.lines().next(), Some("🟢 CI: 18/18 passed"));
-        assert!(rendered.contains("• <https://example.test/2|`22222222` Second commit>"));
-        assert!(rendered.contains("• <https://example.test/3|`33333333` Third commit>"));
-    }
-
-    fn sample_commits() -> Vec<ReviewCommit> {
-        vec![
-            ReviewCommit {
-                id: "1111111111111111".to_string(),
-                title: "First commit".to_string(),
-                web_url: "https://example.test/1".to_string(),
-            },
-            ReviewCommit {
-                id: "2222222222222222".to_string(),
-                title: "Second commit".to_string(),
-                web_url: "https://example.test/2".to_string(),
-            },
-            ReviewCommit {
-                id: "3333333333333333".to_string(),
-                title: "Third commit".to_string(),
-                web_url: "https://example.test/3".to_string(),
-            },
-        ]
     }
 }

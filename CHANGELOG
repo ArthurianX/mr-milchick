@@ -7,6 +7,16 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.2.2] — 2026-09-01
+
+This patch release moves actionable CI failure activity out of shared Slack review threads.
+
+### Changed
+
+- Slack no longer appends compact commit and passing/failing CI activity messages to shared MR/PR threads; their root and durable stage replies remain unchanged.
+- A parsed CI failure now sends the review author one direct message per failing head commit, with links to the review and the change under test. Passed, unknown, unavailable, and governance-only outcomes do not send a DM.
+- Author DMs require a valid `[notifications.slack_app.user_map]` entry plus Slack `im:write` and `im:history` scopes; missing mappings never fall back to the shared channel.
+
 ## [5.2.1] — 2026-09-01
 
 This patch release keeps advisory Slack threads current without adding a new review reply after every explain run.
