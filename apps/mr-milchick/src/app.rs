@@ -1348,15 +1348,16 @@ fn build_notifications(
                     .filter(|status| status.state == PipelineStatusState::Failed)
                     .map(|status| status.label.clone())
                     .collect::<Vec<_>>();
-                snapshot
-                    .review_ref
-                    .web_url
-                    .clone()
-                    .zip(snapshot.metadata.commits.last().cloned())
-                    .filter(|(review_url, _)| {
-                        !failed_checks.is_empty() && !review_url.trim().is_empty()
-                    })
-                    .map(|(review_url, head_commit)| NotificationMessage {
+                if failed_checks.is_empty() {
+                    None
+                } else if let Some(missing) = missing_pipeline_failure_prerequisites(
+                    snapshot.review_ref.web_url.as_deref(),
+                    snapshot.metadata.commits.last(),
+                ) {
+                    warn!("skipping Slack pipeline failure DM: missing {missing}");
+                    None
+                } else {
+                    Some(NotificationMessage {
                         sink: *sink,
                         subject: String::new(),
                         body: String::new(),
@@ -1366,7 +1367,9 @@ fn build_notifications(
                         prefer_thread_reply: false,
                         conversation_key: conversation_key.clone(),
                         delivery: NotificationDelivery::DirectPipelineFailure {
-                            review_url,
+                            review_url: snapshot.review_ref.web_url.clone().expect(
+                                "pipeline failure prerequisite review URL should be present",
+                            ),
                             review_label: match snapshot.review_ref.platform {
                                 ReviewPlatformKind::GitLab => {
                                     format!("MR #{}", snapshot.review_ref.review_id)
@@ -1375,10 +1378,13 @@ fn build_notifications(
                                     format!("PR #{}", snapshot.review_ref.review_id)
                                 }
                             },
-                            head_commit,
+                            head_commit: snapshot.metadata.commits.last().cloned().expect(
+                                "pipeline failure prerequisite head commit should be present",
+                            ),
                             failed_checks,
                         },
                     })
+                }
             } else {
                 None
             };
@@ -1386,6 +1392,20 @@ fn build_notifications(
         })
         .flatten()
         .collect()
+}
+
+fn missing_pipeline_failure_prerequisites(
+    review_url: Option<&str>,
+    head_commit: Option<&crate::core::model::ReviewCommit>,
+) -> Option<String> {
+    let mut missing = Vec::new();
+    if review_url.is_none_or(|url| url.trim().is_empty()) {
+        missing.push("review URL");
+    }
+    if head_commit.is_none() {
+        missing.push("head commit");
+    }
+    (!missing.is_empty()).then(|| missing.join(" and "))
 }
 
 fn notification_conversation_key(snapshot: &crate::core::model::ReviewSnapshot) -> String {
@@ -2224,6 +2244,113 @@ mod tests {
             failure.audience,
             NotificationAudience::User(ref username) if username == "arthur"
         ));
+    }
+
+    #[test]
+    fn pipeline_failure_prerequisite_warning_names_only_missing_fields() {
+        assert_eq!(
+            missing_pipeline_failure_prerequisites(None, None),
+            Some("review URL and head commit".to_string())
+        );
+        assert_eq!(
+            missing_pipeline_failure_prerequisites(Some("https://example.test/mr"), None),
+            Some("head commit".to_string())
+        );
+        assert_eq!(
+            missing_pipeline_failure_prerequisites(
+                None,
+                Some(&crate::core::model::ReviewCommit {
+                    id: "abc".to_string(),
+                    title: "title".to_string(),
+                    web_url: "https://example.test/commit/abc".to_string(),
+                })
+            ),
+            Some("review URL".to_string())
+        );
+        assert_eq!(
+            missing_pipeline_failure_prerequisites(
+                Some("https://example.test/mr"),
+                Some(&crate::core::model::ReviewCommit {
+                    id: "abc".to_string(),
+                    title: "title".to_string(),
+                    web_url: "https://example.test/commit/abc".to_string(),
+                })
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn parsed_failure_negative_matrix_never_builds_a_direct_alert() {
+        let cases = [
+            vec![PipelineStatusTemplateEntry {
+                label: "pending".to_string(),
+                state: PipelineStatusState::Unknown,
+                detail: None,
+            }],
+            Vec::new(),
+            vec![PipelineStatusTemplateEntry {
+                label: "lint".to_string(),
+                state: PipelineStatusState::Passed,
+                detail: None,
+            }],
+        ];
+        let outcome = RuleOutcome {
+            findings: vec![RuleFinding {
+                severity: FindingSeverity::Blocking,
+                message: "governance only".to_string(),
+            }],
+            action_plan: ActionPlan::new(),
+        };
+        for statuses in cases {
+            let messages = build_notifications(
+                &outcome,
+                &sample_snapshot(Vec::new()),
+                &TemplateCatalog::default(),
+                &ToneSelector::default(),
+                &sample_context(),
+                &statuses,
+                &[NotificationSinkKind::SlackApp],
+                None,
+            );
+            assert!(messages.iter().all(|message| !matches!(
+                message.delivery,
+                NotificationDelivery::DirectPipelineFailure { .. }
+            )));
+        }
+
+        let failed_status = [PipelineStatusTemplateEntry {
+            label: "lint".to_string(),
+            state: PipelineStatusState::Failed,
+            detail: Some("details stay in the durable reply".to_string()),
+        }];
+        for snapshot in [
+            {
+                let mut snapshot = sample_snapshot(Vec::new());
+                snapshot.review_ref.web_url = None;
+                snapshot
+            },
+            {
+                let mut snapshot = sample_snapshot(Vec::new());
+                snapshot.metadata.commits.clear();
+                snapshot
+            },
+        ] {
+            let messages = build_notifications(
+                &RuleOutcome::new(),
+                &snapshot,
+                &TemplateCatalog::default(),
+                &ToneSelector::default(),
+                &sample_context(),
+                &failed_status,
+                &[NotificationSinkKind::SlackApp],
+                None,
+            );
+            assert!(messages.iter().all(|message| !matches!(
+                message.delivery,
+                NotificationDelivery::DirectPipelineFailure { .. }
+            )));
+        }
     }
 
     #[test]

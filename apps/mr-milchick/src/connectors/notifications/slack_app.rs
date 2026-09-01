@@ -195,15 +195,21 @@ impl NotificationSink for SlackAppSink {
                     detail: Some("author Slack user mapping unavailable".to_string()),
                 });
             };
+            let Some(conversation_key) = notification
+                .conversation_key
+                .as_deref()
+                .filter(|key| !key.trim().is_empty())
+            else {
+                return Err(ConnectorError::Configuration(
+                    "DirectPipelineFailure requires a review conversation key".to_string(),
+                ));
+            };
             return deliver_direct_pipeline_failure(
                 &self.http,
                 base_url(&self.config),
                 bot_token,
                 user_id,
-                notification
-                    .conversation_key
-                    .as_deref()
-                    .unwrap_or("mr-milchick"),
+                conversation_key,
                 review_url,
                 review_label,
                 head_commit,
@@ -1023,6 +1029,7 @@ fn normalize_slack_user_id(slack_user_id: Option<&String>) -> Option<&str> {
 fn is_valid_slack_user_id(slack_user_id: &str) -> bool {
     let mut chars = slack_user_id.chars();
     matches!(chars.next(), Some('U' | 'W'))
+        && chars.next().is_some()
         && chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
 }
 
@@ -1083,10 +1090,12 @@ mod tests {
     fn ignores_invalid_slack_user_ids() {
         let mut user_map = BTreeMap::new();
         user_map.insert("alice".to_string(), "not-a-slack-id".to_string());
+        user_map.insert("bare_u".to_string(), "U".to_string());
+        user_map.insert("bare_w".to_string(), "W".to_string());
 
-        let rendered = replace_gitlab_mentions("Assign @alice", &user_map);
+        let rendered = replace_gitlab_mentions("Assign @alice @bare_u @bare_w", &user_map);
 
-        assert_eq!(rendered, "Assign @alice");
+        assert_eq!(rendered, "Assign @alice @bare_u @bare_w");
     }
 
     #[test]

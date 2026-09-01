@@ -465,6 +465,48 @@ async fn skips_pipeline_failure_dm_when_author_mapping_is_missing() {
 }
 
 #[tokio::test]
+async fn rejects_pipeline_failure_dm_without_review_conversation_key() {
+    let server = MockGitLabServer::start();
+    let sink = SlackAppSink::new(SlackAppConfig {
+        enabled: true,
+        base_url: server.slack_api_base_url(),
+        bot_token: Some("xoxb-test".to_string()),
+        channel: Some("C0ALY38CW3X".to_string()),
+        user_map: BTreeMap::from([(String::from("arthur"), String::from("U01234567"))]),
+    });
+    let notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: String::new(),
+        body: String::new(),
+        audience: NotificationAudience::User("arthur".to_string()),
+        severity: NotificationSeverity::Critical,
+        thread_key: None,
+        prefer_thread_reply: false,
+        conversation_key: None,
+        delivery: NotificationDelivery::DirectPipelineFailure {
+            review_url: "https://gitlab.example.com/mr/3995".to_string(),
+            review_label: "MR #3995".to_string(),
+            head_commit: commit("2222222222222222222222222222222222222222", "Second"),
+            failed_checks: vec!["lint".to_string()],
+        },
+    };
+
+    let error = sink
+        .send(&notification)
+        .await
+        .expect_err("missing conversation key should be rejected");
+    assert!(error.to_string().contains("conversation key"));
+    assert_eq!(
+        server.request_count("POST", "/slack/api/conversations.open"),
+        0
+    );
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        0
+    );
+}
+
+#[tokio::test]
 async fn updates_durable_stage_reply_beyond_first_replies_page() {
     let server = MockGitLabServer::start();
     let sink = SlackAppSink::new(SlackAppConfig {
