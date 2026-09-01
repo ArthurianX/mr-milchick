@@ -44,7 +44,7 @@ explain
   -> gate on prior governance metadata
   -> optional advisory inference
   -> upsert separate advisory explain comment
-  -> append full advisory explain reply to the Slack MR thread
+  -> create or update one durable `explain`-slot reply in the Slack MR thread
 ```
 
 The three commands still share one deterministic planning path, but they now diverge more intentionally at the end.
@@ -53,7 +53,7 @@ The three commands still share one deterministic planning path, but they now div
 
 - `observe`: deterministic intake gate. It applies draft and risk labels, validates that a meaningful description exists, sends the intake Slack message into the MR thread, and exits nonzero when the first gate is not satisfied. It never invokes inference.
 - `refine`: fast governance execution. It applies reviewer or label actions, always upserts the deterministic governance summary comment, can deliver configured notifications, and fails the current pipeline when blocking policy remains unresolved.
-- `explain`: slow advisory follow-up. It first reloads Milchick's managed governance summary comment, parses the hidden metadata appended by `refine`, and skips itself when the latest governance pass reported no applied effect and no blocking outcome. When the gate passes, it runs advisory inference, upserts the managed explain comment, and appends the full Slack-native advisory review to the existing MR thread when the Slack app sink is configured.
+- `explain`: slow advisory follow-up. It first reloads Milchick's managed governance summary comment, parses the hidden metadata written by `refine`, and skips itself when the latest governance pass reported no applied effect and no blocking outcome. When the gate passes, it runs advisory inference, upserts the managed platform explain comment, then creates or updates one durable `explain`-slot reply in the existing Slack MR thread when the Slack app sink is configured.
 
 ## Managed Comments
 
