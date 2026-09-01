@@ -292,7 +292,7 @@ async fn sends_pipeline_failure_to_author_dm_and_deduplicates_same_head() {
     let mut notification = NotificationMessage {
         sink: NotificationSinkKind::SlackApp,
         subject: "Mr. Milchick is observing MR #3995".to_string(),
-        body: String::new(),
+        body: "status detail must not leak".to_string(),
         audience: NotificationAudience::User("arthur".to_string()),
         severity: NotificationSeverity::Info,
         thread_key: None,
@@ -338,20 +338,38 @@ async fn sends_pipeline_failure_to_author_dm_and_deduplicates_same_head() {
     let second = serde_json::from_str::<Value>(&posts[1]).expect("post should be JSON");
     for payload in [&first, &second] {
         assert_eq!(payload["channel"], json!("D01234567"));
-        assert!(payload["thread_ts"].is_null());
-        assert!(payload["metadata"]["event_type"].is_string());
+        assert!(!payload.as_object().unwrap().contains_key("thread_ts"));
+        assert_eq!(payload["metadata"]["event_type"], json!("mr_milchick"));
+        assert_eq!(
+            payload["metadata"]["event_payload"]["conversation_key"],
+            json!("gitlab:412:3995")
+        );
     }
-    assert!(
-        first["text"]
-            .as_str()
-            .unwrap()
-            .contains("Change under test")
+    assert_eq!(
+        first["text"],
+        json!(
+            ":red_circle: CI failed for <https://gitlab.example.com/group/project/-/merge_requests/3995|MR #3995>.\n*Change under test:* <https://gitlab.example.com/commit/22222222|`22222222` Second>\n*Failed checks:* lint"
+        )
     );
-    assert!(first["text"].as_str().unwrap().contains("Failed checks"));
+    assert!(!first["text"].as_str().unwrap().contains("status detail"));
+    assert_eq!(
+        first["metadata"]["event_payload"]["message_key"],
+        json!("pipeline-failure:22222222")
+    );
+    assert_eq!(
+        second["metadata"]["event_payload"]["message_key"],
+        json!("pipeline-failure:4444444444444444444444444444444444444444")
+    );
     assert_eq!(
         server.request_count("POST", "/slack/api/conversations.open"),
         3
     );
+    let opens = server.request_bodies("POST", "/slack/api/conversations.open");
+    assert_eq!(opens.len(), 3);
+    for open in opens {
+        let payload: Value = serde_json::from_str(&open).expect("open should be JSON");
+        assert_eq!(payload["users"], json!("U01234567"));
+    }
 }
 
 #[tokio::test]
@@ -386,6 +404,56 @@ async fn skips_pipeline_failure_dm_without_valid_author_mapping_or_fallback() {
         .await
         .expect("skip should be reported");
     assert!(!report.delivered);
+    assert_eq!(
+        report.detail.as_deref(),
+        Some("author Slack user mapping unavailable")
+    );
+    assert_eq!(
+        server.request_count("POST", "/slack/api/conversations.open"),
+        0
+    );
+    assert_eq!(
+        server.request_count("POST", "/slack/api/chat.postMessage"),
+        0
+    );
+}
+
+#[tokio::test]
+async fn skips_pipeline_failure_dm_when_author_mapping_is_missing() {
+    let server = MockGitLabServer::start();
+    let sink = SlackAppSink::new(SlackAppConfig {
+        enabled: true,
+        base_url: server.slack_api_base_url(),
+        bot_token: Some("xoxb-test".to_string()),
+        channel: Some("C0ALY38CW3X".to_string()),
+        user_map: BTreeMap::new(),
+    });
+    let notification = NotificationMessage {
+        sink: NotificationSinkKind::SlackApp,
+        subject: String::new(),
+        body: String::new(),
+        audience: NotificationAudience::User("arthur".to_string()),
+        severity: NotificationSeverity::Critical,
+        thread_key: None,
+        prefer_thread_reply: false,
+        conversation_key: Some("gitlab:412:3995".to_string()),
+        delivery: NotificationDelivery::DirectPipelineFailure {
+            review_url: "https://gitlab.example.com/mr/3995".to_string(),
+            review_label: "MR #3995".to_string(),
+            head_commit: commit("2222222222222222222222222222222222222222", "Second"),
+            failed_checks: vec!["lint".to_string()],
+        },
+    };
+
+    let report = sink
+        .send(&notification)
+        .await
+        .expect("missing mapping should be reported");
+    assert!(!report.delivered);
+    assert_eq!(
+        report.detail.as_deref(),
+        Some("author Slack user mapping unavailable")
+    );
     assert_eq!(
         server.request_count("POST", "/slack/api/conversations.open"),
         0
