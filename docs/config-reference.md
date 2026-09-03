@@ -138,6 +138,7 @@ trace = false
 enabled = true
 channel = "C0ALY38CW3X"
 base_url = "https://slack.com/api"
+pipeline_failure_dm_users = ["principal-reviewer"]
 
 [notifications.slack_app.user_map]
 "principal-reviewer" = "U01234567"
@@ -353,10 +354,13 @@ Live `explain` runs first reload Milchick's managed governance summary comment f
 | `enabled` | No | `false` | Must be `true` to activate the sink. |
 | `channel` | No | none | Default Slack destination. |
 | `base_url` | No | `https://slack.com/api` | Useful for tests and local mocks. |
+| `pipeline_failure_dm_users` | No | `[]` | Review-platform usernames that receive parsed pipeline-failure DMs while assigned as reviewers. |
 
-`[notifications.slack_app.user_map]` maps GitLab or GitHub usernames to Slack user IDs. It is required for pipeline-failure DMs to the review author; Slack app delivery also uses it when rewriting rendered `@username` mentions, including `{{mr_author_username}}` in Slack app templates. Missing or invalid author mappings never fall back to the shared channel.
+The review author always receives parsed pipeline-failure DMs. Additional recipients must both appear in `pipeline_failure_dm_users` and be assigned reviewers on the current review. Usernames are trimmed and deduplicated when config loads; an absent or empty list preserves author-only delivery.
 
-Slack app delivery keeps one root per review. Its `observe` and `refine` replies are durable slots updated with `chat.update`. Parsed failures send one unthreaded DM to the mapped review author per review and full head commit, with review and commit links; passed and unknown statuses create no activity message. The installed Slack app needs `chat:write`, `metadata.message:read`, `im:write`, `im:history`, and the relevant shared-channel history scope. Reinstall the app after scope changes.
+`[notifications.slack_app.user_map]` maps GitLab or GitHub usernames to Slack user IDs. Every failure-DM recipient needs a valid mapping; Slack app delivery also uses it when rewriting rendered `@username` mentions, including `{{mr_author_username}}` in Slack app templates. Missing or invalid mappings skip only that recipient and never fall back to the shared channel.
+
+Slack app delivery keeps one root per review. Its `observe` and `refine` replies are durable slots updated with `chat.update`. Parsed failures send each eligible recipient one unthreaded DM per review and full head commit, with review and commit links; passed and unknown statuses create no activity message. The installed Slack app needs `chat:write`, `metadata.message:read`, `im:write`, `im:history`, and the relevant shared-channel history scope. Reinstall the app after scope changes.
 
 ### `[notifications.pipeline_status]`
 

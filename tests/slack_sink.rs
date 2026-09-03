@@ -373,20 +373,20 @@ async fn sends_pipeline_failure_to_author_dm_and_deduplicates_same_head() {
 }
 
 #[tokio::test]
-async fn skips_pipeline_failure_dm_without_valid_author_mapping_or_fallback() {
+async fn skips_pipeline_failure_dm_without_valid_recipient_mapping_or_fallback() {
     let server = MockGitLabServer::start();
     let sink = SlackAppSink::new(SlackAppConfig {
         enabled: true,
         base_url: server.slack_api_base_url(),
         bot_token: Some("xoxb-test".to_string()),
         channel: Some("C0ALY38CW3X".to_string()),
-        user_map: BTreeMap::from([(String::from("arthur"), String::from("not-a-user-id"))]),
+        user_map: BTreeMap::from([(String::from("bob"), String::from("not-a-user-id"))]),
     });
     let notification = NotificationMessage {
         sink: NotificationSinkKind::SlackApp,
         subject: String::new(),
         body: String::new(),
-        audience: NotificationAudience::User("arthur".to_string()),
+        audience: NotificationAudience::User("bob".to_string()),
         severity: NotificationSeverity::Critical,
         thread_key: None,
         prefer_thread_reply: false,
@@ -406,7 +406,7 @@ async fn skips_pipeline_failure_dm_without_valid_author_mapping_or_fallback() {
     assert!(!report.delivered);
     assert_eq!(
         report.detail.as_deref(),
-        Some("author Slack user mapping unavailable")
+        Some("Slack user mapping unavailable for bob")
     );
     assert_eq!(
         server.request_count("POST", "/slack/api/conversations.open"),
@@ -452,7 +452,7 @@ async fn skips_pipeline_failure_dm_when_author_mapping_is_missing() {
     assert!(!report.delivered);
     assert_eq!(
         report.detail.as_deref(),
-        Some("author Slack user mapping unavailable")
+        Some("Slack user mapping unavailable for arthur")
     );
     assert_eq!(
         server.request_count("POST", "/slack/api/conversations.open"),

@@ -7,6 +7,14 @@ All notable changes to this project will be documented in this file.
 This project follows a pragmatic interpretation of Semantic Versioning.
 Given its role as CI automation infrastructure, behavioral changes may be considered breaking even if the API surface remains stable.
 
+## [5.2.3] — 2026-09-03
+
+This patch release lets opted-in assigned reviewers receive actionable CI failure DMs without adding noise for uninterested reviewers.
+
+### Added
+
+- Slack pipeline-failure DMs can include opted-in assigned reviewers through `notifications.slack_app.pipeline_failure_dm_users`; the review author remains always eligible.
+
 ## [5.2.2] — 2026-09-01
 
 This patch release moves actionable CI failure activity out of shared Slack review threads.

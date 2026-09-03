@@ -269,6 +269,8 @@ pub struct SlackAppConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub user_map: BTreeMap<String, String>,
+    #[serde(default)]
+    pub pipeline_failure_dm_users: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

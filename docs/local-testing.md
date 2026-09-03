@@ -184,13 +184,14 @@ Slack config belongs in the mandatory TOML file:
 enabled = true
 channel = "C0ALY38CW3X"
 base_url = "https://slack.com/api"
+pipeline_failure_dm_users = ["bob"]
 
 [notifications.slack_app.user_map]
 "alice" = "U01234567"
 "bob" = "U07654321"
 ```
 
-The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages, read channel history, read Milchick's message metadata, and open/read direct messages. In Slack OAuth terms, that means `chat:write`, `metadata.message:read`, `im:write`, `im:history`, plus the relevant shared-channel history scope (`channels:history` or `groups:history`). Reinstall the app after scope changes. Author DMs require a valid `[notifications.slack_app.user_map]` entry and never fall back to the shared channel.
+The Slack app bot must be installed in the target workspace and invited to the target channel. It needs permission to post and update messages, read channel history, read Milchick's message metadata, and open/read direct messages. In Slack OAuth terms, that means `chat:write`, `metadata.message:read`, `im:write`, `im:history`, plus the relevant shared-channel history scope (`channels:history` or `groups:history`). Reinstall the app after scope changes. The author is always eligible for failure DMs; configured users are eligible only while assigned reviewers. Each recipient requires a valid `[notifications.slack_app.user_map]` entry, and delivery never falls back to the shared channel.
 
 Secrets stay in env. First run `observe`; it should create the root MR message and a thread reply:
 

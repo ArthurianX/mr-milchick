@@ -141,6 +141,7 @@ GitHub Actions still provides the corresponding `GITHUB_*` review context.
 [notifications.slack_app]
 enabled = true
 channel = "C0ALY38CW3X"
+pipeline_failure_dm_users = ["principal-reviewer"]
 
 [notifications.slack_app.user_map]
 "principal-reviewer" = "U01234567"
@@ -151,7 +152,7 @@ Set:
 
 - `MR_MILCHICK_SLACK_BOT_TOKEN`
 
-The installed Slack app needs `chat:write`, `metadata.message:read`, `im:write`, `im:history`, and the relevant shared-channel history scope (`channels:history` for public channels or `groups:history` for private channels). Reinstall the Slack app after changing scopes. A valid `[notifications.slack_app.user_map]` entry is required for author failure DMs; missing mappings never fall back to the shared channel.
+The installed Slack app needs `chat:write`, `metadata.message:read`, `im:write`, `im:history`, and the relevant shared-channel history scope (`channels:history` for public channels or `groups:history` for private channels). Reinstall the Slack app after changing scopes. The review author is always eligible for failure DMs; usernames in `pipeline_failure_dm_users` are additionally eligible only while assigned as reviewers. Every recipient needs a valid `[notifications.slack_app.user_map]` entry, and missing mappings never fall back to the shared channel.
 
 ## Interpolation Notes
 

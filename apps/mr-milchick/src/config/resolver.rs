@@ -157,6 +157,7 @@ pub struct SlackAppConfig {
     pub bot_token: Option<String>,
     pub channel: Option<String>,
     pub user_map: BTreeMap<String, String>,
+    pub pipeline_failure_dm_users: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -745,6 +746,9 @@ fn resolve_notifications_config(
             bot_token: secrets.slack_bot_token.clone(),
             channel: sanitize_optional(file.slack_app.channel.clone()),
             user_map: sanitize_user_map(&file.slack_app.user_map),
+            pipeline_failure_dm_users: sanitize_label_list(
+                &file.slack_app.pipeline_failure_dm_users,
+            ),
         },
         pipeline_status: PipelineStatusConfig {
             enabled: file.pipeline_status.enabled.unwrap_or(false),
@@ -1191,6 +1195,7 @@ trace = true
 enabled = true
 channel = "C123"
 base_url = "https://slack.example.test/api"
+pipeline_failure_dm_users = [" alice ", "bob", "alice", " "]
 
 [notifications.slack_app.user_map]
 "alice" = "U123"
@@ -1265,6 +1270,10 @@ first_root = "hello"
         assert_eq!(
             config.notifications.slack_app.bot_token.as_deref(),
             Some("xoxb-token")
+        );
+        assert_eq!(
+            config.notifications.slack_app.pipeline_failure_dm_users,
+            vec!["alice".to_string(), "bob".to_string()]
         );
         assert!(config.notifications.pipeline_status.enabled);
         assert!(config.notifications.pipeline_status.fail_pipeline_on_failed);

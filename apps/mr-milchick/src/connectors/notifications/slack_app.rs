@@ -192,7 +192,7 @@ impl NotificationSink for SlackAppSink {
                     sink: self.kind(),
                     delivered: false,
                     destination: None,
-                    detail: Some("author Slack user mapping unavailable".to_string()),
+                    detail: Some(format!("Slack user mapping unavailable for {username}")),
                 });
             };
             let Some(conversation_key) = notification

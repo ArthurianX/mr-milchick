@@ -240,10 +240,14 @@ notification_policy = "always"
 #
 # Optional Slack API base URL override for tests and local mocks.
 # base_url = "https://slack.com/api"
+#
+# Additional review-platform usernames that opt in to parsed pipeline-failure
+# DMs while they are assigned reviewers. The review author is always notified.
+# pipeline_failure_dm_users = ["principal-reviewer", "alice"]
 
 # Mapping from review-platform usernames to Slack user IDs. Required for
-# parsed pipeline-failure DMs to review authors; missing mappings never fall
-# back to the shared channel. Also rewrites mentions like `@alice` into
+# parsed pipeline-failure DMs to authors and opted-in assigned reviewers;
+# missing mappings never fall back to the shared channel. Also rewrites mentions like `@alice` into
 # `<@U123...>`.
     # [notifications.slack_app.user_map]
 # "arthur" = "U028DDKDJ4E"
