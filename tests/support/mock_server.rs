@@ -460,7 +460,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 "html_url": "https://github.com/ArthurianX/mr-milchick/pull/3995",
                 "user": {"login": "arthur"},
                 "requested_reviewers": state.reviewers.iter().map(|username| json!({"login": username})).collect::<Vec<_>>(),
-                "labels": [{"name": "frontend"}],
+                "labels": state.labels.iter().map(|label| json!({"name": label})).collect::<Vec<_>>(),
             })
             .to_string(),
         },
@@ -609,6 +609,30 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             HttpResponse {
                 status_code: 200,
                 body: "{}".to_string(),
+            }
+        }
+        ("POST", path) if path.starts_with(&format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels")) => {
+            let body: Value =
+                serde_json::from_str(&request.body).expect("add labels request should be JSON");
+            if let Some(labels) = body["labels"].as_array() {
+                for label in labels.iter().filter_map(|v| v.as_str()) {
+                    if !state.labels.iter().any(|existing| existing == label) {
+                        state.labels.push(label.to_string());
+                    }
+                }
+            }
+            HttpResponse {
+                status_code: 200,
+                body: json!({"labels": state.labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()}).to_string(),
+            }
+        }
+        ("DELETE", path) if path.starts_with(&format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels/")) => {
+            let label = path.rsplit('/').next().unwrap_or_default();
+            let decoded = label.replace("%2F", "/").replace("%20", " ");
+            state.labels.retain(|l| l != &decoded);
+            HttpResponse {
+                status_code: 200,
+                body: json!({"labels": state.labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()}).to_string(),
             }
         }
         ("POST", path) if path == notes_path => {

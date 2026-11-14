@@ -521,6 +521,10 @@ enabled = false
 #[test]
 fn refine_mode_always_policy_sends_summary_notifications_even_when_summary_is_unchanged() {
     let server = MockGitLabServer::start();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
     let config_path = write_temp_config(&format!(
         r#"[platform]
 kind = "{platform}"
@@ -541,7 +545,7 @@ channel = "C0ALY38CW3X"
 base_url = {slack_base_url}
 "#,
         platform = compiled_platform_connector_kind(),
-        base_url = toml_string(server.api_base_url().as_str()),
+        base_url = toml_string(platform_base_url.as_str()),
         slack_base_url = toml_string(server.slack_api_base_url().as_str()),
     ));
     let mut envs = review_env(&server);
@@ -597,6 +601,10 @@ base_url = {slack_base_url}
 #[test]
 fn refine_mode_on_applied_action_policy_keeps_managed_slack_state_current() {
     let server = MockGitLabServer::start();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
     let config_path = write_temp_config(&format!(
         r#"[platform]
 kind = "{platform}"
@@ -617,7 +625,7 @@ channel = "C0ALY38CW3X"
 base_url = {slack_base_url}
 "#,
         platform = compiled_platform_connector_kind(),
-        base_url = toml_string(server.api_base_url().as_str()),
+        base_url = toml_string(platform_base_url.as_str()),
         slack_base_url = toml_string(server.slack_api_base_url().as_str()),
     ));
     let mut envs = review_env(&server);
@@ -668,6 +676,10 @@ base_url = {slack_base_url}
 #[test]
 fn refine_mode_updates_managed_slack_message_when_ci_status_changes() {
     let server = MockGitLabServer::start();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after unix epoch")
@@ -702,7 +714,7 @@ enabled = true
 search_root = {status_root}
 "#,
         platform = compiled_platform_connector_kind(),
-        base_url = toml_string(server.api_base_url().as_str()),
+        base_url = toml_string(platform_base_url.as_str()),
         slack_base_url = toml_string(server.slack_api_base_url().as_str()),
         status_root = toml_string(status_root.display().to_string().as_str()),
     ));
@@ -750,6 +762,10 @@ search_root = {status_root}
 #[test]
 fn refine_mode_uses_partial_slack_template_override_from_config_file() {
     let server = MockGitLabServer::start();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
     let config_body = r#"
 [platform]
 kind = "__PLATFORM__"
@@ -770,7 +786,7 @@ enabled = false
 thread_root = "Template override for {{mr_ref}}"
 "#
     .replace("__PLATFORM__", compiled_platform_connector_kind())
-    .replace("__BASE_URL__", &server.api_base_url())
+    .replace("__BASE_URL__", &platform_base_url)
     .replace("__SLACK_BASE_URL__", &server.slack_api_base_url());
     let config_path = write_temp_config(&config_body);
 
@@ -806,6 +822,10 @@ thread_root = "Template override for {{mr_ref}}"
 #[test]
 fn refine_mode_invalid_template_override_falls_back_to_default_output() {
     let server = MockGitLabServer::start();
+    #[cfg(feature = "github")]
+    let platform_base_url = server.github_api_base_url();
+    #[cfg(not(feature = "github"))]
+    let platform_base_url = server.api_base_url();
     let config_body = r#"
 [platform]
 kind = "__PLATFORM__"
@@ -826,7 +846,7 @@ enabled = false
 update_root = "Template override for {{unknown_placeholder}}"
 "#
     .replace("__PLATFORM__", compiled_platform_connector_kind())
-    .replace("__BASE_URL__", &server.api_base_url())
+    .replace("__BASE_URL__", &platform_base_url)
     .replace("__SLACK_BASE_URL__", &server.slack_api_base_url());
     let config_path = write_temp_config(&config_body);
 

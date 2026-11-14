@@ -1122,6 +1122,7 @@ model = "   "
         }
     }
 
+    #[cfg(feature = "gitlab")]
     #[test]
     fn parses_full_config_file_shape() {
         let raw = r###"
@@ -1294,11 +1295,17 @@ first_root = "hello"
 
     #[test]
     fn injects_platform_and_slack_secrets_from_env_layer() {
+        let platform_kind = compiled_platform_kind();
+        let kind_str = match platform_kind {
+            ReviewPlatformKind::GitLab => "gitlab",
+            ReviewPlatformKind::GitHub => "github",
+        };
+
         let config = resolve_config(
-            toml::from_str::<schema::ConfigFile>(
+            toml::from_str::<schema::ConfigFile>(&format!(
                 r#"
 [platform]
-kind = "gitlab"
+kind = "{}"
 
 [[areas.definitions]]
 key = "frontend"
@@ -1310,22 +1317,153 @@ enabled = true
 channel = "C123"
 
  "#,
-            )
+                kind_str
+            ))
             .expect("config file should parse"),
             SecretEnv {
                 gitlab_token: Some("gitlab-token".to_string()),
-                github_token: None,
+                github_token: Some("github-token".to_string()),
                 slack_bot_token: Some("xoxb-token".to_string()),
                 ..SecretEnv::default()
             },
         )
         .expect("resolved config should load");
 
-        assert_eq!(config.platform.token.as_deref(), Some("gitlab-token"));
+        assert_eq!(config.platform.kind, platform_kind);
+        let expected_token = match platform_kind {
+            ReviewPlatformKind::GitLab => "gitlab-token",
+            ReviewPlatformKind::GitHub => "github-token",
+        };
+        assert_eq!(config.platform.token.as_deref(), Some(expected_token));
         assert_eq!(
             config.notifications.slack_app.bot_token.as_deref(),
             Some("xoxb-token")
         );
+    }
+
+    #[cfg(feature = "github")]
+    #[test]
+    fn parses_full_config_file_shape_github() {
+        let raw = r###"
+[platform]
+kind = "github"
+base_url = "https://api.github.com"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[execution]
+dry_run = true
+notification_policy = "on-applied-action"
+
+[reviewers]
+max_reviewers = 3
+
+[[reviewers.definitions]]
+username = "milchick-duty"
+fallback = true
+
+[[reviewers.definitions]]
+username = "principal-reviewer"
+mandatory = true
+
+[[reviewers.definitions]]
+username = "alice"
+areas = ["frontend", "packages"]
+
+[codeowners]
+enabled = false
+path = ".github/CODEOWNERS"
+
+[inference]
+enabled = true
+model_path = "/models/review.gguf"
+timeout_ms = 20000
+max_patch_bytes = 48000
+context_tokens = 8192
+trace = true
+
+[notifications.slack_app]
+enabled = true
+channel = "C123"
+base_url = "https://slack.example.test/api"
+pipeline_failure_dm_users = [" alice ", "bob", "alice", " "]
+
+[notifications.slack_app.user_map]
+"alice" = "U123"
+"bob" = ""
+
+[notifications.pipeline_status]
+enabled = true
+fail_pipeline_on_failed = true
+search_root = "."
+
+[templates.github]
+summary = "## {{summary_title}}"
+
+[templates.slack_app]
+first_root = "hello"
+"###;
+
+        let file = toml::from_str::<schema::ConfigFile>(raw).expect("config file should parse");
+        let config = resolve_config(
+            file,
+            SecretEnv {
+                gitlab_token: None,
+                github_token: Some("github-token".to_string()),
+                slack_bot_token: Some("xoxb-token".to_string()),
+                ..SecretEnv::default()
+            },
+        )
+        .expect("resolved config should load");
+
+        assert_eq!(config.platform.kind, ReviewPlatformKind::GitHub);
+        assert_eq!(config.platform.base_url, "https://api.github.com");
+        assert_eq!(config.platform.token.as_deref(), Some("github-token"));
+        assert!(config.execution.dry_run);
+        assert_eq!(
+            config.execution.notification_policy,
+            schema::NotificationPolicy::OnAppliedAction
+        );
+        assert_eq!(config.reviewers.max_reviewers, 3);
+        assert_eq!(config.reviewers.definitions.len(), 3);
+        assert!(!config.codeowners.enabled);
+        assert_eq!(
+            config.codeowners.path.as_deref(),
+            Some(".github/CODEOWNERS")
+        );
+        assert!(config.inference.is_enabled());
+        assert!(config.inference.trace);
+        assert_eq!(
+            config.notifications.slack_app.channel.as_deref(),
+            Some("C123")
+        );
+        assert_eq!(
+            config.notifications.slack_app.bot_token.as_deref(),
+            Some("xoxb-token")
+        );
+        assert_eq!(
+            config.notifications.slack_app.pipeline_failure_dm_users,
+            vec!["alice".to_string(), "bob".to_string()]
+        );
+        assert!(config.notifications.pipeline_status.enabled);
+        assert!(config.notifications.pipeline_status.fail_pipeline_on_failed);
+        assert_eq!(
+            config.notifications.pipeline_status.search_root.as_deref(),
+            Some(".")
+        );
+        assert_eq!(
+            config.notifications.slack_app.user_map.get("alice"),
+            Some(&"U123".to_string())
+        );
+        assert!(!config.notifications.slack_app.user_map.contains_key("bob"));
     }
 
     #[test]

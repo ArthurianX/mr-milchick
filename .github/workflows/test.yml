@@ -5,6 +5,10 @@ on:
     branches:
       - develop
       - master
+  pull_request:
+    branches:
+      - develop
+      - master
 
 permissions:
   contents: read
@@ -12,9 +16,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - gitlab
+          - github
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-default-features --features ${{ matrix.features }},slack-app
