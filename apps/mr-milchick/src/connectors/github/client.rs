@@ -310,7 +310,7 @@ impl GitHubClient {
     ) -> Result<()> {
         for label in labels {
             let mut url = reqwest::Url::parse(&format!(
-                "{}/repos/{}/issues/{}/labels/",
+                "{}/repos/{}/issues/{}/labels",
                 self.config.base_url.trim_end_matches('/'),
                 project_key,
                 review_id

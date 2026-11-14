@@ -23,12 +23,18 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: verify_release_tag
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "gitlab slack-app"
+          - "github slack-app"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-default-features --features "${{ matrix.features }}"
 
   build_release_binaries:
     runs-on: ubuntu-latest

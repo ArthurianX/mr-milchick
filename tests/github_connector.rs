@@ -146,6 +146,12 @@ async fn risk_transition_removes_old_risk_labels_but_preserves_unrelated_labels(
         .expect("actions should succeed");
 
     assert_eq!(server.labels(), vec!["frontend", "risk::low"]);
+
+    // Assert exact DELETE path for risk::high (no double slash)
+    let expected_delete_path = format!(
+        "/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels/risk::high"
+    );
+    assert_eq!(server.request_count("DELETE", &expected_delete_path), 1);
 }
 
 #[tokio::test]
@@ -164,6 +170,12 @@ async fn removes_label_with_special_chars_and_preserves_unrelated() {
         .expect("actions should succeed");
 
     assert_eq!(server.labels(), vec!["frontend"]);
+
+    // Assert exact DELETE path for special label with encoded chars (no raw slash in remainder)
+    let expected_delete_path = format!(
+        "/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels/risk%20%2350%25%20%2F%3F+"
+    );
+    assert_eq!(server.request_count("DELETE", &expected_delete_path), 1);
 }
 
 #[tokio::test]

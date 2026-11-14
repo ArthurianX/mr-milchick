@@ -46,11 +46,15 @@ mkdir -p "$TARGET_DIR"
 
 # Build from action source, not consumer source
 # Do not leak token into build subprocess
-cargo build --locked --release --no-default-features --features github \
-  --manifest-path "$MANIFEST" \
-  --target-dir "$TARGET_DIR"
+# Run cargo inside ACTION_PATH to ensure correct toolchain/config discovery
+(
+  cd "$ACTION_PATH"
+  cargo build --locked --release --no-default-features --features github \
+    --manifest-path "$MANIFEST" \
+    --target-dir "$TARGET_DIR"
+)
 
-# Execute binary with explicit env for CLI only
+# Execute binary with explicit env for CLI only (in original consumer cwd)
 MR_MILCHICK_CONFIG_PATH="$CONFIG_PATH" \
 GITHUB_TOKEN="$SAVED_TOKEN" \
 "$TARGET_DIR/release/mr-milchick" "$COMMAND"

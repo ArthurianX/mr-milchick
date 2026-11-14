@@ -27,3 +27,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Run tests
         run: cargo test --workspace --locked --no-default-features --features ${{ matrix.features }},slack-app
+  shell-tests:
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        features:
+          - github
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GitHub Action shell tests
+        run: bash tests/github_action.sh

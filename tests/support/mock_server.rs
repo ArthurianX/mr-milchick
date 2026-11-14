@@ -672,12 +672,20 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             }
         }
         ("DELETE", path) if path.starts_with(&format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels/")) => {
-            let label = path.rsplit('/').next().unwrap_or_default();
-            let decoded = percent_decode(label);
-            state.labels.retain(|l| l != &decoded);
-            HttpResponse {
-                status_code: 200,
-                body: json!({"labels": state.labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()}).to_string(),
+            let prefix = format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels/");
+            let remainder = &path[prefix.len()..];
+            if remainder.is_empty() || remainder.contains('/') {
+                HttpResponse {
+                    status_code: 404,
+                    body: "Not Found".to_string(),
+                }
+            } else {
+                let decoded = percent_decode(remainder);
+                state.labels.retain(|l| l != &decoded);
+                HttpResponse {
+                    status_code: 200,
+                    body: json!({"labels": state.labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()}).to_string(),
+                }
             }
         }
         ("POST", path) if path == notes_path => {

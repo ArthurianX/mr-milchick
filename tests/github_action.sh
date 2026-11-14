@@ -32,6 +32,11 @@ if [ -n "${SAVED_TOKEN:-}" ]; then
   echo "FAIL: SAVED_TOKEN should not be exported to cargo build" >&2
   exit 1
 fi
+# Verify PWD is exactly GITHUB_ACTION_PATH (wrapper must cd into action dir)
+if [ "$PWD" != "$GITHUB_ACTION_PATH" ]; then
+  echo "FAIL: cargo PWD ($PWD) should equal GITHUB_ACTION_PATH ($GITHUB_ACTION_PATH)" >&2
+  exit 1
+fi
 # Log each argument on separate line to verify spaces preserved
 for arg in "$@"; do
   echo "$arg" >> "$CARGO_LOG"
