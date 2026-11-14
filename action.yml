@@ -1,0 +1,25 @@
+name: 'Milchick GitHub Review'
+description: 'Run Milchick CLI for PR review policy enforcement'
+inputs:
+  command:
+    description: 'Command to run (observe, refine, explain)'
+    required: false
+    default: 'refine'
+  config-path:
+    description: 'Path to configuration file'
+    required: false
+    default: 'mr-milchick.github.toml'
+  token:
+    description: 'GitHub token for API access'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Milchick
+      shell: bash
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_CONFIG_PATH: ${{ inputs.config-path }}
+        INPUT_TOKEN: ${{ inputs.token }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/scripts/run_github_action.sh"
