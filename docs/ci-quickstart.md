@@ -15,6 +15,21 @@ This is the shortest path to running Mr Milchick safely in CI with the new confi
 [platform]
 kind = "gitlab"
 
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
+
 [reviewers]
 max_reviewers = 2
 
@@ -170,6 +185,21 @@ If you use that pattern, enable:
 
 ```toml
 [platform.gitlab]
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".gitlab-ci.yml", ".github/**", "scripts/**"]
+risk = "high"
 
 [[platform.gitlab.label_rules]]
 name = "ready-to-merge-after-green-statuses"

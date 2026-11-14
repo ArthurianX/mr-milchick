@@ -15,7 +15,7 @@
     
 <br />
 
-[Documentation](docs/README.md) | [Examples](docs/ci-quickstart.md) | [Contributing](CONTRIBUTING.md)
+[Documentation](docs/README.md) | [GitHub Quickstart](docs/github-quickstart.md) | [Examples](docs/ci-quickstart.md) | [Contributing](CONTRIBUTING.md)
 
 <br />
 <strong>Like this project?</strong> <a href="https://github.com/ArthurianX/mr-milchick">Star me on GitHub</a>
@@ -92,12 +92,8 @@ username = "principal-reviewer"
 mandatory = true
 
 [[reviewers.definitions]]
-username = "alice"
-areas = ["frontend", "packages"]
-
-[[reviewers.definitions]]
-username = "carol"
-areas = ["backend"]
+username = "REPLACE_WITH_COLLABORATOR"
+fallback = true
 ```
 
 `mr-milchick.toml` also supports Milchick-specific env interpolation before TOML parsing with `${VAR}` and `${VAR:-default}`. That is useful in CI when the file should stay authoritative but values like a local model toggle, model filename, or workspace path still come from the job environment.

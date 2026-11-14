@@ -1,6 +1,6 @@
 # GitHub-first adoption design
 
-Status: proposed for user review. Implementation method: the model configured in OpenCode; Codex authors the spec/plan and reviews results.
+Status: approved by the user on 2026-11-14. Implementation method: the model configured in OpenCode; Codex authors the spec/plan and reviews results.
 
 ## Intent
 

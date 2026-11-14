@@ -433,6 +433,65 @@ fn refine_mode_runs_end_to_end_through_github_runtime_wiring() {
     assert_eq!(server.note_bodies().len(), 1);
 }
 
+#[cfg(feature = "github")]
+#[test]
+fn github_cli_integration_smoke_test_with_example_config() {
+    let server = MockGitLabServer::start();
+    let envs = github_base_env(&server);
+
+    // Load actual minimal example TOML
+    let config_content = include_str!("../examples/github/mr-milchick.toml");
+
+    // Parse and modify for mock server and dry-run
+    let mut value: toml::Value = config_content
+        .parse()
+        .expect("Example config should be valid TOML");
+
+    // Adjust platform base_url to mock server
+    if let Some(platform) = value.get_mut("platform") {
+        if let Some(table) = platform.as_table_mut() {
+            table.insert(
+                "base_url".to_string(),
+                toml::Value::String(server.github_api_base_url()),
+            );
+        }
+    }
+
+    // Set execution.dry_run=true
+    let mut execution = toml::Table::new();
+    execution.insert("dry_run".to_string(), toml::Value::Boolean(true));
+    value
+        .as_table_mut()
+        .expect("config root table")
+        .insert("execution".to_string(), toml::Value::Table(execution));
+
+    // Write modified config
+    let temp_config_path =
+        write_temp_config(&toml::to_string(&value).expect("serialize example config"));
+
+    // Run refine with proper GitHub env
+    let mut test_envs = borrow_env(&envs);
+    test_envs.push(("MR_MILCHICK_CONFIG_PATH", &temp_config_path));
+
+    let output = run_cli("refine", &[], &test_envs);
+
+    assert!(
+        output.status.success(),
+        "GitHub refine failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Planned actions:"));
+
+    // Assert zero reviewer/comment/label mutations using mock counters
+    assert_eq!(server.request_count("POST", &review_comments_path()), 0);
+    assert_eq!(server.assigned_reviewers().len(), 0);
+
+    let _ = fs::remove_file(temp_config_path);
+}
+
 #[test]
 fn refine_mode_runs_end_to_end_through_runtime_wiring() {
     let server = MockGitLabServer::start();

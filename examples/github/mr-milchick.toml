@@ -1,0 +1,25 @@
+[platform]
+kind = "github"
+
+[[areas.definitions]]
+key = "frontend"
+paths = ["apps/frontend/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "packages"
+paths = ["packages/**"]
+risk = "medium"
+
+[[areas.definitions]]
+key = "ci"
+paths = [".github/**", "scripts/**"]
+risk = "high"
+
+[reviewers]
+max_reviewers = 1
+
+# Replace REPLACE_WITH_COLLABORATOR with a real eligible collaborator before enabling live workflow.
+[[reviewers.definitions]]
+username = "REPLACE_WITH_COLLABORATOR"
+fallback = true

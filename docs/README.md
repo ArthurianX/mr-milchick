@@ -5,6 +5,7 @@ This directory holds the detailed docs that used to live in the root README. Sta
 ## Start Here
 
 - [CI quickstart](ci-quickstart.md): build the binary in GitLab CI, start with `observe`, move to `refine`, and optionally add a slower follow-up `explain` job plus Slack delivery.
+- [GitHub quickstart](github-quickstart.md): source-build action latency, Linux/Rust prerequisites, immutable action commit pin, token permissions, required workflow checks, observe/refine, dry-run=true for refine, trusted base config/CODEOWNERS/templates for fork processing, same-repo/fork use pull_request_target WITHOUT checking out/executing PR head, and no claim of approval-count enforcement (GitHub snapshot counts are absent). Explain how this complements CODEOWNERS/branch protection. Do not promote full inference as default.
 - [Configuration reference](config-reference.md): the resolved config model, the supported `mr-milchick.toml` schema, and the remaining env inputs.
 
 ## Review Routing
