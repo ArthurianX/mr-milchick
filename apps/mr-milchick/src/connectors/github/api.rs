@@ -45,4 +45,5 @@ pub struct GitHubSnapshotData {
 pub struct PullRequestComment {
     pub id: u64,
     pub body: String,
+    pub author_login: Option<String>,
 }

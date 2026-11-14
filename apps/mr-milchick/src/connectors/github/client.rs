@@ -6,7 +6,9 @@ use super::api::{
     GitHubChangedFile, GitHubCommit, GitHubConfig, GitHubPullRequest, GitHubSnapshotData,
     PullRequestComment,
 };
-use super::dto::{IssueCommentDto, PullRequestCommitDto, PullRequestDto, PullRequestFileDto};
+use super::dto::{
+    IssueCommentDto, PullRequestCommitDto, PullRequestDto, PullRequestFileDto, UserDto,
+};
 
 const PAGE_SIZE: usize = 100;
 
@@ -22,6 +24,49 @@ impl GitHubClient {
             http: Client::new(),
             config,
         }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_authenticated_user(&self) -> Result<Option<String>> {
+        let url = format!("{}/user", self.config.base_url.trim_end_matches('/'));
+
+        let response = self
+            .request(Method::GET, url)
+            .send()
+            .await
+            .context("failed to send request to GitHub user endpoint")?;
+
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            // In trusted GITHUB_ACTIONS context, GITHUB_TOKEN is an installation token.
+            // GET /user may return 403 Resource not accessible by integration.
+            // We recognize the fixed github-actions[bot] identity for this specific unsupported result.
+            let body = response.text().await.unwrap_or_default();
+            if std::env::var("GITHUB_ACTIONS")
+                .map(|v| v == "true")
+                .unwrap_or(false)
+            {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if json
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|m| m.eq_ignore_ascii_case("Resource not accessible by integration"))
+                        .unwrap_or(false)
+                    {
+                        return Ok(Some("github-actions[bot]".to_string()));
+                    }
+                }
+            }
+            anyhow::bail!("GitHub user endpoint returned 403: {}", body);
+        }
+
+        let dto = response
+            .error_for_status()
+            .context("GitHub returned an error status while fetching authenticated user")?
+            .json::<UserDto>()
+            .await
+            .context("failed to deserialize authenticated user response")?;
+
+        Ok(Some(dto.login))
     }
 
     #[instrument(skip(self), fields(project_key = %project_key, review_id = %review_id))]
@@ -168,6 +213,7 @@ impl GitHubClient {
             .map(|comment| PullRequestComment {
                 id: comment.id,
                 body: comment.body,
+                author_login: comment.user.map(|user| user.login),
             })
             .collect())
     }
@@ -263,16 +309,18 @@ impl GitHubClient {
         labels: &[String],
     ) -> Result<()> {
         for label in labels {
-            let encoded = label.replace('/', "%2F").replace(' ', "%20");
-            let url = format!(
-                "{}/repos/{}/issues/{}/labels/{}",
+            let mut url = reqwest::Url::parse(&format!(
+                "{}/repos/{}/issues/{}/labels/",
                 self.config.base_url.trim_end_matches('/'),
                 project_key,
-                review_id,
-                encoded
-            );
+                review_id
+            ))?;
+            url.path_segments_mut()
+                .map_err(|_| anyhow::anyhow!("invalid base URL for label removal"))?
+                .push(label);
+
             let response = self
-                .request(Method::DELETE, url)
+                .request(Method::DELETE, url.to_string())
                 .send()
                 .await
                 .context("failed to send remove label request to GitHub")?;

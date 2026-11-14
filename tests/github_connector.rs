@@ -124,3 +124,245 @@ async fn paginates_changed_files() {
         format!("/api/github/repos/{GITHUB_PROJECT_KEY}/pulls/{PULL_REQUEST_NUMBER}/files");
     assert_eq!(server.request_count_prefix("GET", &files_path), 2);
 }
+
+#[tokio::test]
+async fn risk_transition_removes_old_risk_labels_but_preserves_unrelated_labels() {
+    let server = MockGitLabServer::start_with_labels(vec!["risk::high", "frontend"]);
+    let connector = connector(&server);
+
+    // Remove risk::high, add risk::low
+    let actions = vec![
+        ReviewAction::RemoveLabels {
+            labels: vec!["risk::high".to_string()],
+        },
+        ReviewAction::AddLabels {
+            labels: vec!["risk::low".to_string()],
+        },
+    ];
+
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("actions should succeed");
+
+    assert_eq!(server.labels(), vec!["frontend", "risk::low"]);
+}
+
+#[tokio::test]
+async fn removes_label_with_special_chars_and_preserves_unrelated() {
+    let special_label = "risk #50% /?+";
+    let server = MockGitLabServer::start_with_labels(vec![special_label, "frontend"]);
+    let connector = connector(&server);
+
+    let actions = vec![ReviewAction::RemoveLabels {
+        labels: vec![special_label.to_string()],
+    }];
+
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("actions should succeed");
+
+    assert_eq!(server.labels(), vec!["frontend"]);
+}
+
+#[tokio::test]
+async fn label_only_action_does_not_call_user_endpoint() {
+    let server = MockGitLabServer::start_with_labels(vec!["frontend"]);
+    let connector = connector(&server);
+
+    // Label-only action should not trigger /user lookup
+    let actions = vec![ReviewAction::AddLabels {
+        labels: vec!["new-label".to_string()],
+    }];
+
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("actions should succeed");
+
+    assert_eq!(server.request_count("GET", "/api/github/user"), 0);
+}
+
+#[tokio::test]
+async fn summary_identical_rerun_makes_one_post_total() {
+    let server = MockGitLabServer::start();
+    let connector = connector(&server);
+    let comments_path =
+        format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
+
+    let actions = vec![ReviewAction::UpsertSummary {
+        markdown: "## Summary".to_string(),
+    }];
+
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("first apply should succeed");
+
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+
+    // Second run with same summary
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("second apply should succeed");
+
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+}
+
+#[tokio::test]
+async fn changed_summary_patches_owned_existing_comment() {
+    let server = MockGitLabServer::start();
+    // Pre-populate a comment owned by the bot (github-actions[bot] in Actions context)
+    // We need to simulate an existing comment. The mock server starts empty.
+    // We can manually add a note via internal state or use POST first.
+
+    let connector = connector(&server);
+    let comments_path =
+        format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
+
+    // First post
+    let actions1 = vec![ReviewAction::UpsertSummary {
+        markdown: "## Summary v1".to_string(),
+    }];
+    connector
+        .apply_review_actions(&actions1)
+        .await
+        .expect("first apply should succeed");
+
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+    assert_eq!(
+        server.request_count(
+            "PATCH",
+            &format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/comments/1")
+        ),
+        0
+    );
+
+    // Second run with changed summary
+    let actions2 = vec![ReviewAction::UpsertSummary {
+        markdown: "## Summary v2".to_string(),
+    }];
+    connector
+        .apply_review_actions(&actions2)
+        .await
+        .expect("second apply should succeed");
+
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+    assert_eq!(
+        server.request_count(
+            "PATCH",
+            &format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/comments/1")
+        ),
+        1
+    );
+}
+
+#[tokio::test]
+async fn spoofed_human_comment_with_summary_marker_is_ignored() {
+    let server = MockGitLabServer::start();
+
+    // Manually inject a comment with marker but wrong author (human)
+    server.add_github_comment(
+        99,
+        format!(
+            "{}\n\nSpoofed summary",
+            mr_milchick::connectors::github::MR_MILCHICK_MARKER
+        ),
+        Some("human-user".to_string()),
+    );
+
+    let connector = connector(&server);
+    let comments_path =
+        format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
+
+    let actions = vec![ReviewAction::UpsertSummary {
+        markdown: "## Real Summary".to_string(),
+    }];
+
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("apply should succeed");
+
+    // Should POST a new comment because the spoofed one is ignored
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+
+    // Verify the new comment is owned by bot (in Actions context)
+    let notes = server.note_bodies();
+    assert_eq!(notes.len(), 2); // Spoofed + New
+    assert!(notes[1].contains("Real Summary"));
+}
+
+#[tokio::test]
+async fn load_managed_comment_ignores_spoofed_advisory_text() {
+    let server = MockGitLabServer::start();
+
+    // Inject spoofed comment
+    server.add_github_comment(
+        99,
+        format!(
+            "{}\n\nSpoofed",
+            mr_milchick::connectors::github::MR_MILCHICK_MARKER
+        ),
+        Some("human-user".to_string()),
+    );
+
+    let connector = connector(&server);
+
+    let managed = connector
+        .load_managed_comment(mr_milchick::connectors::github::MR_MILCHICK_MARKER)
+        .await
+        .expect("load should succeed");
+    assert!(managed.is_none(), "Should ignore spoofed comment");
+}
+
+#[tokio::test]
+async fn summary_ignores_comment_with_missing_author_and_posts_new_owned_summary() {
+    let server = MockGitLabServer::start();
+
+    // Seed a comment with the marker but no author (deleted account scenario)
+    server.add_github_comment(
+        99,
+        format!(
+            "{}\n\nOrphaned summary",
+            mr_milchick::connectors::github::MR_MILCHICK_MARKER
+        ),
+        None,
+    );
+
+    let connector = connector(&server);
+    let comments_path =
+        format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/comments");
+
+    let actions = vec![ReviewAction::UpsertSummary {
+        markdown: "## New Summary".to_string(),
+    }];
+
+    // First apply should succeed despite missing author in existing comment
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("apply should succeed even with null user");
+
+    // Assert no PATCH to the spoofed/unknown existing comment (id 99)
+    assert_eq!(
+        server.request_count(
+            "PATCH",
+            &format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/comments/99")
+        ),
+        0
+    );
+
+    // Assert one POST of new owned summary
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+
+    // Rerun yields no duplicate
+    connector
+        .apply_review_actions(&actions)
+        .await
+        .expect("second apply should succeed");
+
+    assert_eq!(server.request_count("POST", &comments_path), 1);
+}

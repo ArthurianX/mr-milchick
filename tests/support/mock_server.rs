@@ -34,9 +34,10 @@ struct RequestRecord {
 }
 
 #[derive(Debug, Clone)]
-struct MockNote {
-    id: u64,
-    body: String,
+pub struct MockNote {
+    pub id: u64,
+    pub body: String,
+    pub author_login: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +61,9 @@ struct ServerState {
     request_log: Vec<RequestRecord>,
     next_note_id: u64,
     next_slack_ts: u64,
+    github_user_status: u16,
+    github_user_body: String,
+    github_post_comment_author: Option<String>,
 }
 
 pub struct MockGitLabServer {
@@ -67,6 +71,17 @@ pub struct MockGitLabServer {
     running: Arc<AtomicBool>,
     state: Arc<Mutex<ServerState>>,
     handle: Option<JoinHandle<()>>,
+}
+
+impl MockGitLabServer {
+    pub fn add_github_comment(&self, id: u64, body: String, author_login: Option<String>) {
+        let mut guard = self.state.lock().expect("state lock should succeed");
+        guard.notes.push(MockNote {
+            id,
+            body,
+            author_login,
+        });
+    }
 }
 
 impl MockGitLabServer {
@@ -127,6 +142,9 @@ impl MockGitLabServer {
             request_log: Vec::new(),
             next_note_id: 1,
             next_slack_ts: 1,
+            github_user_status: 200,
+            github_user_body: json!({"login": "test-user"}).to_string(),
+            github_post_comment_author: Some("test-user".to_string()),
         }));
 
         let handle = {
@@ -167,6 +185,17 @@ impl MockGitLabServer {
             .lock()
             .expect("state lock should succeed")
             .slack_history_failure = Some((status_code, body.to_string()));
+    }
+
+    pub fn set_github_user_response(&self, status_code: u16, body: &str) {
+        let mut guard = self.state.lock().expect("state lock should succeed");
+        guard.github_user_status = status_code;
+        guard.github_user_body = body.to_string();
+    }
+
+    pub fn set_github_post_comment_author(&self, author_login: Option<&str>) {
+        let mut guard = self.state.lock().expect("state lock should succeed");
+        guard.github_post_comment_author = author_login.map(|s| s.to_string());
     }
 
     pub fn github_api_base_url(&self) -> String {
@@ -511,7 +540,13 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 state
                     .notes
                     .iter()
-                    .map(|note| json!({"id": note.id, "body": note.body}))
+                    .map(|note| {
+                        let mut obj = json!({"id": note.id, "body": note.body});
+                        if let Some(login) = &note.author_login {
+                            obj["author"] = json!({"username": login});
+                        }
+                        obj
+                    })
                     .collect::<Vec<_>>()
             )
             .to_string(),
@@ -529,7 +564,13 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 .iter()
                 .skip(start)
                 .take(per_page)
-                .map(|note| json!({"id": note.id, "body": note.body}))
+                .map(|note| {
+                    let mut obj = json!({"id": note.id, "body": note.body});
+                    if let Some(login) = &note.author_login {
+                        obj["user"] = json!({"login": login, "id": 12345});
+                    }
+                    obj
+                })
                 .collect::<Vec<_>>();
 
             HttpResponse {
@@ -537,6 +578,10 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
                 body: json!(comments).to_string(),
             }
         }
+        ("GET", "/api/github/user") => HttpResponse {
+            status_code: state.github_user_status,
+            body: state.github_user_body.clone(),
+        },
         ("GET", path) if path.starts_with("/api/v4/users?username=") => {
             let username = path
                 .split_once("username=")
@@ -628,7 +673,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
         }
         ("DELETE", path) if path.starts_with(&format!("/api/github/repos/{GITHUB_PROJECT_KEY}/issues/{PULL_REQUEST_NUMBER}/labels/")) => {
             let label = path.rsplit('/').next().unwrap_or_default();
-            let decoded = label.replace("%2F", "/").replace("%20", " ");
+            let decoded = percent_decode(label);
             state.labels.retain(|l| l != &decoded);
             HttpResponse {
                 status_code: 200,
@@ -648,6 +693,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             state.notes.push(MockNote {
                 id: note_id,
                 body: note_body,
+                author_login: Some("arthur".to_string()), // Default human author for GitLab notes
             });
 
             HttpResponse {
@@ -668,6 +714,7 @@ fn route_request(request: &HttpRequest, state: &mut ServerState) -> HttpResponse
             state.notes.push(MockNote {
                 id: note_id,
                 body: note_body,
+                author_login: state.github_post_comment_author.clone(),
             });
 
             HttpResponse {
@@ -908,6 +955,25 @@ fn github_files(count: usize) -> Vec<MockGithubFile> {
             patch: Some("@@ -1,2 +1,2 @@".to_string()),
         })
         .collect()
+}
+
+fn percent_decode(input: &str) -> String {
+    let mut result = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = &input[i + 1..i + 3];
+            if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                result.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).to_string()
 }
 
 fn query_param<'a>(path: &'a str, key: &str) -> Option<&'a str> {

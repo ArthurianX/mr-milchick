@@ -43,6 +43,8 @@ pub struct PullRequestFileDto {
 pub struct IssueCommentDto {
     pub id: u64,
     pub body: String,
+    #[serde(default)]
+    pub user: Option<UserDto>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

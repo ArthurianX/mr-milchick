@@ -26,6 +26,15 @@ pub struct GitHubPlatformConnector {
 }
 
 impl GitHubPlatformConnector {
+    async fn resolve_identity(&self) -> ConnectorResult<Option<String>> {
+        let login = self
+            .client
+            .get_authenticated_user()
+            .await
+            .map_err(map_request_error)?;
+        Ok(login)
+    }
+
     pub fn new(
         config: GitHubConfig,
         project_key: impl Into<String>,
@@ -34,8 +43,9 @@ impl GitHubPlatformConnector {
         target_branch: impl Into<String>,
         labels: Vec<String>,
     ) -> Self {
+        let client = GitHubClient::new(config);
         Self {
-            client: GitHubClient::new(config),
+            client,
             project_key: project_key.into(),
             review_id: review_id.into(),
             source_branch: source_branch.into(),
@@ -77,10 +87,21 @@ impl PlatformConnector for GitHubPlatformConnector {
             .await
             .map_err(map_request_error)?;
 
+        // Only resolve identity if we might need to match an owned comment.
+        // If no comments contain the marker, we don't need /user.
+        let has_marker = existing_comments.iter().any(|c| c.body.contains(marker));
+        if !has_marker {
+            return Ok(None);
+        }
+
+        let identity = self.resolve_identity().await?;
+
         Ok(
-            find_managed_comment(&existing_comments, marker).map(|comment| ManagedReviewComment {
-                body: comment.body.clone(),
-            }),
+            find_managed_comment_owned(&existing_comments, marker, identity.as_deref()).map(
+                |comment| ManagedReviewComment {
+                    body: comment.body.clone(),
+                },
+            ),
         )
     }
 
@@ -93,6 +114,42 @@ impl PlatformConnector for GitHubPlatformConnector {
             .get_issue_comments(&self.project_key, &self.review_id)
             .await
             .map_err(map_request_error)?;
+
+        // Determine if we need identity for UpsertSummary or UpsertExplain actions.
+        // Identity is needed to verify ownership of existing comments with markers.
+        let needs_identity = actions.iter().any(|action| {
+            matches!(
+                action,
+                ReviewAction::UpsertSummary { .. } | ReviewAction::UpsertExplain { .. }
+            )
+        });
+
+        // Check if any existing comments contain markers that might require ownership verification.
+        // If no markers exist in current comments, we can create new ones without identity lookup
+        // unless we need to verify against potential spoofing (which requires identity).
+        // However, the task says: "Empty comment set can create without identity lookup; human spoof marker still requires auth before deciding it is not ours."
+        // This implies if there are comments with markers, we MUST resolve identity to check ownership.
+        // If there are NO comments with markers, we might skip identity if we are just creating new ones?
+        // But wait, `find_managed_comment_owned` returns None if identity is None and marker exists.
+        // So if we have a spoofed comment (marker present, wrong author), and we don't resolve identity,
+        // `find_managed_comment_owned` will return None (because owner_login is None).
+        // Then `upsert_managed_comment_owned` will try to POST a new comment.
+        // This is correct behavior for spoofing: ignore spoofed, create new.
+        // BUT the task says "human spoof marker still requires auth before deciding it is not ours".
+        // This suggests we SHOULD resolve identity if markers are present to explicitly verify they are NOT ours.
+        // If we don't resolve identity, we assume they are not ours (conservative).
+        // The requirement "Only resolve identity when an UpsertSummary/UpsertExplain will need to match an existing managed marker" suggests
+        // we only call /user if there is a potential match to verify.
+
+        let has_markers = existing_comments.iter().any(|c| {
+            c.body.contains(MR_MILCHICK_MARKER) || c.body.contains(MR_MILCHICK_EXPLAIN_MARKER)
+        });
+
+        let identity = if needs_identity && has_markers {
+            self.resolve_identity().await?
+        } else {
+            None
+        };
 
         let mut report = ReviewActionReport::default();
         let mut current_labels: Option<Vec<String>> = None;
@@ -131,13 +188,14 @@ impl PlatformConnector for GitHubPlatformConnector {
                     });
                 }
                 ReviewAction::UpsertSummary { markdown } => {
-                    upsert_managed_comment(
+                    upsert_managed_comment_owned(
                         &self.client,
                         &self.project_key,
                         &self.review_id,
                         &existing_comments,
                         MR_MILCHICK_MARKER,
                         markdown,
+                        identity.as_deref(),
                         ReviewActionKind::UpsertSummary,
                         "summary unchanged",
                         &mut report,
@@ -145,13 +203,14 @@ impl PlatformConnector for GitHubPlatformConnector {
                     .await?;
                 }
                 ReviewAction::UpsertExplain { markdown } => {
-                    upsert_managed_comment(
+                    upsert_managed_comment_owned(
                         &self.client,
                         &self.project_key,
                         &self.review_id,
                         &existing_comments,
                         MR_MILCHICK_EXPLAIN_MARKER,
                         markdown,
+                        identity.as_deref(),
                         ReviewActionKind::UpsertExplain,
                         "explain unchanged",
                         &mut report,
@@ -404,28 +463,43 @@ fn render_github_managed_markdown(marker: &str, markdown: &str) -> String {
     }
 }
 
-fn find_managed_comment<'a>(
+fn find_managed_comment_owned<'a>(
     comments: &'a [self::api::PullRequestComment],
     marker: &str,
+    owner_login: Option<&str>,
 ) -> Option<&'a self::api::PullRequestComment> {
-    comments
-        .iter()
-        .find(|comment| comment.body.contains(marker))
+    comments.iter().find(|comment| {
+        if !comment.body.contains(marker) {
+            return false;
+        }
+        // If we have an authenticated identity, we must match it to consider the comment owned.
+        // This prevents spoofing by human users or other bots adding the marker.
+        if let Some(login) = owner_login {
+            comment.author_login.as_deref() == Some(login)
+        } else {
+            // If no identity resolved (e.g. PAT failed and not in Actions), we cannot safely verify ownership.
+            // Conservative approach: do not consider any comment owned if identity is unknown.
+            false
+        }
+    })
 }
 
-async fn upsert_managed_comment(
+async fn upsert_managed_comment_owned(
     client: &GitHubClient,
     project_key: &str,
     review_id: &str,
     existing_comments: &[self::api::PullRequestComment],
     marker: &str,
     markdown: &str,
+    owner_login: Option<&str>,
     action_kind: ReviewActionKind,
     unchanged_reason: &str,
     report: &mut ReviewActionReport,
 ) -> ConnectorResult<()> {
     let body = render_github_managed_markdown(marker, markdown);
-    if let Some(existing_comment) = find_managed_comment(existing_comments, marker) {
+    if let Some(existing_comment) =
+        find_managed_comment_owned(existing_comments, marker, owner_login)
+    {
         if existing_comment.body.trim() == body.trim() {
             report.skipped.push(SkippedReviewAction {
                 action: action_kind,
@@ -463,21 +537,23 @@ mod tests {
             self::api::PullRequestComment {
                 id: 1,
                 body: render_github_markdown("## Summary"),
+                author_login: Some("test-user".to_string()),
             },
             self::api::PullRequestComment {
                 id: 2,
                 body: render_github_explain_markdown("## Explain"),
+                author_login: Some("test-user".to_string()),
             },
         ];
 
         assert_eq!(
-            find_managed_comment(&comments, MR_MILCHICK_MARKER)
+            find_managed_comment_owned(&comments, MR_MILCHICK_MARKER, Some("test-user"))
                 .expect("summary comment should exist")
                 .id,
             1
         );
         assert_eq!(
-            find_managed_comment(&comments, MR_MILCHICK_EXPLAIN_MARKER)
+            find_managed_comment_owned(&comments, MR_MILCHICK_EXPLAIN_MARKER, Some("test-user"))
                 .expect("explain comment should exist")
                 .id,
             2
