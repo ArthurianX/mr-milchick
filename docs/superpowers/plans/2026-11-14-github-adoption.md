@@ -35,13 +35,13 @@
 
 **Interfaces:** Preserve `resolve_config`, `github_base_env`, and existing CLI commands. Produce platform-specific fixtures and a CI feature matrix.
 
-- [ ] Reproduce `rtk cargo test --locked` and `rtk cargo test --locked --no-default-features --features 'github slack-app'`. Record failures, not full logs.
-- [ ] Run each failing test alone. In the two config tests inspect hardcoded GitLab kinds/token assertions; in five Slack CLI tests inspect environment composition and config base URLs; inspect missing GitHub label routes in the shared mock. Determine fixture versus production causes before edits.
-- [ ] Add GitHub counterparts to platform-specific config assertions: GitHub config resolves GitHub token and base URL, GitLab config remains tested only in an appropriate build. Common secret tests must exercise the active platform rather than silently becoming GitLab-only.
-- [ ] Correct fixture environment/config composition and mock routes at their existing seams. Verify real request method, path, and JSON body. Do not weaken assertions or permanently skip failing tests.
-- [ ] Add a separate CI matrix for `gitlab slack-app` and `github slack-app` on push and pull_request with read-only permissions. Preserve current develop/master push coverage.
-- [ ] Run both full suites, then `rtk cargo test --locked --no-default-features --features 'github slack-app llm-claude-code'`. All must pass.
-- [ ] Commit only Task 1 files on the isolated implementation branch.
+- [x] Reproduce `rtk cargo test --locked` and `rtk cargo test --locked --no-default-features --features 'github slack-app'`. Record failures, not full logs.
+- [x] Run each failing test alone. In the two config tests inspect hardcoded GitLab kinds/token assertions; in five Slack CLI tests inspect environment composition and config base URLs; inspect missing GitHub label routes in the shared mock. Determine fixture versus production causes before edits.
+- [x] Add GitHub counterparts to platform-specific config assertions: GitHub config resolves GitHub token and base URL, GitLab config remains tested only in an appropriate build. Common secret tests must exercise the active platform rather than silently becoming GitLab-only.
+- [x] Correct fixture environment/config composition and mock routes at their existing seams. Verify real request method, path, and JSON body. Do not weaken assertions or permanently skip failing tests.
+- [x] Add a separate CI matrix for `gitlab slack-app` and `github slack-app` on push and pull_request with read-only permissions. Preserve current develop/master push coverage.
+- [x] Run both full suites, then `rtk cargo test --locked --no-default-features --features 'github slack-app llm-claude-code'`. All must pass.
+- [x] Commit only Task 1 files on the isolated implementation branch.
 
 ## Task 2: Lock down GitHub mutation behavior and comment ownership
 
@@ -49,11 +49,11 @@
 
 **Interfaces:** Retain `PlatformConnector::load_snapshot` and `apply_review_actions`. If identity filtering is required, carry authenticated comment-author identity through GitHub DTO/domain mapping and keep it internal to that connector.
 
-- [ ] Add failing tests for observe risk transition (low to high, unrelated label retained), label removal, unchanged summary (one POST), changed summary (PATCH existing ID), dry-run (zero mutation requests), and blocking policy (nonzero process status).
-- [ ] Add mock authenticated-user and comment-author data. Test that a human-authored marker comment is ignored and a comment by the token identity is updated. Inspect existing token/auth flow to select the smallest explicit identity seam; do not hardcode `github-actions[bot]` because PAT tokens may be used.
-- [ ] Run `rtk cargo test --locked --no-default-features --features 'github slack-app' --test github_connector` plus the named CLI regressions; observe expected failures before implementation.
-- [ ] Implement only demonstrated missing behavior. Keep pagination tests and existing summary/explain marker separation passing.
-- [ ] Run both full platform suites. Commit Task 2 files.
+- [x] Add failing tests for observe risk transition (low to high, unrelated label retained), label removal, unchanged summary (one POST), changed summary (PATCH existing ID), dry-run (zero mutation requests), and blocking policy (nonzero process status).
+- [x] Add mock authenticated-user and comment-author data. Test that a human-authored marker comment is ignored and a comment by the token identity is updated. Inspect existing token/auth flow to select the smallest explicit identity seam; do not hardcode `github-actions[bot]` because PAT tokens may be used.
+- [x] Run `rtk cargo test --locked --no-default-features --features 'github slack-app' --test github_connector` plus the named CLI regressions; observe expected failures before implementation.
+- [x] Implement only demonstrated missing behavior. Keep pagination tests and existing summary/explain marker separation passing.
+- [x] Run both full platform suites. Commit Task 2 files.
 
 ## Task 3: Add trusted GitHub Action execution
 
@@ -61,13 +61,13 @@
 
 **Interfaces:** Inputs `command` (default `refine`), `config-path` (default `mr-milchick.github.toml`), required `token`; no outputs. Wrapper environment `INPUT_COMMAND`, `INPUT_CONFIG_PATH`, `INPUT_TOKEN`, `GITHUB_ACTION_PATH`, and the normal consuming workspace.
 
-- [ ] Write shell regression tests using a temporary fake cargo/binary harness. Assert only observe/refine/explain accepted, invalid command fails before build, Cargo manifest points inside action source, config paths with spaces survive intact, token is passed only as environment, caller working directory is preserved, and binary exit 7 becomes wrapper exit 7. Do not print the test token.
-- [ ] Run `rtk proxy bash tests/github_action.sh` and confirm red before creating the wrapper.
-- [ ] Implement the composite action and quoted Bash wrapper per spec. Build with `--locked --release --no-default-features --features github` from action source. Avoid inline shell interpolation of user inputs. Do not change global Rust installations in the wrapper.
-- [ ] Create the consumer workflow and dogfood workflow with pull_request_target event types from spec, base SHA checkout, persist-credentials false, explicit permissions, per-PR concurrency, and separate observe/refine steps. Consumer action/dependency refs must be verified immutable SHAs; if the implementation is not published yet, use a clearly documented replacement value rather than a fabricated valid-looking SHA.
-- [ ] Review every privileged shell/checkout/action path against a fork modifying action.yml, Cargo.toml, config, CODEOWNERS, or a template. No PR-head value may select executed code or trusted local policy.
-- [ ] Run shell tests, `bash -n`, and actionlint if installed. Otherwise report absent tooling and use an available YAML parser for syntax; do not equate syntax parsing with actionlint validation.
-- [ ] Commit Task 3 files.
+- [x] Write shell regression tests using a temporary fake cargo/binary harness. Assert only observe/refine/explain accepted, invalid command fails before build, Cargo manifest points inside action source, config paths with spaces survive intact, token is passed only as environment, caller working directory is preserved, and binary exit 7 becomes wrapper exit 7. Do not print the test token.
+- [x] Run `rtk proxy bash tests/github_action.sh` and confirm red before creating the wrapper.
+- [x] Implement the composite action and quoted Bash wrapper per spec. Build with `--locked --release --no-default-features --features github` from action source. Avoid inline shell interpolation of user inputs. Do not change global Rust installations in the wrapper.
+- [x] Create the consumer workflow and dogfood workflow with pull_request_target event types from spec, base SHA checkout, persist-credentials false, explicit permissions, per-PR concurrency, and separate observe/refine steps. Consumer action/dependency refs must be verified immutable SHAs; if the implementation is not published yet, use a clearly documented replacement value rather than a fabricated valid-looking SHA.
+- [x] Review every privileged shell/checkout/action path against a fork modifying action.yml, Cargo.toml, config, CODEOWNERS, or a template. No PR-head value may select executed code or trusted local policy.
+- [x] Run shell tests, `bash -n`, and actionlint if installed. Otherwise report absent tooling and use an available YAML parser for syntax; do not equate syntax parsing with actionlint validation.
+- [x] Commit Task 3 files.
 
 ## Task 4: Repair releases and the consumer quickstart
 
@@ -75,13 +75,13 @@
 
 **Interfaces:** Retain existing binary artifact names; publish a `SHA256SUMS` asset covering binaries and example configs. No version change or publication now.
 
-- [ ] Reproduce removed-feature failure with `rtk cargo check --locked --no-default-features --features 'github slack-app slack-workflow'`.
-- [ ] Remove obsolete feature flags from both release flavors; generate SHA256SUMS only after gathering all artifacts; upload it alongside existing assets. Retain tag ancestry check and prevent recursive release-event behavior if inspection demonstrates it.
-- [ ] Add valid minimal GitHub config with defined areas and inference/Slack disabled. Supply reviewer configuration examples using clearly replaceable eligible collaborator logins, and explain author exclusion/native branch protection limitations.
-- [ ] Write GitHub quickstart covering immutable action pin, Linux/Rust prerequisites, config path, observe/refine, dry run, fork trust boundaries, required checks, and no approval-count enforcement claim. Repair missing/undefined areas in existing README/CI examples and link the new guide from docs hub.
-- [ ] Add a CLI config smoke case in existing integration tests that loads the actual minimal example with a mocked GitHub API and dry_run=true. Assert valid resolution and zero mutations.
-- [ ] Run `rtk cargo build --locked --release --no-default-features --features 'github slack-app'` and corresponding GitLab build. On a host without musl tools, do not claim musl verification; record the exact unverified release target.
-- [ ] Run full platform suites, shell harness, and `rtk git diff --check`. Commit Task 4 files.
+- [x] Reproduce removed-feature failure with `rtk cargo check --locked --no-default-features --features 'github slack-app slack-workflow'`.
+- [x] Remove obsolete feature flags from both release flavors; generate SHA256SUMS only after gathering all artifacts; upload it alongside existing assets. Retain tag ancestry check and prevent recursive release-event behavior if inspection demonstrates it.
+- [x] Add valid minimal GitHub config with defined areas and inference/Slack disabled. Supply reviewer configuration examples using clearly replaceable eligible collaborator logins, and explain author exclusion/native branch protection limitations.
+- [x] Write GitHub quickstart covering immutable action pin, Linux/Rust prerequisites, config path, observe/refine, dry run, fork trust boundaries, required checks, and no approval-count enforcement claim. Repair missing/undefined areas in existing README/CI examples and link the new guide from docs hub.
+- [x] Add a CLI config smoke case in existing integration tests that loads the actual minimal example with a mocked GitHub API and dry_run=true. Assert valid resolution and zero mutations.
+- [x] Run `rtk cargo build --locked --release --no-default-features --features 'github slack-app'` and corresponding GitLab build. On a host without musl tools, do not claim musl verification; record the exact unverified release target.
+- [x] Run full platform suites, shell harness, and `rtk git diff --check`. Commit Task 4 files.
 
 ## Task 5: Handoff for independent review and live acceptance
 
@@ -89,12 +89,16 @@
 
 **Interfaces:** Short Markdown report: changed files, exact verification commands/results, known limits, remaining live acceptance. Never include credentials or full logs.
 
-- [ ] Review the complete diff against the spec and ensure no changes to unrelated user files, global config, remote state, or secrets.
-- [ ] Record same-repository/fork smoke tests and release candidate download/checksum verification as pending unless actually performed under separate authorization.
-- [ ] Produce the short handoff and stop. Codex reviews the diff and reruns checks before reporting local completion; fixing review findings remains assigned to OpenCode's configured local model.
+- [x] Review the complete diff against the spec and ensure no changes to unrelated user files, global config, remote state, or secrets.
+- [x] Record same-repository/fork smoke tests and release candidate download/checksum verification as pending unless actually performed under separate authorization.
+- [x] Produce the short handoff and stop. Codex reviews the diff and reruns checks before reporting local completion; fixing review findings remains assigned to OpenCode's configured local model.
 
 ## Execution handoff
 
 After user review, create an isolated implementation worktree/branch with `codex/` prefix and copy only these approved spec/plan documents into it. Launch OpenCode explicitly with `--model local-deepseek/qwen3.8-flash-next-gyro-gyro-m`, attach these two files, and execute bounded tasks sequentially. Capture its JSON stream outside tracked files, retain session ID for follow-ups, and surface only concise results to Codex. Do not install/upgrade OpenCode or alter provider configuration.
 
 Codex budget strategy: no duplicated implementation, no per-task Codex subagents, compact progress summaries, one independent diff review and targeted verification at the end. Savings are expected in Codex usage, not guaranteed in total tokens or wall time.
+
+## Completion record
+
+Implemented with the configured local Qwen model; the initial OpenCode tool loop was replaced by focused direct requests to the same model. See `docs/github-implementation-handoff.md` for verification, review rulings, and explicitly pending live acceptance. Tasks 1–5 are locally complete. No release, push, or PR was performed.
