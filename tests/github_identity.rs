@@ -4,16 +4,25 @@
 mod mock_server;
 
 use mock_server::{MockGitLabServer, github_base_env};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static CONFIG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_config_path() -> PathBuf {
-    let unique = std::time::SystemTime::now()
+    let pid = std::process::id();
+    let counter = CONFIG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock should be after epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("mr-milchick-github-config-{}.toml", unique))
+    std::env::temp_dir().join(format!(
+        "mr-milchick-github-config-{}-{}-{}.toml",
+        pid, counter, timestamp
+    ))
 }
 
 fn write_temp_config(server: &MockGitLabServer) -> PathBuf {
@@ -60,6 +69,44 @@ fn run_cli_with_env(envs: &[(&str, &str)], config_path: &PathBuf) -> std::proces
     cmd.env("MR_MILCHICK_CONFIG_PATH", config_path);
     cmd.arg("refine");
     cmd.output().expect("CLI should run")
+}
+
+#[test]
+fn temp_config_path_uniqueness_concurrent() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let num_threads = 16;
+    let paths_per_thread = 1000;
+    let barrier = Arc::new(Barrier::new(num_threads));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|_| {
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                let mut local_paths = Vec::with_capacity(paths_per_thread);
+                for _ in 0..paths_per_thread {
+                    local_paths.push(temp_config_path());
+                }
+                local_paths
+            })
+        })
+        .collect();
+
+    let mut all_paths = HashSet::new();
+    for handle in handles {
+        let paths = handle.join().expect("Thread should not panic");
+        for path in paths {
+            all_paths.insert(path);
+        }
+    }
+
+    assert_eq!(
+        all_paths.len(),
+        num_threads * paths_per_thread,
+        "All generated temp config paths must be unique"
+    );
 }
 
 #[tokio::test]
